@@ -116,7 +116,7 @@ body {
 /* 产品主图区 */
 .product-hero {
   width: 750px;
-  padding: 40px 0;
+  padding: 52px 0;
   background: #f0f0f0;
   display: flex;
   align-items: center;
@@ -124,7 +124,7 @@ body {
 }
 .product-hero img {
   width: 68%;
-  max-height: 560px;
+  max-height: 728px;
   object-fit: contain;
   display: block;
 }
@@ -288,13 +288,18 @@ body {
 /* 实景图 */
 .scene-photo {
   width: 750px;
+  height: 520px;
   overflow: hidden;
   background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .scene-photo img {
   width: 100%;
+  height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 /* VS对比区 */
@@ -421,6 +426,7 @@ body {
 .dimension-img-wrap img {
   max-width: 580px;
   width: 100%;
+  min-height: 390px;
   object-fit: contain;
   display: block;
   margin: 0 auto;
@@ -493,9 +499,7 @@ body {
 </head>
 <body>
 
-<!-- ======================================================
-     第1屏：产品介绍
-     ====================================================== -->
+<!-- ========== 第1屏：品牌+标语+产品图+核心参数+6大优势 ========== -->
 
 <!-- 品牌头部 -->
 <div class="brand-header">
@@ -630,18 +634,12 @@ body {
   </div>
 </div>
 
-<!-- ======================================================
-     第2屏：适用场所（固定原图，可选）
-     ====================================================== -->
-{% if screen2_image_url %}
+<!-- ========== 第2屏：适用场所广泛（固定图片） ========== -->
 <div style="width:750px;line-height:0;">
   <img src="{{ screen2_image_url }}" alt="适用场所" style="width:100%;display:block;">
 </div>
-{% endif %}
 
-<!-- ======================================================
-     第3屏：效率对比（纯HTML渲染）
-     ====================================================== -->
+<!-- ========== 第3屏：效率对比+VS框 ========== -->
 <div class="screen2">
 
   <!-- 顶部效率数字 -->
@@ -692,18 +690,12 @@ body {
 
 </div>
 
-<!-- ======================================================
-     第4屏：用与不用的区别（固定原图，可选）
-     ====================================================== -->
-{% if screen4_image_url %}
+<!-- ========== 第4屏：垃圾一扫而净（固定图片） ========== -->
 <div style="width:750px;line-height:0;">
-  <img src="{{ screen4_image_url }}" alt="用与不用的区别" style="width:100%;display:block;">
+  <img src="{{ screen4_image_url }}" alt="垃圾一扫而净对比" style="width:100%;display:block;">
 </div>
-{% endif %}
 
-<!-- ======================================================
-     第5屏：产品参数
-     ====================================================== -->
+<!-- ========== 第5屏：产品参数表格+尺寸图 ========== -->
 <div class="screen3">
 
   <!-- 红色标题栏 -->

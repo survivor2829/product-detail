@@ -116,7 +116,7 @@ body {
 /* 产品主图区 */
 .product-hero {
   width: 750px;
-  padding: 40px 0;
+  padding: 52px 0;
   background: #f0f0f0;
   display: flex;
   align-items: center;
@@ -124,7 +124,7 @@ body {
 }
 .product-hero img {
   width: 68%;
-  max-height: 560px;
+  max-height: 728px;
   object-fit: contain;
   display: block;
 }
@@ -288,13 +288,18 @@ body {
 /* 实景图 */
 .scene-photo {
   width: 750px;
+  height: 520px;
   overflow: hidden;
   background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .scene-photo img {
   width: 100%;
+  height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 /* VS对比区 */
@@ -421,6 +426,7 @@ body {
 .dimension-img-wrap img {
   max-width: 580px;
   width: 100%;
+  min-height: 390px;
   object-fit: contain;
   display: block;
   margin: 0 auto;
@@ -493,9 +499,7 @@ body {
 </head>
 <body>
 
-<!-- ======================================================
-     第1屏：产品介绍
-     ====================================================== -->
+<!-- ========== 第1屏：品牌+标语+产品图+核心参数+6大优势 ========== -->
 
 <!-- 品牌头部 -->
 <div class="brand-header">
@@ -508,25 +512,25 @@ body {
       </svg>
     </div>
     <div class="brand-name-wrap">
-      <span class="brand-cn">德威莱克</span>
-      <span class="brand-en">DWEILK</span>
+      <span class="brand-cn">坦龙</span>
+      <span class="brand-en">TANLONG</span>
     </div>
   </div>
   <div class="brand-right">
-    <div class="product-type">驾驶式扫地车</div>
-    <div class="product-model-tag">DW2000B Plus</div>
+    <div class="product-type">手推式洗地机</div>
+    <div class="product-model-tag">T5</div>
   </div>
 </div>
 
 <!-- 大标语区 -->
 <div class="slogan-area">
-  <div class="slogan-main">电泳处理工艺，<br>杜绝生锈</div>
-  <div class="slogan-sub">适用学校，景区，厂区，小区</div>
+  <div class="slogan-main">大刷盘大水箱，<br>持久续航。</div>
+  <div class="slogan-sub">适用工厂车间，商场超市，医院学校</div>
 </div>
 
 <!-- 产品主图（第1屏用产品底图，干净清晰） -->
 <div class="product-hero">
-  <img src="file:///C:/Users/28293/Desktop/demo/%E6%89%AB%E5%9C%B0%E8%BD%A6/%E4%B8%BB%E5%9B%BE/DW2000BPlus%E9%80%8F%E5%9B%BE.png" alt="DW2000B Plus产品图"
+  <img src="file:///C:/Users/28293/clean-industry-ai-assistant/output/Gemini_Generated_Image_74spem74spem74sp_nobg.png" alt="T5产品图"
        onerror="this.style.display='none'; this.parentElement.querySelector('.img-placeholder').style.display='flex'">
   <div class="img-placeholder" style="display:none">[产品图加载失败]</div>
 </div>
@@ -535,18 +539,18 @@ body {
 <div class="core-params-bar">
   
   <div class="core-param-item">
-    <span class="core-param-value">14000m²/h</span>
+    <span class="core-param-value">2800m²/h</span>
     <span class="core-param-label">工作效率</span>
   </div>
   
   <div class="core-param-item">
-    <span class="core-param-value">1600mm</span>
-    <span class="core-param-label">清扫宽度</span>
+    <span class="core-param-value">560mm</span>
+    <span class="core-param-label">清洗宽度</span>
   </div>
   
   <div class="core-param-item">
-    <span class="core-param-value">200L</span>
-    <span class="core-param-label">尘箱容量</span>
+    <span class="core-param-value">65L</span>
+    <span class="core-param-label">污水容量</span>
   </div>
   
   <div class="core-param-item">
@@ -563,7 +567,7 @@ body {
       <span class="num6">6</span><span class="rest">大硬核优势</span>
     </span>
   </div>
-  <div class="advantages-subtitle">DW2000B Plus 创新升级</div>
+  <div class="advantages-subtitle">T5 创新升级</div>
   <div class="advantages-grid">
 
     <!-- 1: 电瓶续航久 -->
@@ -613,7 +617,7 @@ body {
           <circle cx="24" cy="34" r="2" fill="#444"/>
         </svg>
       </div>
-      <div class="advantage-label">效率高驾驶平稳</div>
+      <div class="advantage-label">效率高操作平稳</div>
     </div>
 
     <!-- 5: 大容量尘箱 -->
@@ -626,7 +630,7 @@ body {
           <path d="M20 32h8" stroke="#444" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
       </div>
-      <div class="advantage-label">大容量尘箱</div>
+      <div class="advantage-label">大容量水箱</div>
     </div>
 
     <!-- 6: 易上手操作简单 -->
@@ -645,33 +649,27 @@ body {
   </div>
 </div>
 
-<!-- ======================================================
-     第2屏：适用场所（固定原图，可选）
-     ====================================================== -->
-
+<!-- ========== 第2屏：适用场所广泛（固定图片） ========== -->
 <div style="width:750px;line-height:0;">
   <img src="file:///C:/Users/28293/Desktop/demo/%E6%89%AB%E5%9C%B0%E8%BD%A6/%E8%AF%A6%E6%83%85/DW2000B-Plus%E6%96%B0%E6%89%AB%E5%9C%B0%E8%BD%A6%E8%AF%A6%E6%83%85%E9%A1%B5-260312_02.jpg" alt="适用场所" style="width:100%;display:block;">
 </div>
 
-
-<!-- ======================================================
-     第3屏：效率对比（纯HTML渲染）
-     ====================================================== -->
+<!-- ========== 第3屏：效率对比+VS框 ========== -->
 <div class="screen2">
 
   <!-- 顶部效率数字 -->
   <div class="efficiency-header">
     <div class="efficiency-claim">
-      <span class="eff-num">1台顶8-10人</span>
+      <span class="eff-num">1台顶5-8人</span>
     </div>
     <div class="efficiency-rate">
-      效率高达<span class="eff-num">14000m²/h</span>
+      效率高达<span class="eff-num">2800m²/h</span>
     </div>
   </div>
 
   <!-- 实景图（scene_image 优先，没有则用 product_image） -->
   <div class="scene-photo">
-    <img src="file:///C:/Users/28293/Desktop/demo/%E6%89%AB%E5%9C%B0%E8%BD%A6/%E4%B8%BB%E5%9B%BE/2%E6%95%88%E6%9E%9C%E5%9B%BE.jpg" alt="实景效果图"
+    <img src="file:///C:/Users/28293/clean-industry-ai-assistant/output/Gemini_Generated_Image_74spem74spem74sp_nobg.png" alt="实景效果图"
          onerror="this.style.background='#eee'">
   </div>
 
@@ -679,12 +677,12 @@ body {
   <div class="vs-section">
     <div class="vs-box vs-machine">
       <div class="vs-box-header">
-        <div class="vs-box-title">驾驶式扫地车</div>
+        <div class="vs-box-title">手推式洗地机</div>
         <div class="vs-box-subtitle">省时省钱省心</div>
       </div>
       <div class="vs-box-body">
-        <div class="vs-stat-line">1台顶8-10人</div>
-        <div class="vs-stat-line">一年劲省<strong>26W+元</strong></div>
+        <div class="vs-stat-line">1台顶5-8人</div>
+        <div class="vs-stat-line">一年劲省<strong>18W+元</strong></div>
       </div>
     </div>
 
@@ -709,35 +707,29 @@ body {
 
 </div>
 
-<!-- ======================================================
-     第4屏：用与不用的区别（固定原图，可选）
-     ====================================================== -->
-
+<!-- ========== 第4屏：垃圾一扫而净（固定图片） ========== -->
 <div style="width:750px;line-height:0;">
-  <img src="file:///C:/Users/28293/Desktop/demo/%E6%89%AB%E5%9C%B0%E8%BD%A6/%E8%AF%A6%E6%83%85/DW2000B-Plus%E6%96%B0%E6%89%AB%E5%9C%B0%E8%BD%A6%E8%AF%A6%E6%83%85%E9%A1%B5-260312_04.jpg" alt="用与不用的区别" style="width:100%;display:block;">
+  <img src="file:///C:/Users/28293/Desktop/demo/%E6%89%AB%E5%9C%B0%E8%BD%A6/%E8%AF%A6%E6%83%85/DW2000B-Plus%E6%96%B0%E6%89%AB%E5%9C%B0%E8%BD%A6%E8%AF%A6%E6%83%85%E9%A1%B5-260312_04.jpg" alt="垃圾一扫而净对比" style="width:100%;display:block;">
 </div>
 
-
-<!-- ======================================================
-     第5屏：产品参数
-     ====================================================== -->
+<!-- ========== 第5屏：产品参数表格+尺寸图 ========== -->
 <div class="screen3">
 
   <!-- 红色标题栏 -->
   <div class="params-header">
     <div class="params-title">产品参数</div>
-    <div class="params-subtitle">DW2000B Plus全新升级</div>
+    <div class="params-subtitle">T5全新升级</div>
   </div>
 
   <!-- 产品尺寸图 -->
   <div class="dimension-section">
     <div class="dimension-img-wrap">
-      <img src="file:///C:/Users/28293/Desktop/demo/%E6%89%AB%E5%9C%B0%E8%BD%A6/%E4%B8%BB%E5%9B%BE/DW2000BPlus%E9%80%8F%E5%9B%BE.png" alt="DW2000B Plus尺寸图">
+      <img src="file:///C:/Users/28293/clean-industry-ai-assistant/output/Gemini_Generated_Image_74spem74spem74sp_nobg.png" alt="T5尺寸图">
     </div>
     <div class="dim-labels">
-      <div class="dim-label">1600mm</div>
-      <div class="dim-label">1780mm</div>
-      <div class="dim-label dim-label-h">1280mm</div>
+      <div class="dim-label">840mm</div>
+      <div class="dim-label">1390mm</div>
+      <div class="dim-label dim-label-h">1080mm</div>
     </div>
   </div>
 
@@ -747,8 +739,26 @@ body {
       
       <tr>
         
+          <td class="td-name">清洗宽度</td>
+          <td class="td-value">560mm</td>
+          <td class="td-name">吸水宽度</td>
+          <td class="td-value">840mm</td>
+        
+      </tr>
+      
+      <tr>
+        
+          <td class="td-name">清水容量</td>
+          <td class="td-value">60L</td>
+          <td class="td-name">污水容量</td>
+          <td class="td-value">65L</td>
+        
+      </tr>
+      
+      <tr>
+        
           <td class="td-name">工作效率</td>
-          <td class="td-value">14000m²/h</td>
+          <td class="td-value">2800m²/h</td>
           <td class="td-name">工作时间</td>
           <td class="td-value">3-4h</td>
         
@@ -756,55 +766,36 @@ body {
       
       <tr>
         
-          <td class="td-name">清扫宽度</td>
-          <td class="td-value">1600mm</td>
-          <td class="td-name">水箱容量</td>
-          <td class="td-value">60L</td>
+          <td class="td-name">刷盘电机</td>
+          <td class="td-value">550W</td>
+          <td class="td-name">吸水电机</td>
+          <td class="td-value">500W</td>
         
       </tr>
       
       <tr>
         
-          <td class="td-name">边刷宽度</td>
-          <td class="td-value">1800mm*2</td>
-          <td class="td-name">电池容量</td>
-          <td class="td-value">48V/80AH</td>
+          <td class="td-name">刷盘压力</td>
+          <td class="td-value">40kg</td>
+          <td class="td-name">工作噪音</td>
+          <td class="td-value">65dB(A)</td>
         
       </tr>
       
       <tr>
         
-          <td class="td-name">尘箱容量</td>
-          <td class="td-value">200L</td>
-          <td class="td-name">边刷电机</td>
-          <td class="td-value">90W*2</td>
+          <td class="td-name">电瓶容量</td>
+          <td class="td-value">2*12V100AH</td>
+          <td class="td-name">整机重量</td>
+          <td class="td-value">155kg</td>
         
       </tr>
       
       <tr>
         
-          <td class="td-name">滚刷电机</td>
-          <td class="td-value">900W</td>
-          <td class="td-name">行走速度</td>
-          <td class="td-value">8KM/H</td>
-        
-      </tr>
-      
-      <tr>
-        
-          <td class="td-name">机器重量</td>
-          <td class="td-value">450kg</td>
-          <td class="td-name">驱动功率</td>
-          <td class="td-value">1200W</td>
-        
-      </tr>
-      
-      <tr>
-        
-          <td class="td-name">尺寸</td>
-          <td class="td-value">1780*1600*1280mm</td>
-          <td class="td-name">爬坡能力</td>
-          <td class="td-value">20%</td>
+          <!-- 单行跨列（如产品尺寸） -->
+          <td class="td-name">产品尺寸</td>
+          <td class="td-value-span" colspan="3">1390*840*1080mm</td>
         
       </tr>
       

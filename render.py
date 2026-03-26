@@ -75,20 +75,23 @@ def ensure_nobg(path_str: str) -> str:
     if not p.exists():
         return path_str
 
-    nobg = p.parent / f"{p.stem}_nobg.png"
+    nobg = OUTPUT_DIR / f"{p.stem}_nobg.png"  # 统一保存到 output/ 目录
 
     # 已有缓存直接用
     if nobg.exists():
         print(f"[抠图] 使用缓存: {nobg.name}")
         return str(nobg)
 
-    # 检查是否已经是透明 PNG
+    # 检查是否真正有透明像素（RGBA 但全白底的图不算透明）
     try:
         from PIL import Image as _Img
+        import numpy as np
         with _Img.open(p) as im:
             if im.mode == "RGBA":
-                print(f"[抠图] 已是透明底，跳过: {p.name}")
-                return path_str
+                alpha = np.array(im)[:, :, 3]
+                if alpha.min() < 250:          # 存在真实透明区域
+                    print(f"[抠图] 已有透明底，跳过: {p.name}")
+                    return path_str
     except Exception:
         pass
 
@@ -145,13 +148,17 @@ def render_page(config_path: str = None, scale: int = 2) -> str:
     # 产品图：自动抠图去背景（有缓存则跳过）
     product_img = ensure_nobg(config.get("product_image", ""))
     config["product_image_url"] = path_to_url(product_img)
-    # 实景图：直接使用原图，未填则降级用产品图
-    scene_raw = config.get("scene_image") or config.get("product_image", "")
-    config["scene_image_url"] = path_to_url(scene_raw)
-    # 第2、3、4屏固定插图（可选，不填则跳过/降级为HTML）
-    config["screen2_image_url"] = path_to_url(config.get("screen2_image", ""))
-    config["screen3_image_url"] = path_to_url(config.get("screen3_image", ""))
-    config["screen4_image_url"] = path_to_url(config.get("screen4_image", ""))
+    # 实景图：有专属 scene_image 用原图（真实场景照），否则降级用已抠图的产品图
+    if config.get("scene_image"):
+        config["scene_image_url"] = path_to_url(config["scene_image"])
+    else:
+        config["scene_image_url"] = path_to_url(product_img)  # 已抠图，无白底
+    # 第2屏：适用场所固定图（config 未填则用默认图）
+    DEFAULT_SCREEN2 = r"C:\Users\28293\Desktop\demo\扫地车\详情\DW2000B-Plus新扫地车详情页-260312_02.jpg"
+    config["screen2_image_url"] = path_to_url(config.get("screen2_image") or DEFAULT_SCREEN2)
+    # 第4屏：垃圾对比固定图（config 未填则用默认图）
+    DEFAULT_SCREEN4 = r"C:\Users\28293\Desktop\demo\扫地车\详情\DW2000B-Plus新扫地车详情页-260312_04.jpg"
+    config["screen4_image_url"] = path_to_url(config.get("screen4_image") or DEFAULT_SCREEN4)
 
     # ── 4. 渲染 Jinja2 模板 ──────────────────────────────────────
     template_file = BASE_DIR / "template.html"
