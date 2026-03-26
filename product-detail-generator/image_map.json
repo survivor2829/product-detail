@@ -1,0 +1,26 @@
+{
+  "sweeper": {
+    "img_main": "C:/Users/28293/Desktop/demo\\扫地车\\主图\\1DW2000Bpro主图.jpg",
+    "img_scene": "C:/Users/28293/Desktop/demo\\扫地车\\主图\\2效果图.jpg",
+    "img_icons": "C:/Users/28293/Desktop/demo\\扫地车\\主图\\3优势.jpg",
+    "img_hires": "C:/Users/28293/Desktop/demo\\扫地车\\主图\\DW2000BPlus白底图.jpg",
+    "screen01": "C:/Users/28293/Desktop/demo\\扫地车\\详情\\DW2000B-Plus新扫地车详情页-260312_01.jpg",
+    "screen02": "C:/Users/28293/Desktop/demo\\扫地车\\详情\\DW2000B-Plus新扫地车详情页-260312_02.jpg",
+    "screen03": "C:/Users/28293/Desktop/demo\\扫地车\\详情\\DW2000B-Plus新扫地车详情页-260312_03.jpg",
+    "screen04": "C:/Users/28293/Desktop/demo\\扫地车\\详情\\DW2000B-Plus新扫地车详情页-260312_04.jpg",
+    "screen07": "C:/Users/28293/Desktop/demo\\扫地车\\详情\\DW2000B-Plus新扫地车详情页-260312_07.jpg"
+  },
+  "washer": {
+    "img_main": "C:/Users/28293/Desktop/demo\\洗地车\\主图\\1H650-Plus主图.jpg",
+    "img_scene": "C:/Users/28293/Desktop/demo\\洗地车\\主图\\2H650-Pro效果图.jpg",
+    "img_icons": "C:/Users/28293/Desktop/demo\\洗地车\\主图\\3H650-Pro卖点.jpg",
+    "img_hires": "C:/Users/28293/Desktop/demo\\洗地车\\主图\\H650Plus白底图.jpg",
+    "screen01": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_01.jpg",
+    "screen02": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_02.jpg",
+    "screen04": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_04.jpg",
+    "screen05": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_05.jpg",
+    "screen06": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_06.jpg",
+    "screen07": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_07.jpg",
+    "screen09": "C:/Users/28293/Desktop/demo\\洗地车\\详情\\H650Plus洗地车详情页-251216_09.jpg"
+  }
+}
