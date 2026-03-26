@@ -13,10 +13,26 @@ from playwright.sync_api import sync_playwright
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
+TEMPLATES_DIR = BASE_DIR / "templates"
 
-# 第2、4屏固定图片默认路径（config 未填时使用）
+# 第2、4屏固定图片默认路径（config 未填且模板目录无匹配时使用）
 DEFAULT_SCREEN2 = r"C:\Users\28293\Desktop\demo\扫地车\详情\DW2000B-Plus新扫地车详情页-260312_02.jpg"
 DEFAULT_SCREEN4 = r"C:\Users\28293\Desktop\demo\扫地车\详情\DW2000B-Plus新扫地车详情页-260312_04.jpg"
+
+
+def resolve_template_image(product_type: str, screen_name: str) -> str:
+    """
+    在 templates/{product_type}/ 下查找固定屏图片。
+    支持 .jpg / .jpeg / .png 三种扩展名。
+    找到返回完整路径字符串，找不到返回空字符串。
+    """
+    if not product_type:
+        return ""
+    for ext in ("jpg", "jpeg", "png"):
+        candidate = TEMPLATES_DIR / product_type / f"{screen_name}.{ext}"
+        if candidate.exists():
+            return str(candidate)
+    return ""
 
 
 def normalize_config(cfg: dict) -> dict:
@@ -157,10 +173,30 @@ def render_page(config_path: str = None, scale: int = 2) -> str:
         config["scene_image_url"] = path_to_url(config["scene_image"])
     else:
         config["scene_image_url"] = path_to_url(product_img)  # 已抠图，无白底
-    # 第2屏：适用场所固定图（config 未填则用默认图）
-    config["screen2_image_url"] = path_to_url(config.get("screen2_image") or DEFAULT_SCREEN2)
-    # 第4屏：垃圾对比固定图（config 未填则用默认图）
-    config["screen4_image_url"] = path_to_url(config.get("screen4_image") or DEFAULT_SCREEN4)
+    # 第2屏：优先级 templates/{product_type}/screen2 > config.screen2_image > DEFAULT_SCREEN2
+    product_type = config.get("product_type", "")
+    s2 = resolve_template_image(product_type, "screen2")
+    if s2:
+        config["screen2_image_url"] = path_to_url(s2)
+        print(f"[模板] 第2屏使用产品类型模板: templates/{product_type}/screen2")
+    elif config.get("screen2_image"):
+        config["screen2_image_url"] = path_to_url(config["screen2_image"])
+    else:
+        pt_hint = f"templates/{product_type}/" if product_type else "templates/<product_type>/"
+        print(f"[警告] 未找到 {pt_hint}screen2.jpg，使用默认图片")
+        config["screen2_image_url"] = path_to_url(DEFAULT_SCREEN2)
+
+    # 第4屏：优先级 templates/{product_type}/screen4 > config.screen4_image > DEFAULT_SCREEN4
+    s4 = resolve_template_image(product_type, "screen4")
+    if s4:
+        config["screen4_image_url"] = path_to_url(s4)
+        print(f"[模板] 第4屏使用产品类型模板: templates/{product_type}/screen4")
+    elif config.get("screen4_image"):
+        config["screen4_image_url"] = path_to_url(config["screen4_image"])
+    else:
+        pt_hint = f"templates/{product_type}/" if product_type else "templates/<product_type>/"
+        print(f"[警告] 未找到 {pt_hint}screen4.jpg，使用默认图片")
+        config["screen4_image_url"] = path_to_url(DEFAULT_SCREEN4)
 
     # ── 4. 渲染 Jinja2 模板 ──────────────────────────────────────
     template_file = BASE_DIR / "template.html"

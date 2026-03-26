@@ -1,0 +1,60 @@
+{
+  "brand": "德威莱克",
+  "brand_en": "DWEILK",
+  "product_name": "无人洗扫机器人",
+  "model": "DZ10",
+  "product_type": "洗扫机器人",
+
+  "slogan": "六大清洁工序，全自动无人作业",
+  "sub_slogan": "适用工厂车间，商场超市，医院学校，智慧园区",
+
+  "product_image": "C:/Users/28293/clean-industry-ai-assistant/dz10_product.jpg",
+  "scene_image": "C:/Users/28293/clean-industry-ai-assistant/dz10_scene.png",
+
+  "efficiency_claim": "1台顶5-8人",
+  "efficiency_value": "1368㎡/h",
+  "savings_claim": "15W+元",
+
+  "core_params": {
+    "清洁效率": "1368㎡/h",
+    "续航时间": "3.5~4.5h",
+    "运行噪音": "≤55dB",
+    "铁锂电池": "25.6V/40Ah"
+  },
+
+  "detail_params": {
+    "吸水宽度": "520mm",
+    "清扫宽度": "540/580mm",
+    "洗地宽度": "520mm",
+    "边刷电机": "132W",
+    "刷盘电机": "132W",
+    "吸水电机": "201W",
+    "清水箱容量": "22L",
+    "污水箱容量": "15L",
+    "垃圾箱容量": "1L",
+    "电池规格": "25.6V/40Ah铁锂",
+    "续航（洗地）": "3.5~4.5h",
+    "续航（尘推）": "25~28h",
+    "滚刷对地压力": "13kg",
+    "整车净重": "70kg",
+    "爬坡坡度": "≤8°",
+    "运行噪音": "≤55dB（A）",
+    "最小通过宽度": "700mm",
+    "设备尺寸": "L650×W580×H550mm"
+  },
+
+  "advantages": [
+    "全能六合一清洁",
+    "超静音≤55dB",
+    "免工作站易维护",
+    "云端智能管理",
+    "高通过性700mm",
+    "AI障碍智能识别"
+  ],
+
+  "dimensions": {
+    "length": "650mm",
+    "width": "580mm",
+    "height": "550mm"
+  }
+}
