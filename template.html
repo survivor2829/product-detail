@@ -116,16 +116,16 @@ body {
 /* 产品主图区 */
 .product-hero {
   width: 750px;
-  height: 560px;
-  overflow: hidden;
-  position: relative;
-  background: #fff;
+  padding: 40px 0;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .product-hero img {
-  width: 100%;
-  height: 100%;
+  width: 68%;
+  max-height: 560px;
   object-fit: contain;
-  object-position: center;
   display: block;
 }
 /* 图片加载失败时的占位 */
@@ -279,19 +279,22 @@ body {
   color: #111;
   line-height: 1.1;
 }
+/* 效率数字红色加粗 */
+.eff-num {
+  color: #D42222;
+  font-weight: 900;
+}
 
 /* 实景图 */
 .scene-photo {
   width: 750px;
-  height: 390px;
   overflow: hidden;
-  background: #fff;
+  background: #f0f0f0;
 }
 .scene-photo img {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
   display: block;
+  object-fit: cover;
 }
 
 /* VS对比区 */
@@ -415,11 +418,6 @@ body {
   padding: 48px 40px 40px;
   text-align: center;
 }
-.dimension-img-wrap {
-  position: relative;
-  display: inline-block;
-  max-width: 100%;
-}
 .dimension-img-wrap img {
   max-width: 580px;
   width: 100%;
@@ -427,7 +425,6 @@ body {
   display: block;
   margin: 0 auto;
 }
-/* 尺寸标注覆盖层 */
 .dim-labels {
   display: flex;
   justify-content: space-around;
@@ -527,9 +524,9 @@ body {
   <div class="slogan-sub">{{ sub_slogan }}</div>
 </div>
 
-<!-- 产品主图（第1屏用效果图/实景图，更有冲击力） -->
+<!-- 产品主图（第1屏用产品底图，干净清晰） -->
 <div class="product-hero">
-  <img src="{{ scene_image_url }}" alt="{{ model }}产品图"
+  <img src="{{ product_image_url }}" alt="{{ model }}产品图"
        onerror="this.style.display='none'; this.parentElement.querySelector('.img-placeholder').style.display='flex'">
   <div class="img-placeholder" style="display:none">[产品图加载失败]</div>
 </div>
@@ -643,28 +640,32 @@ body {
 {% endif %}
 
 <!-- ======================================================
-     第3屏：效率对比
+     第3屏：效率对比（纯HTML渲染）
      ====================================================== -->
 <div class="screen2">
 
-  <!-- 效率大标题 -->
+  <!-- 顶部效率数字 -->
   <div class="efficiency-header">
-    <div class="efficiency-claim">{{ efficiency_claim }}</div>
-    <div class="efficiency-rate">效率高达{{ efficiency_value }}</div>
+    <div class="efficiency-claim">
+      <span class="eff-num">{{ efficiency_claim }}</span>
+    </div>
+    <div class="efficiency-rate">
+      效率高达<span class="eff-num">{{ efficiency_value }}</span>
+    </div>
   </div>
 
-  <!-- 实景图 -->
+  <!-- 实景图（scene_image 优先，没有则用 product_image） -->
   <div class="scene-photo">
     <img src="{{ scene_image_url }}" alt="实景效果图"
-         onerror="this.style.background='#ccc'">
+         onerror="this.style.background='#eee'">
   </div>
 
-  <!-- VS 对比 -->
+  <!-- VS 对比框 -->
   <div class="vs-section">
     <div class="vs-box vs-machine">
       <div class="vs-box-header">
         <div class="vs-box-title">{{ machine_name }}</div>
-        <div class="vs-box-subtitle">{{ machine_pros[0] }}</div>
+        <div class="vs-box-subtitle">省时省钱省心</div>
       </div>
       <div class="vs-box-body">
         <div class="vs-stat-line">{{ efficiency_claim }}</div>

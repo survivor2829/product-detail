@@ -62,19 +62,54 @@ def normalize_config(cfg: dict) -> dict:
     return cfg
 
 
-def find_nobg(path_str: str) -> str:
+def ensure_nobg(path_str: str) -> str:
     """
-    检查同目录下是否有对应的 _nobg.png（透明底抠图版本）。
-    如果存在，优先返回抠图版本路径；否则返回原路径。
+    确保产品图是透明底 PNG：
+    1. 若同目录已有 _nobg.png，直接复用（跳过抠图）
+    2. 若输入已是透明 PNG（RGBA），直接使用
+    3. 否则调用 rembg 自动抠图，结果保存为 _nobg.png 供下次复用
     """
     if not path_str:
         return path_str
     p = Path(path_str)
+    if not p.exists():
+        return path_str
+
     nobg = p.parent / f"{p.stem}_nobg.png"
+
+    # 已有缓存直接用
     if nobg.exists():
-        print(f"[抠图] 使用透明底图片: {nobg.name}")
+        print(f"[抠图] 使用缓存: {nobg.name}")
         return str(nobg)
-    return path_str
+
+    # 检查是否已经是透明 PNG
+    try:
+        from PIL import Image as _Img
+        with _Img.open(p) as im:
+            if im.mode == "RGBA":
+                print(f"[抠图] 已是透明底，跳过: {p.name}")
+                return path_str
+    except Exception:
+        pass
+
+    # 调用 rembg 抠图
+    try:
+        from rembg import remove as rembg_remove
+    except ImportError:
+        print("[抠图] rembg 未安装，正在安装...")
+        import subprocess
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "rembg", "onnxruntime"],
+            check=True, capture_output=True
+        )
+        from rembg import remove as rembg_remove
+
+    print(f"[抠图] 正在去除背景: {p.name} ...")
+    with open(p, "rb") as f:
+        result = rembg_remove(f.read())
+    nobg.write_bytes(result)
+    print(f"[抠图] 已保存透明底: {nobg.name}")
+    return str(nobg)
 
 
 def path_to_url(path_str: str) -> str:
@@ -106,14 +141,16 @@ def render_page(config_path: str = None, scale: int = 2) -> str:
     # ── 2. 标准化配置（兼容新旧格式）───────────────────────────────
     config = normalize_config(config)
 
-    # ── 3. 图片路径 → file:// URL（优先使用透明底抠图版本）────────
-    product_img = find_nobg(config.get("product_image", ""))
+    # ── 3. 图片路径 → file:// URL ────────────────────────────────
+    # 产品图：自动抠图去背景（有缓存则跳过）
+    product_img = ensure_nobg(config.get("product_image", ""))
     config["product_image_url"] = path_to_url(product_img)
-    # scene_image 未指定时，降级使用 product_image
+    # 实景图：直接使用原图，未填则降级用产品图
     scene_raw = config.get("scene_image") or config.get("product_image", "")
-    config["scene_image_url"]   = path_to_url(find_nobg(scene_raw))
-    # 第2屏、第4屏固定插图（可选，不填则跳过该屏）
+    config["scene_image_url"] = path_to_url(scene_raw)
+    # 第2、3、4屏固定插图（可选，不填则跳过/降级为HTML）
     config["screen2_image_url"] = path_to_url(config.get("screen2_image", ""))
+    config["screen3_image_url"] = path_to_url(config.get("screen3_image", ""))
     config["screen4_image_url"] = path_to_url(config.get("screen4_image", ""))
 
     # ── 4. 渲染 Jinja2 模板 ──────────────────────────────────────

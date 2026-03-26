@@ -2,41 +2,49 @@
   "brand": "德威莱克",
   "brand_en": "DWEILK",
   "product_name": "驾驶式扫地车",
-  "model": "DW1250 PLUS",
+  "model": "DW2000B Plus",
+
   "slogan": "电泳处理工艺，杜绝生锈",
-  "sub_slogan": "适用学校，景区，厂区，小区。小驾爆款",
-  "product_image": "C:/Users/28293/Desktop/demo/7eae6f5077de6265261c2ef5c6bcae0a.jpg",
+  "sub_slogan": "适用学校，景区，厂区，小区",
+
+  "product_image": "C:/Users/28293/Desktop/demo/扫地车/主图/DW2000BPlus透图.png",
+  "scene_image": "C:/Users/28293/Desktop/demo/扫地车/主图/2效果图.jpg",
   "screen2_image": "C:/Users/28293/Desktop/demo/扫地车/详情/DW2000B-Plus新扫地车详情页-260312_02.jpg",
   "screen4_image": "C:/Users/28293/Desktop/demo/扫地车/详情/DW2000B-Plus新扫地车详情页-260312_04.jpg",
+
   "efficiency_claim": "1台顶8-10人",
-  "efficiency_value": "9800m²/h",
+  "efficiency_value": "14000m²/h",
   "savings_claim": "26W+元",
+
   "core_params": {
-    "工作效率": "9800m²/h",
-    "清扫宽度": "1300mm",
-    "尘箱容量": "120L",
-    "工作时间": "2-3h"
+    "工作效率": "14000m²/h",
+    "清扫宽度": "1600mm",
+    "尘箱容量": "200L",
+    "工作时间": "3-4h"
   },
+
   "detail_params": {
-    "工作效率": "9800m²/h",
-    "工作时间": "2-3h",
-    "清扫宽度": "1300mm",
-    "水箱容量": "30L",
-    "边刷宽度": "1500mm*2",
-    "电池容量": "48V/50AH",
-    "尘箱容量": "120L",
+    "工作效率": "14000m²/h",
+    "工作时间": "3-4h",
+    "清扫宽度": "1600mm",
+    "水箱容量": "60L",
+    "边刷宽度": "1800mm*2",
+    "电池容量": "48V/80AH",
+    "尘箱容量": "200L",
     "边刷电机": "90W*2",
-    "滚刷电机": "700W",
+    "滚刷电机": "900W",
     "行走速度": "8KM/H",
-    "机器重量": "300kg",
-    "驱动功率": "800W",
-    "尺寸": "1550*1300*1160mm",
+    "机器重量": "450kg",
+    "驱动功率": "1200W",
+    "尺寸": "1780*1600*1280mm",
     "爬坡能力": "20%"
   },
+
   "advantages": ["电瓶续航久", "多场所适用", "多垃圾一机搞定", "效率高驾驶平稳", "大容量尘箱", "易上手操作简单"],
+
   "dimensions": {
-    "length": "1550mm",
-    "width": "1300mm",
-    "height": "1160mm"
+    "length": "1780mm",
+    "width": "1600mm",
+    "height": "1280mm"
   }
 }
