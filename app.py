@@ -1,5 +1,5 @@
 """
-物保云产品详情页生成器 - Web 后端
+物保云产品详情页生成器 - Web 后端（设备类专用）
 启动: python app.py
 访问: http://localhost:5000
 """
@@ -10,10 +10,10 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import uuid
-import zipfile
 import json
+import re
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, redirect, url_for
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).parent
@@ -23,12 +23,12 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-ALLOWED_IMG = {"jpg", "jpeg", "png", "webp"}
-ALLOWED_DOC = {"pdf", "docx"}
-ALLOWED_XLS = {"xlsx"}
+PRODUCT_TYPE = "设备类"
 
-# ── DeepSeek API 配置（可替换为其他 OpenAI 兼容接口）─────────────────
-DEEPSEEK_API_KEY = "***REMOVED***"  # 替换为你的 Key
+ALLOWED_IMG = {"jpg", "jpeg", "png", "webp"}
+
+# ── DeepSeek API 配置 ─────────────────────────────────────────────────
+DEEPSEEK_API_KEY = "***REMOVED***"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL   = "deepseek-reasoner"
 PROXY = {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
@@ -40,80 +40,365 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
 # ── 工具函数 ─────────────────────────────────────────────────────────
 
 def allowed_img(fn): return "." in fn and fn.rsplit(".", 1)[1].lower() in ALLOWED_IMG
-def allowed_doc(fn): return "." in fn and fn.rsplit(".", 1)[1].lower() in ALLOWED_DOC
-def allowed_xls(fn): return "." in fn and fn.rsplit(".", 1)[1].lower() in ALLOWED_XLS
 
 
-def build_config(data: dict) -> dict:
-    """将前端 JSON 表单数据映射为 render.py 所需的配置字典。"""
-    core_params = {}
-    # 先从专用输入框取
-    if data.get("param_efficiency"): core_params["工作效率"] = data["param_efficiency"]
-    if data.get("param_width"):      core_params["清扫宽度"] = data["param_width"]
-    if data.get("param_capacity"):   core_params["尘箱容量"] = data["param_capacity"]
-    if data.get("param_runtime"):    core_params["工作时间"] = data["param_runtime"]
+def _to_str(value):
+    if value is None:
+        return ""
+    return str(value).strip()
 
-    # 如果从专用框拿到的不足4个，从 detail_params 或 core_params 字段直接补
-    if len(core_params) < 4:
-        # 优先从前端传来的 core_params 字段
-        if isinstance(data.get("core_params"), dict):
-            for k, v in data["core_params"].items():
-                if k not in core_params and len(core_params) < 4:
-                    core_params[k] = v
-        # 还不足4个就从 detail_params 取
-        if len(core_params) < 4 and isinstance(data.get("detail_params"), dict):
-            for k, v in data["detail_params"].items():
-                if k not in core_params and len(core_params) < 4:
-                    core_params[k] = v
 
-    # detail_params：core_params 作为基底，前端传来的字典可覆盖/追加
-    if isinstance(data.get("detail_params"), dict) and data["detail_params"]:
-        detail_params = {**core_params, **data["detail_params"]}
-    else:
-        detail_params = dict(core_params)
+def _fallback_text(value, default=""):
+    s = _to_str(value)
+    return s if s else default
 
-    # 产品尺寸：如果 detail_params 里没有则自动补入
-    dims_tmp = data.get("dimensions", {})
-    _l = dims_tmp.get("length", "") or data.get("dim_length", "")
-    _w = dims_tmp.get("width",  "") or data.get("dim_width",  "")
-    _h = dims_tmp.get("height", "") or data.get("dim_height", "")
-    if _l and _w and _h and "产品尺寸" not in detail_params:
-        detail_params["产品尺寸"] = f"{_l}*{_w}*{_h}"
 
-    advantages = [a for a in data.get("advantages", []) if a and a.strip()]
+def _first_nonempty(*values):
+    for value in values:
+        s = _to_str(value)
+        if s:
+            return s
+    return ""
 
-    dims = data.get("dimensions", {})
-    return {
-        "brand":          data.get("brand", ""),
-        "brand_en":       data.get("brand_en", ""),
-        "model":          data.get("model", "product"),
-        "product_name":   data.get("product_name") or data.get("model", ""),
-        "product_type":   data.get("product_type", ""),
-        "slogan":         data.get("slogan", ""),
-        "sub_slogan":     data.get("sub_slogan", ""),
-        "product_image":  data.get("product_image", ""),
-        "scene_image":    data.get("scene_image", ""),
-        "efficiency_claim": data.get("efficiency_claim", ""),
-        "efficiency_value": data.get("efficiency_value", ""),
-        "savings_claim":    data.get("savings_claim", ""),
-        "people_count":     data.get("people_count", "3"),
-        "core_params":    core_params,
-        "detail_params":  detail_params,
-        "template_type":  data.get("template_type", ""),
-        "advantages":     advantages if advantages else ["省时省力", "高效清洁"],
-        "dimensions": {
-            "length": dims.get("length", "") or data.get("dim_length", ""),
-            "width":  dims.get("width",  "") or data.get("dim_width",  ""),
-            "height": dims.get("height", "") or data.get("dim_height", ""),
-        },
+
+def _get_detail_value(detail_params: dict, keys: list) -> str:
+    if not isinstance(detail_params, dict):
+        return ""
+    for key in keys:
+        value = _to_str(detail_params.get(key, ""))
+        if value:
+            return value
+    return ""
+
+
+def _split_slogan(slogan: str) -> tuple:
+    text = _to_str(slogan)
+    if not text:
+        return "", ""
+    for sep in ("，", ",", "。", "；", ";", "、"):
+        if sep in text:
+            parts = [p.strip() for p in text.split(sep) if p.strip()]
+            if len(parts) >= 2:
+                return parts[0] + (sep if sep in ("，", ",") else ""), parts[1]
+    if len(text) <= 12:
+        return text, ""
+    mid = max(4, len(text) // 2)
+    return text[:mid], text[mid:]
+
+
+def _parse_dimensions_from_text(size_text: str) -> tuple:
+    text = _to_str(size_text).lower().replace(" ", "")
+    text = text.replace("长", "").replace("宽", "").replace("高", "")
+    text = text.replace("l", "").replace("w", "").replace("h", "")
+    if not text:
+        return "", "", ""
+    m = re.search(
+        r"(\d+(?:\.\d+)?(?:mm|cm|m)?)\s*[x×*]\s*(\d+(?:\.\d+)?(?:mm|cm|m)?)\s*[x×*]\s*(\d+(?:\.\d+)?(?:mm|cm|m)?)",
+        text,
+    )
+    if not m:
+        return "", "", ""
+    return m.group(1), m.group(2), m.group(3)
+
+
+def _extract_json_object(raw_text: str):
+    text = _to_str(raw_text)
+    if not text:
+        return None
+    m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text, flags=re.IGNORECASE)
+    if m:
+        text = m.group(1).strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[i:])
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            continue
+    return None
+
+
+def _parse_advantages_text(value: str) -> list:
+    text = _to_str(value)
+    if not text:
+        return []
+    parts = re.split(r"[，,；;、/|\n]+", text)
+    return [p.strip(" -·.。;；,，") for p in parts if p.strip(" -·.。;；,，")]
+
+
+def _parse_text_by_template(raw_text: str) -> dict:
+    """按固定字段模板快速解析（不调用AI）"""
+    lines = [ln.strip() for ln in _to_str(raw_text).replace("\r\n", "\n").split("\n")]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return {}
+
+    field_alias = {
+        "品牌": "brand", "brand": "brand",
+        "英文品牌": "brand_en", "brand_en": "brand_en", "品牌英文": "brand_en",
+        "产品名称": "product_name", "名称": "product_name", "product_name": "product_name",
+        "型号": "model", "机型": "model", "model": "model",
+        "主标语": "slogan", "标语": "slogan", "slogan": "slogan",
+        "副标语": "sub_slogan", "sub_slogan": "sub_slogan",
+        "产品类型": "product_type", "类型": "product_type", "product_type": "product_type",
     }
+
+    detail_key_alias = {
+        "工作效率": "工作效率", "清洁效率": "工作效率",
+        "最大清洁效率": "工作效率", "最大清洁效率m²/h": "工作效率",
+        "清洗宽度": "清洗宽度", "清扫宽度": "清扫宽度", "吸水宽度": "吸水宽度",
+        "清水容量": "清水容量", "污水容量": "污水容量",
+        "清/污水箱容量": "污水容量", "水箱容量": "水箱容量",
+        "尘箱容量": "尘箱容量", "工作时间": "工作时间",
+        "续航": "工作时间", "续航时间": "工作时间",
+        "刷盘电机": "刷盘电机", "吸水电机": "吸水电机",
+        "刷盘压力": "刷盘压力", "工作噪音": "工作噪音",
+        "电瓶容量": "电瓶容量", "锂电容量": "锂电容量",
+        "整机重量": "整机重量", "设备尺寸": "产品尺寸",
+        "产品尺寸": "产品尺寸", "尺寸": "产品尺寸",
+        "边刷电机": "边刷电机", "电池规格": "电池规格",
+        "垃圾箱容量": "垃圾箱容量", "清水箱容量": "清水箱容量",
+        "驱动功率": "驱动功率", "驱动电机": "驱动电机",
+        "刷盘功率": "刷盘功率", "吸水功率": "吸水功率",
+        "充电时间": "充电时间", "电池容量": "电池容量",
+        "产品净重": "产品净重",
+    }
+
+    result = {
+        "brand": "", "brand_en": "", "product_name": "", "model": "",
+        "slogan": "", "sub_slogan": "", "product_type": "",
+        "core_params": {}, "detail_params": {},
+        "advantages": [],
+        "dimensions": {"length": "", "width": "", "height": ""},
+    }
+
+    kv_pattern = re.compile(r"^([^:：]{1,40})\s*[:：]\s*(.+)$")
+    for ln in lines:
+        m = kv_pattern.match(ln)
+        if not m:
+            continue
+        raw_key = m.group(1).strip()
+        raw_val = m.group(2).strip()
+        if not raw_val:
+            continue
+
+        key_low = raw_key.lower()
+        normalized_field = field_alias.get(raw_key) or field_alias.get(key_low)
+        if normalized_field:
+            result[normalized_field] = raw_val
+            continue
+
+        if any(token in raw_key for token in ("优势", "卖点", "亮点")):
+            result["advantages"].extend(_parse_advantages_text(raw_val))
+            continue
+
+        d_key = detail_key_alias.get(raw_key) or detail_key_alias.get(raw_key.replace("：", "").strip())
+        if d_key:
+            result["detail_params"][d_key] = raw_val
+            continue
+
+        if len(raw_key) <= 20:
+            result["detail_params"][raw_key] = raw_val
+
+    size_text = _first_nonempty(
+        result["detail_params"].get("产品尺寸", ""),
+        result["detail_params"].get("设备尺寸", ""),
+    )
+    l, w, h = _parse_dimensions_from_text(size_text)
+    if l and w and h:
+        result["dimensions"] = {"length": l, "width": w, "height": h}
+
+    detail = result["detail_params"]
+    core_map = [
+        ("工作效率", _first_nonempty(detail.get("工作效率", ""))),
+        ("清洗宽度", _first_nonempty(detail.get("清洗宽度", ""), detail.get("清扫宽度", ""))),
+        ("污水容量", _first_nonempty(detail.get("污水容量", ""), detail.get("水箱容量", ""), detail.get("尘箱容量", ""))),
+        ("工作时间", _first_nonempty(detail.get("工作时间", ""), detail.get("续航时间", ""))),
+    ]
+    for k, v in core_map:
+        if _to_str(v):
+            result["core_params"][k] = _to_str(v)
+
+    dedup = []
+    seen = set()
+    for item in result["advantages"]:
+        val = _to_str(item)
+        if not val or val in seen:
+            continue
+        dedup.append(val)
+        seen.add(val)
+    result["advantages"] = dedup[:6]
+
+    useful_count = sum(1 for key in ("brand", "model", "product_name", "slogan", "sub_slogan", "product_type") if _to_str(result.get(key, "")))
+    useful_count += len(result["detail_params"])
+    if useful_count < 2:
+        return {}
+    return result
+
+
+def _build_spec_rows(detail_params: dict, max_rows: int = 12) -> list:
+    if not isinstance(detail_params, dict):
+        return []
+
+    priority = [
+        "洗地效率", "清扫效率", "吸尘效率", "清洗宽度", "清扫作业宽度",
+        "清水容量", "污水容量", "水箱容量", "尘箱容量",
+        "工作效率", "工作时间", "续航时间", "充电时间",
+        "刷盘功率", "吸水功率", "驱动功率",
+        "刷盘电机", "吸水电机", "刷盘压力", "工作噪音",
+        "电瓶容量", "锂电容量", "电池容量",
+        "整机重量", "产品净重", "产品尺寸", "设备尺寸",
+    ]
+
+    rows = []
+    used = set()
+    for key in priority:
+        value = _to_str(detail_params.get(key, ""))
+        if value:
+            rows.append({"name": key, "value": value})
+            used.add(key)
+        if len(rows) >= max_rows:
+            return rows
+
+    for key, value in detail_params.items():
+        k = _to_str(key)
+        v = _to_str(value)
+        if not k or not v or k in used:
+            continue
+        rows.append({"name": k, "value": v})
+        if len(rows) >= max_rows:
+            break
+
+    return rows
+
+
+def _map_parsed_to_form_fields(parsed: dict) -> dict:
+    """将解析结果映射为表单字段（供前端 AI 填表使用）"""
+    parsed = parsed if isinstance(parsed, dict) else {}
+    detail_params = parsed.get("detail_params", {})
+    dimensions = parsed.get("dimensions", {})
+    if not isinstance(dimensions, dict):
+        dimensions = {}
+
+    brand = _to_str(parsed.get("brand", ""))
+    model = _first_nonempty(parsed.get("model"), parsed.get("product_name"))
+    product_type_str = _to_str(parsed.get("product_type", ""))
+    slogan = _to_str(parsed.get("slogan", ""))
+    sub_slogan = _to_str(parsed.get("sub_slogan", ""))
+
+    tagline_line1, tagline_line2 = _split_slogan(slogan)
+
+    brand_text = ""
+    if brand and product_type_str:
+        brand_text = f"{brand}{product_type_str}"
+    elif brand:
+        brand_text = brand
+
+    param_efficiency = _first_nonempty(
+        parsed.get("param_efficiency"),
+        _get_detail_value(detail_params, ["工作效率", "清洁效率", "最大清洁效率"]),
+    )
+    param_width = _first_nonempty(
+        parsed.get("param_width"),
+        _get_detail_value(detail_params, ["清洗宽度", "清扫宽度", "清扫作业宽度", "吸水宽度"]),
+    )
+    param_capacity = _first_nonempty(
+        parsed.get("param_capacity"),
+        _get_detail_value(detail_params, ["清水容量", "污水容量", "水箱容量", "尘箱容量"]),
+    )
+    param_runtime = _first_nonempty(
+        parsed.get("param_runtime"),
+        _get_detail_value(detail_params, ["工作时间", "续航时间", "续航"]),
+    )
+
+    specs = _build_spec_rows(detail_params, max_rows=12)
+
+    dim_length = _to_str(dimensions.get("length", ""))
+    dim_width = _to_str(dimensions.get("width", ""))
+    dim_height = _to_str(dimensions.get("height", ""))
+
+    if not (dim_length and dim_width and dim_height):
+        size_text = _first_nonempty(
+            _get_detail_value(detail_params, ["产品尺寸", "设备尺寸", "尺寸"]),
+        )
+        l, w, h = _parse_dimensions_from_text(size_text)
+        dim_length = dim_length or l
+        dim_width = dim_width or w
+        dim_height = dim_height or h
+
+    _pn = _to_str(parsed.get("product_name", ""))
+    _main = _first_nonempty(_to_str(parsed.get("main_title", "")), _pn)
+    _cat = _to_str(parsed.get("category_line", ""))
+
+    return {
+        "brand_text": brand_text,
+        "model_name": model,
+        "tagline_line1": tagline_line1,
+        "tagline_line2": tagline_line2,
+        "tagline_sub": sub_slogan,
+        "category_line": _cat,
+        "main_title": _main,
+        "param_1_label": "工作效率", "param_1_value": param_efficiency,
+        "param_2_label": "清洗宽度", "param_2_value": param_width,
+        "param_3_label": "清水箱", "param_3_value": param_capacity,
+        "param_4_label": "续航时间", "param_4_value": param_runtime,
+        "e_specs": specs,
+        "e_dim_length": dim_length,
+        "e_dim_width": dim_width,
+        "e_dim_height": dim_height,
+    }
+
+
+# ── 配置加载 ─────────────────────────────────────────────────────────
+
+_build_config_cache = {}
+
+
+def _load_build_config(product_type: str) -> dict:
+    if product_type in _build_config_cache:
+        return _build_config_cache[product_type]
+    cfg_path = TEMPLATES_DIR / product_type / "build_config.json"
+    if not cfg_path.exists():
+        return {}
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    _build_config_cache[product_type] = cfg
+    return cfg
+
+
+# ── 图片上传工具 ──────────────────────────────────────────────────────
+
+STATIC_UPLOADS = BASE_DIR / "static" / "uploads"
+STATIC_UPLOADS.mkdir(parents=True, exist_ok=True)
+STATIC_OUTPUTS = BASE_DIR / "static" / "outputs"
+STATIC_OUTPUTS.mkdir(parents=True, exist_ok=True)
+
+
+def _save_upload(file_field_name) -> str:
+    """保存上传图片到 static/uploads/，返回 /static/uploads/xxx.ext URL"""
+    f = request.files.get(file_field_name)
+    if not f or not f.filename:
+        return ""
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "png"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    f.save(str(STATIC_UPLOADS / filename))
+    return f"/static/uploads/{filename}"
 
 
 # ── 基础路由 ─────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
-    return send_file(BASE_DIR / "web_ui" / "index.html")
+    return redirect(url_for("build_form_generic", product_type=PRODUCT_TYPE))
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -127,39 +412,9 @@ def upload():
         return jsonify({"error": f"不支持的格式，请上传 {', '.join(ALLOWED_IMG)}"}), 400
     ext = file.filename.rsplit(".", 1)[1].lower()
     filename = f"{uuid.uuid4().hex}.{ext}"
-    save_path = UPLOAD_DIR / filename
+    save_path = STATIC_UPLOADS / filename
     file.save(str(save_path))
-    return jsonify({"path": str(save_path), "filename": filename})
-
-
-@app.route("/api/generate", methods=["POST"])
-def generate():
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "请求体不是合法的 JSON"}), 400
-
-    missing = [k for k in ["model", "product_type", "slogan"] if not data.get(k)]
-    if missing:
-        return jsonify({"error": f"缺少必填字段: {', '.join(missing)}"}), 400
-
-    config = build_config(data)
-    dp = config.get('detail_params')
-    print(f"[DEBUG] detail_params keys={list(dp.keys()) if isinstance(dp,dict) else repr(dp)}")
-    print(f"[DEBUG] template_type={config.get('template_type')!r}")
-    try:
-        from render import generate_detail_page
-        out_path = generate_detail_page(config, scale=data.get("scale", 2),
-                                        base_url="http://127.0.0.1:5000")
-        filename = Path(out_path).name
-        return jsonify({"filename": filename, "url": f"/api/output/{filename}"})
-    except Exception as exc:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(exc)}), 500
-
-
-@app.route("/api/output/<path:filename>")
-def serve_output(filename):
-    return send_from_directory(str(OUTPUT_DIR), filename)
+    return jsonify({"path": str(save_path), "filename": filename, "url": f"/static/uploads/{filename}"})
 
 
 @app.route("/api/uploads/<path:filename>")
@@ -167,57 +422,27 @@ def serve_upload(filename):
     return send_from_directory(str(UPLOAD_DIR), filename)
 
 
-# ── 模板列表 ─────────────────────────────────────────────────────────
-
-@app.route("/api/templates", methods=["GET"])
-def list_templates():
-    """扫描 templates/ 目录，返回真实模板列表。"""
-    result = []
-    if TEMPLATES_DIR.exists():
-        for d in sorted(TEMPLATES_DIR.iterdir()):
-            if not d.is_dir():
-                continue
-            thumb = None
-            for ext in ("jpg", "jpeg", "png"):
-                s2 = d / f"screen2.{ext}"
-                if s2.exists():
-                    thumb = f"/api/template-thumb/{d.name}/screen2.{ext}"
-                    break
-            result.append({"name": d.name, "product_type": d.name, "thumb": thumb})
-    return jsonify(result)
-
-
-@app.route("/api/template-thumb/<product_type>/<filename>")
-def serve_template_thumb(product_type, filename):
-    return send_from_directory(str(TEMPLATES_DIR / product_type), filename)
+@app.route("/api/output/<path:filename>")
+def serve_output(filename):
+    return send_from_directory(str(OUTPUT_DIR), filename)
 
 
 # ── 文本解析（DeepSeek API）──────────────────────────────────────────
 
 @app.route("/api/parse-text", methods=["POST"])
 def parse_text():
-    """
-    接收原始文本（JSON 字符串或普通文字描述），返回结构化产品数据 JSON。
-    - 如果文本本身是合法 JSON，直接返回
-    - 否则调用 DeepSeek API 解析
-    """
     data = request.get_json(silent=True)
     if not data or not data.get("text"):
         return jsonify({"error": "缺少 text 字段"}), 400
-
     raw_text = data["text"].strip()
     if not raw_text:
         return jsonify({"error": "文本内容为空"}), 400
-
-    # 先尝试直接 JSON 解析
     try:
         parsed = json.loads(raw_text)
         if isinstance(parsed, dict):
             return jsonify(parsed)
     except (json.JSONDecodeError, ValueError):
         pass
-
-    # 调用 DeepSeek API
     try:
         result = _call_deepseek_parse(raw_text)
         return jsonify(result)
@@ -241,13 +466,9 @@ def _call_deepseek_parse(raw_text: str) -> dict:
                     "role": "user",
                     "content": (
                         "请把以下产品数据解析为JSON，字段包括：brand, brand_en, product_name, model, "
-                        "product_type（洗地机/扫地车/洗扫机器人/高压清洗机/工业吸尘器之一）, "
-                        "slogan, sub_slogan, efficiency_claim, savings_claim, "
-                        "param_efficiency（工作效率）, param_width（清扫/清洗宽度）, "
-                        "param_capacity（尘箱/水箱容量）, param_runtime（续航/工作时间）, "
-                        "detail_params（所有技术参数的完整键值对dict，尽可能提取，"
-                        "如清洗宽度/吸水宽度/清水容量/污水容量/工作效率/工作时间/"
-                        "刷盘电机/吸水电机/刷盘压力/工作噪音/电瓶容量/整机重量/产品尺寸等）, "
+                        "product_type（清洁设备类型）, slogan, sub_slogan, "
+                        "detail_params（所有技术参数的完整键值对dict，如清洗宽度/清扫作业宽度/清水容量/"
+                        "工作效率/续航时间/电池容量/整机重量/产品尺寸等）, "
                         "advantages(数组,最多6个), dimensions(length/width/height)。"
                         "只返回JSON，不要其他文字：\n\n" + raw_text
                     )
@@ -260,17 +481,13 @@ def _call_deepseek_parse(raw_text: str) -> dict:
     )
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
-    # deepseek-reasoner 有 reasoning_content 和 content 两个字段，取 content
     raw = (msg.get("content") or "").strip()
 
-    # 从 markdown 代码块里提取 JSON
     if "```" in raw:
-        import re as _re
-        m = _re.search(r"```(?:json)?\s*([\s\S]+?)```", raw)
+        m = re.search(r"```(?:json)?\s*([\s\S]+?)```", raw)
         if m:
             raw = m.group(1).strip()
 
-    # 如果整段里有多个 {} 块，取第一个完整 JSON 对象
     if not raw.startswith("{"):
         start = raw.find("{")
         if start != -1:
@@ -279,172 +496,276 @@ def _call_deepseek_parse(raw_text: str) -> dict:
     return json.loads(raw.strip())
 
 
-# ── Excel 批量解析 ───────────────────────────────────────────────────
-
-COLUMN_MAP = {
-    "型号": "model", "产品型号": "model",
-    "品牌": "brand", "品牌名称": "brand",
-    "英文品牌": "brand_en",
-    "产品名称": "product_name", "名称": "product_name",
-    "产品类型": "product_type", "类型": "product_type",
-    "主标语": "slogan", "标语": "slogan",
-    "副标语": "sub_slogan",
-    "工作效率": "param_efficiency", "清洁效率": "param_efficiency",
-    "清扫宽度": "param_width", "清洁宽度": "param_width",
-    "尘箱容量": "param_capacity", "水箱容量": "param_capacity",
-    "工作时间": "param_runtime", "续航": "param_runtime",
-    "效率对比": "efficiency_claim",
-    "节省金额": "savings_claim",
-    "优势1": "adv_1", "优势2": "adv_2", "优势3": "adv_3",
-    "优势4": "adv_4", "优势5": "adv_5", "优势6": "adv_6",
-    "长": "dim_length", "宽": "dim_width", "高": "dim_height",
-    "正面图": "img_front", "产品图": "img_front",
-    "侧面图": "img_side",
-    "细节图1": "img_detail1", "细节图2": "img_detail2",
-}
-
-
-@app.route("/api/parse-excel", methods=["POST"])
-def parse_excel():
-    """解析 xlsx，返回产品列表（含嵌入图片提取）。"""
-    if "file" not in request.files:
-        return jsonify({"error": "请求中没有文件字段"}), 400
-    file = request.files["file"]
-    if not file.filename or not allowed_xls(file.filename):
-        return jsonify({"error": "仅支持 xlsx 格式"}), 400
-
-    tmp_path = UPLOAD_DIR / f"excel_{uuid.uuid4().hex}.xlsx"
-    file.save(str(tmp_path))
-
-    try:
-        products = _parse_xlsx(tmp_path)
-        return jsonify({"products": products})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": f"Excel 解析失败: {e}"}), 500
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-
-def _parse_xlsx(path: Path) -> list:
-    import openpyxl
-    wb = openpyxl.load_workbook(str(path), data_only=True)
-    ws = wb.active
-
-    headers = [str(c.value).strip() if c.value else "" for c in ws[1]]
-    col_fields = [COLUMN_MAP.get(h, h) for h in headers]
-
-    products = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if all(v is None for v in row):
-            continue
-        item = {}
-        for i, val in enumerate(row):
-            if i < len(col_fields) and col_fields[i]:
-                item[col_fields[i]] = str(val).strip() if val is not None else ""
-
-        # 合并 adv_1..6 → advantages list
-        advantages = []
-        for k in ["adv_1", "adv_2", "adv_3", "adv_4", "adv_5", "adv_6"]:
-            v = item.pop(k, "")
-            if v:
-                advantages.append(v)
-        item["advantages"] = advantages
-        products.append(item)
-
-    # 尝试提取嵌入图片（best-effort）
-    try:
-        _extract_xlsx_images(path, products, col_fields)
-    except Exception:
-        pass
-
-    return products
-
-
-def _extract_xlsx_images(path: Path, products: list, col_fields: list):
-    import openpyxl
-    wb2 = openpyxl.load_workbook(str(path), data_only=True)
-    ws2 = wb2.active
-    for img in getattr(ws2, "_images", []):
-        try:
-            anchor = img.anchor
-            row_idx = anchor._from.row   # 0-based
-            col_idx = anchor._from.col   # 0-based
-            if row_idx == 0:
-                continue
-            prod_idx = row_idx - 1
-            if prod_idx >= len(products):
-                continue
-            field = col_fields[col_idx] if col_idx < len(col_fields) else ""
-            if field not in ("img_front", "img_side", "img_detail1", "img_detail2"):
-                continue
-            img_data = img._data()
-            filename = f"{uuid.uuid4().hex}.png"
-            save_path = UPLOAD_DIR / filename
-            save_path.write_bytes(img_data)
-            products[prod_idx][field] = str(save_path)
-        except Exception:
-            continue
-
-
-# ── 批量生成 ─────────────────────────────────────────────────────────
-
-@app.route("/api/batch-generate", methods=["POST"])
-def batch_generate():
-    """逐个生成，返回全部结果列表。"""
+@app.route("/api/build/<product_type>/parse-text", methods=["POST"])
+def parse_text_for_build(product_type):
     data = request.get_json(silent=True)
-    if not data or "products" not in data:
-        return jsonify({"error": "缺少 products 字段"}), 400
+    if not data or not data.get("text"):
+        return jsonify({"error": "缺少 text 字段"}), 400
 
-    from render import generate_detail_page
-    scale = data.get("scale", 2)
-    results = []
+    raw_text = _to_str(data.get("text"))
+    if not raw_text:
+        return jsonify({"error": "文本内容为空"}), 400
 
-    for prod in data["products"]:
-        # 图片字段映射
-        if prod.get("img_front") and not prod.get("product_image"):
-            prod["product_image"] = prod["img_front"]
-        if prod.get("img_side") and not prod.get("scene_image"):
-            prod["scene_image"] = prod["img_side"]
+    parsed = _extract_json_object(raw_text)
+    if not isinstance(parsed, dict):
+        parsed = _parse_text_by_template(raw_text)
+    if not isinstance(parsed, dict) or not parsed:
         try:
-            config = build_config(prod)
-            out_path = generate_detail_page(config, scale=scale,
-                                            base_url="http://127.0.0.1:5000")
-            filename = Path(out_path).name
-            results.append({
-                "model": prod.get("model", "unknown"),
-                "success": True,
-                "filename": filename,
-                "url": f"/api/output/{filename}",
-            })
+            parsed = _call_deepseek_parse(raw_text)
         except Exception as e:
-            results.append({
-                "model": prod.get("model", "unknown"),
-                "success": False,
-                "error": str(e),
-            })
+            return jsonify({"error": f"AI 解析失败: {e}"}), 500
 
-    return jsonify({"results": results})
+    mapped = _map_parsed_to_form_fields(parsed)
+    return jsonify(mapped)
 
 
-# ── 打包下载 ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# ── 构建系统（设备类，blocks 引擎）──────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
 
-@app.route("/api/download-zip", methods=["GET"])
-def download_zip():
-    """打包 output/ 下指定文件为 zip 返回。?files=a.png,b.png"""
-    files_param = request.args.get("files", "")
-    filenames = [f.strip() for f in files_param.split(",") if f.strip()]
-    if not filenames:
-        return jsonify({"error": "未指定文件"}), 400
+@app.route('/build/<product_type>', methods=['GET'])
+def build_form_generic(product_type):
+    cfg = _load_build_config(product_type)
+    if not cfg:
+        return f"未找到产品类型 [{product_type}] 的配置", 404
+    return render_template('build_form.html', config=cfg, product_type=product_type)
 
-    zip_path = OUTPUT_DIR / f"batch_{uuid.uuid4().hex[:8]}.zip"
-    with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
-        for fn in filenames:
-            fp = OUTPUT_DIR / fn
-            if fp.exists():
-                zf.write(str(fp), fn)
 
-    return send_file(str(zip_path), as_attachment=True, download_name="batch_output.zip")
+@app.route('/build/<product_type>', methods=['POST'])
+def build_submit_generic(product_type):
+    cfg = _load_build_config(product_type)
+    if not cfg:
+        return f"未找到产品类型 [{product_type}] 的配置", 404
+
+    F = request.form
+
+    def form_text(name, default=""):
+        return _fallback_text(F.get(name, ""), default)
+
+    # ── 图片上传 ──
+    product_image    = _save_upload('product_image')
+    scene_image      = _save_upload('scene_image')
+    product_side_image = _save_upload('product_side_image')
+    logo_image       = _save_upload('logo_image')
+
+    # ── 英雄屏参数条（跳过空值、占位符、过长值）──
+    hero_params = []
+    for i in range(1, 5):
+        v = form_text(f'param_{i}_value', '').strip()
+        l = form_text(f'param_{i}_label', '').strip()
+        if v and v not in ('--', '-', '无', 'N/A') and len(v) <= 16:
+            hero_params.append({"value": v, "label": l})
+    if not hero_params:
+        hero_params = [
+            {"value": hp.get("default_value", ""), "label": hp.get("label", "")}
+            for hp in cfg.get("hero_params", [])
+            if hp.get("default_value", "").strip()
+        ]
+
+    # ── Block A（英雄屏）──
+    _hcov = cfg.get("hero_cover_defaults") or {}
+    _def = cfg.get("defaults") or {}
+    block_a = {
+        "brand_text": form_text('brand_text', _def.get("brand_text", "")),
+        "model_name": form_text('model_name', _def.get("model_name", "")),
+        "tagline_line1": form_text('tagline_line1', _def.get("tagline_line1", "")),
+        "tagline_line2": form_text('tagline_line2', _def.get("tagline_line2", "")),
+        "tagline_sub": form_text('tagline_sub', _def.get("tagline_sub", "")),
+        "bg_image": scene_image,
+        "product_image": product_image,
+        "logo_image": logo_image,
+        "category_line": form_text('category_line', _hcov.get("category_line", "")),
+        "main_title": form_text('main_title', _hcov.get("main_title", "")),
+        "hero_subtitle_pre": form_text('hero_subtitle_pre', _hcov.get("hero_subtitle_pre", "")),
+        "hero_subtitle_em": form_text('hero_subtitle_em', _hcov.get("hero_subtitle_em", "")),
+        "hero_subtitle_post": form_text('hero_subtitle_post', _hcov.get("hero_subtitle_post", "")),
+        "footer_note": form_text('footer_note', _hcov.get("footer_note", "")),
+        "cover_image": "",
+        "floor_bg_image": scene_image,
+        "bg_focal": form_text('bg_focal', _hcov.get("bg_focal", "center bottom")) or "center bottom",
+        "show_hero_params": True,
+        "params": hero_params,
+    }
+
+    # ── Block E（参数表）──
+    e_specs = []
+    for i in range(1, 13):
+        name = form_text(f'e_spec_name_{i}', '')
+        value = form_text(f'e_spec_value_{i}', '')
+        if name and value:
+            e_specs.append({"name": name, "value": value})
+
+    model_name = form_text('model_name', _def.get("model_name", ""))
+    _e_red = form_text("e_red_bar_text", "").strip()
+    _dims = cfg.get("default_dims", {})
+    block_e = {
+        "title": "产品参数",
+        "subtitle": form_text("e_table_subtitle", "规格一览"),
+        "red_bar_text": _e_red or f"{model_name}创新升级",
+        "product_image": product_side_image or product_image,
+        "dim_height": form_text('e_dim_height', _dims.get("height", "")),
+        "dim_width":  form_text('e_dim_width',  _dims.get("width", "")),
+        "dim_length": form_text('e_dim_length', _dims.get("length", "")),
+        "specs": e_specs,
+        "footnote": "*人工测量有误差",
+    }
+
+    # ── blocks_hardcoded（从配置读）──
+    blocks_hc = cfg.get("blocks_hardcoded", {})
+
+    # ── Block B3（清洁故事）— 产品图注入 ──
+    block_b3 = dict(blocks_hc.get("block_b3", {}))
+    if not (block_b3.get("hero_image") or "").strip():
+        block_b3["hero_image"] = product_image
+
+    # ── Block F（1台顶8人）— 图片注入 ──
+    block_f = dict(blocks_hc.get("block_f", {}))
+    block_f["bg_image"] = scene_image
+    block_f["product_image"] = product_image
+
+    # ── 固定卖点图 ──
+    fixed_selling_images = [
+        f"/static/{product_type}/{fname}"
+        for fname in cfg.get("fixed_selling_images", [])
+    ]
+
+    data = {
+        "product_type": product_type,
+        "block_a": block_a,
+        "block_b2": blocks_hc.get("block_b2", {}),
+        "block_b3": block_b3,
+        "block_f": block_f,
+        "block_e": block_e,
+        "fixed_selling_images": fixed_selling_images,
+        "hero_block_template": cfg.get("hero_block_template", "blocks/block_a_hero_robot_cover.html"),
+        "spec_block_template": cfg.get("spec_block_template", "blocks/block_e_glass_dimension.html"),
+    }
+
+    # 保存预览数据供导出使用
+    _save_data = dict(data)
+    _last_preview = OUTPUT_DIR / f"_last_{product_type}_preview.json"
+    with open(_last_preview, "w", encoding="utf-8") as fp:
+        json.dump(_save_data, fp, ensure_ascii=False)
+
+    return render_template(f"{product_type}/assembled.html", **data)
+
+
+# ── 导出PNG（Playwright截图）────────────────────────────────────────
+
+@app.route('/export/<product_type>', methods=['POST'])
+def export_generic(product_type):
+    preview_json = OUTPUT_DIR / f"_last_{product_type}_preview.json"
+    if not preview_json.exists():
+        return jsonify({"error": "没有预览数据，请先生成预览"}), 400
+
+    with open(preview_json, "r", encoding="utf-8") as fp:
+        data = json.load(fp)
+
+    data["export_mode"] = True
+
+    tpl = f"{product_type}/assembled.html"
+    html_content = render_template(tpl, **data)
+
+    base_url_str = str(BASE_DIR).replace("\\", "/")
+    html_content = html_content.replace('src="/static/', f'src="file:///{base_url_str}/static/')
+    html_content = html_content.replace("src='/static/", f"src='file:///{base_url_str}/static/")
+
+    temp_html = OUTPUT_DIR / f"_export_{product_type}.html"
+    with open(temp_html, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    from datetime import datetime
+    model_name = data.get("block_a", {}).get("model_name", product_type)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_filename = f"{product_type}_{model_name}_{timestamp}.png"
+    out_path = STATIC_OUTPUTS / out_filename
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                args=["--disable-web-security", "--allow-file-access-from-files"]
+            )
+            ctx = browser.new_context(
+                viewport={"width": 750, "height": 900},
+                device_scale_factor=2,
+            )
+            page = ctx.new_page()
+            page.goto(temp_html.as_uri(), wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
+            page.screenshot(path=str(out_path), full_page=True)
+            browser.close()
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": f"Playwright截图失败: {exc}"}), 500
+
+    return send_file(str(out_path), mimetype="image/png",
+                     as_attachment=True, download_name=out_filename)
+
+
+# ── 设备类静态预览（调试用）──────────────────────────────────────────
+
+@app.route("/preview/设备类")
+def preview_equipment():
+    cfg = _load_build_config(PRODUCT_TYPE) or {}
+    _bhc = cfg.get("blocks_hardcoded") or {}
+    _defs = cfg.get("defaults") or {}
+    _hcov = cfg.get("hero_cover_defaults") or {}
+    _dims = cfg.get("default_dims") or {}
+
+    fixed_selling_images = [
+        f"/static/{PRODUCT_TYPE}/{fname}"
+        for fname in cfg.get("fixed_selling_images", [])
+    ]
+
+    data = {
+        "product_type": PRODUCT_TYPE,
+        "hero_block_template": cfg.get("hero_block_template", "blocks/block_a_hero_robot_cover.html"),
+        "spec_block_template": cfg.get("spec_block_template", "blocks/block_e_glass_dimension.html"),
+        "fixed_selling_images": fixed_selling_images,
+        "block_a": {
+            "brand_text": _defs.get("brand_text", ""),
+            "model_name": _defs.get("model_name", ""),
+            "bg_image": "",
+            "product_image": "",
+            "tagline_line1": _defs.get("tagline_line1", ""),
+            "tagline_line2": _defs.get("tagline_line2", ""),
+            "tagline_sub": _defs.get("tagline_sub", ""),
+            "logo_image": "",
+            "category_line": _hcov.get("category_line", ""),
+            "main_title": _hcov.get("main_title", ""),
+            "hero_subtitle_pre": _hcov.get("hero_subtitle_pre", ""),
+            "hero_subtitle_em": _hcov.get("hero_subtitle_em", ""),
+            "hero_subtitle_post": _hcov.get("hero_subtitle_post", ""),
+            "footer_note": _hcov.get("footer_note", ""),
+            "cover_image": f"/static/{PRODUCT_TYPE}/ref_dz50x_cover.png",
+            "floor_bg_image": "",
+            "bg_focal": _hcov.get("bg_focal", "center bottom"),
+            "show_hero_params": False,
+            "params": [
+                {"value": hp.get("default_value", ""), "label": hp.get("label", "")}
+                for hp in cfg.get("hero_params", [])
+            ],
+        },
+        "block_b2": _bhc.get("block_b2", {}),
+        "block_b3": dict(_bhc.get("block_b3", {})),
+        "block_f": dict(_bhc.get("block_f", {})),
+        "block_e": {
+            "title": "产品参数",
+            "subtitle": "规格一览",
+            "red_bar_text": f"{_defs.get('model_name', '')}创新升级",
+            "product_image": "",
+            "dim_height": _dims.get("height", ""),
+            "dim_width": _dims.get("width", ""),
+            "dim_length": _dims.get("length", ""),
+            "specs": [
+                {"name": x.get("name", ""), "value": x.get("value", "")}
+                for x in cfg.get("default_specs", [])
+            ],
+            "footnote": "*人工测量有误差",
+        },
+    }
+    return render_template(f"{PRODUCT_TYPE}/assembled.html", **data)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -453,6 +774,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print("  物保云产品详情页生成器 - Web UI")
     print("=" * 50)
-    print("  访问: http://localhost:5000")
+    print(f"  入口: http://localhost:5000/build/{PRODUCT_TYPE}")
+    print(f"  预览: http://localhost:5000/preview/{PRODUCT_TYPE}")
     print("=" * 50)
     app.run(debug=True, port=5000, use_reloader=False)

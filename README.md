@@ -7,46 +7,54 @@
 ## 文件结构
 
 ```
-├── render.py              # 主程序：读配置 → 渲染 HTML → Playwright 截图
-├── template.html          # 详情页 HTML 模板（Jinja2，750px 宽，三屏）
-├── product_config.json    # 当前产品配置（换产品时改这个）
-├── find_coords.py         # 工具：在模板图上生成坐标网格（调试用）
-├── image_map.json         # 图片语义映射（overlay 方案遗留，可忽略）
-├── file_paths.json        # 模板图路径缓存（overlay 方案遗留，可忽略）
-└── output/                # 生成结果目录
-    ├── DW1250_PLUS_detail.png   # 最新生成的详情页图片
-    ├── _temp_preview.html       # 上次渲染的 HTML 预览（浏览器可直接打开）
-    └── ...                      # 其他历史输出
+├── app.py                 # Flask 后端（Web UI 入口，python app.py 启动）
+├── render.py              # 核心渲染逻辑：normalize → Playwright 截图
+├── generate.py            # 命令行入口（调用 render.py）
+├── template.html          # 详情页 HTML 模板（Jinja2，750px 宽，五屏）
+├── requirements.txt       # Python 依赖
+├── product_config.json    # 当前产品配置（命令行模式用）
+├── web_ui/
+│   └── index.html         # 前端单页应用（四步骤 UI）
+├── uploads/               # 上传图片临时目录（自动创建）
+├── output/                # 生成结果目录
+│   ├── *_detail.png        # 生成的详情页图片
+│   └── _temp_preview.html  # 上次渲染的 HTML 预览
+└── templates/             # 固定屏图片模板（按产品类型）
+    └── 扫地车/
+        ├── screen2.jpg
+        └── screen4.jpg
 ```
 
 ---
 
 ## 快速运行
 
+### 方式一：Web UI（推荐）
+
 ```powershell
-cd C:\your\project\path
-python render.py
+cd C:\Users\28293\clean-industry-ai-assistant
+pip install -r requirements.txt
+playwright install chromium
+python app.py
+```
+
+浏览器打开 **http://localhost:5000**，按步骤填写信息即可生成。
+
+### 方式二：命令行
+
+```powershell
+cd C:\Users\28293\clean-industry-ai-assistant
+python render.py                        # 使用 product_config.json
+python render.py DZ10_config.json       # 指定配置文件
+python render.py --scale 1             # 1x 普通分辨率（文件更小）
 ```
 
 输出文件自动保存到 `output/<型号>_detail.png`，生成后自动打开预览。
 
-### 可选参数
-
-```powershell
-# 生成 1x 普通分辨率（750px 宽，文件更小）
-python render.py --scale 1
-
-# 指定其他配置文件（多产品并行时使用）
-python render.py H650Plus_config.json
-
-# 组合使用
-python render.py H650Plus_config.json --scale 1
-```
-
 ### 依赖安装（首次运行）
 
 ```powershell
-pip install jinja2 playwright
+pip install -r requirements.txt
 playwright install chromium
 ```
 

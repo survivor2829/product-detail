@@ -986,6 +986,32 @@ function fillFormFromParsed(d) {
   set('p-width', d.param_width);
   set('p-capacity', d.param_capacity);
   set('p-runtime', d.param_runtime);
+
+  // 效率相关字段 - 存入隐藏input
+  let hiddenFields = ['efficiency_value','people_count','savings_claim','efficiency_claim'];
+  hiddenFields.forEach(key => {
+    let el = document.getElementById('f-' + key.replace(/_/g,'-'));
+    if (!el) {
+      el = document.createElement('input');
+      el.type = 'hidden';
+      el.id = 'f-' + key.replace(/_/g,'-');
+      document.getElementById('panel-2').appendChild(el);
+    }
+    el.value = d[key] || '';
+  });
+
+  // core_params 4个输入框
+  if (d.core_params) {
+    const coreKeys = Object.keys(d.core_params);
+    const inputs = ['p-efficiency','p-width','p-capacity','p-runtime'];
+    const labels = ['工作效率','清扫宽度','尘箱容量','工作时间'];
+    labels.forEach((label, i) => {
+      const val = d.core_params[label] || d.core_params[coreKeys[i]] || '';
+      const el = document.getElementById(inputs[i]);
+      if (el) el.value = val;
+    });
+  }
+
   if (Array.isArray(d.advantages)) {
     d.advantages.slice(0, 6).forEach((v, i) => set('adv-' + (i + 1), v));
   }
@@ -1325,6 +1351,10 @@ function buildPayload() {
     param_width:      document.getElementById('p-width').value.trim(),
     param_capacity:   document.getElementById('p-capacity').value.trim(),
     param_runtime:    document.getElementById('p-runtime').value.trim(),
+    efficiency_value: document.getElementById('f-efficiency-value')?.value || '',
+    people_count: document.getElementById('f-people-count')?.value || '',
+    savings_claim: document.getElementById('f-savings-claim')?.value || '',
+    efficiency_claim: document.getElementById('f-efficiency-claim')?.value || '',
     detail_params:  getManualDetailRows(),
     advantages: [1,2,3,4,5,6].map(i => document.getElementById('adv-' + i).value.trim()),
     dimensions: {

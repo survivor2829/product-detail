@@ -1,0 +1,112 @@
+<!--
+  Block A — 商用机器人/清洁设备「封面首屏」
+  宽度 750px
+
+  场景图（floor_bg_image）铺满整个英雄屏；产品图（product_image）居中叠放。
+  若传入 cover_image（成品宣发图）则直接显示整张图，不做合成。
+
+  变量：
+  - logo_image: 可选，顶部 Logo URL
+  - category_line: 品类一行，如「多功能清洁机器人」
+  - model_name: 型号，胶囊标签
+  - main_title: 主标题
+  - hero_subtitle_pre, hero_subtitle_em, hero_subtitle_post: 副标题三段
+  - tagline_sub: 兼容旧表单：若三段副标题皆空则显示此项
+  - cover_image, floor_bg_image, product_image: URL
+  - bg_focal: 背景 object-position，默认 center center
+  - footer_note: 底部灰字声明
+  - show_hero_params: 是否显示底部参数条
+  - params: [{label, value}, ...]
+-->
+<div style="width:750px; font-family:'PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif; overflow:hidden;">
+
+  {% if cover_image %}
+  <!-- ── 成品宣发图模式：直接全图显示 ── -->
+  <div style="position:relative; width:750px;">
+    <img src="{{ cover_image }}" alt="" style="width:750px; display:block; object-fit:cover;">
+  </div>
+
+  {% else %}
+  <!-- ── 合成模式：场景图满铺 + 产品图叠放 ── -->
+  <div style="position:relative; width:750px; min-height:520px; overflow:hidden; background:#c8d8ec;">
+
+    <!-- 场景底图：铺满整个英雄屏 -->
+    {% if floor_bg_image %}
+    <img src="{{ floor_bg_image }}" alt=""
+      style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:{{ bg_focal|default('center center') }};">
+    {% else %}
+    <div style="position:absolute; inset:0; background:linear-gradient(160deg,#d5e8f6 0%,#bdd0e8 55%,#a8c0da 100%);"></div>
+    {% endif %}
+
+    <!-- 顶部渐变遮罩，让文字可读 -->
+    <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(10,20,40,0.55) 0%, rgba(10,20,40,0.25) 40%, rgba(0,0,0,0) 65%); pointer-events:none;"></div>
+
+    <!-- 文字区（叠加在场景图上） -->
+    <div style="position:relative; z-index:2; padding:32px 28px 10px; text-align:center;">
+      {% if logo_image %}
+      <div style="margin-bottom:14px;">
+        <img src="{{ logo_image }}" alt="" style="max-height:52px; max-width:240px; object-fit:contain; vertical-align:middle;">
+      </div>
+      {% endif %}
+
+      <div style="display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <span style="font-size:20px; color:rgba(255,255,255,0.9); font-weight:500; letter-spacing:0.5px;">
+          {{ category_line or brand_text or '' }}
+        </span>
+        {% if model_name %}
+        <span style="font-size:18px; color:#fff; background:rgba(255,255,255,0.18); border:1px solid rgba(255,255,255,0.45); padding:4px 16px; border-radius:999px; font-weight:700; backdrop-filter:blur(4px);">
+          {{ model_name }}
+        </span>
+        {% endif %}
+      </div>
+
+      {% if main_title %}
+      <h1 style="margin:8px 0 0; font-size:46px; font-weight:900; color:#fff; line-height:1.2; letter-spacing:0.5px; text-shadow:0 2px 12px rgba(0,0,0,0.3);">
+        {{ main_title }}
+      </h1>
+      {% endif %}
+
+      <div style="margin-top:12px; font-size:22px; color:rgba(255,255,255,0.88); line-height:1.5; font-weight:500; text-shadow:0 1px 8px rgba(0,0,0,0.25);">
+        {% if hero_subtitle_pre or hero_subtitle_em or hero_subtitle_post %}
+          {{ hero_subtitle_pre }}<span style="color:#ffcc44; font-weight:800;">{{ hero_subtitle_em }}</span>{{ hero_subtitle_post }}
+        {% elif tagline_sub %}
+          {{ tagline_sub }}
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- 产品图（叠在场景上，底部对齐） -->
+    <div style="position:relative; z-index:2; width:100%; height:360px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:16px;">
+      {% if product_image %}
+      <img src="{{ product_image }}" alt=""
+        style="max-width:75%; max-height:340px; object-fit:contain; filter:drop-shadow(0 16px 32px rgba(0,0,0,0.30));">
+      {% else %}
+      <div style="padding:32px; color:rgba(255,255,255,0.6); font-size:18px; text-align:center;">请上传产品主图（抠图）</div>
+      {% endif %}
+    </div>
+
+    {% if footer_note %}
+    <div style="position:relative; z-index:2; padding:0 28px 18px; text-align:center; font-size:14px; color:rgba(255,255,255,0.55);">
+      {{ footer_note }}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- ── 底部参数条 ── -->
+  {% if show_hero_params and params %}
+  {% set valid_params = params | selectattr('value') | list %}
+  {% set valid_params = valid_params | rejectattr('value', 'equalto', '--') | list %}
+  {% if valid_params %}
+  <div style="background:#fff; border-top:5px solid #E8231A; display:flex;">
+    {% for param in valid_params %}
+    <div style="flex:1; min-width:0; text-align:center; padding:14px 8px 12px; height:76px; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center;{% if not loop.last %} border-right:1px solid #eee;{% endif %}">
+      <div style="font-size:26px; font-weight:800; color:#1a1a1a; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;">{{ param.value }}</div>
+      <div style="font-size:17px; color:#7b7b7b; margin-top:5px; line-height:1.1;">{{ param.label or '参数' }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+</div>

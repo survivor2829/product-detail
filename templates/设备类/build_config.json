@@ -1,0 +1,163 @@
+{
+  "name": "设备类",
+  "product_type": "设备类",
+  "engines": ["legacy", "blocks"],
+  "default_engine": "blocks",
+  "hero_block_template": "blocks/block_a_hero_robot_cover.html",
+  "spec_block_template": "blocks/block_e_glass_dimension.html",
+  "screen_7_block": "b3",
+  "hero_cover_defaults": {
+    "category_line": "多功能清洁机器人",
+    "main_title": "室内商用清洁机器人",
+    "hero_subtitle_pre": "中小型场景 ",
+    "hero_subtitle_em": "AI",
+    "hero_subtitle_post": " 清洁能手",
+    "footer_note": "*产品不定期升级，外观及颜色可能有部分差异，以实际发货为准。",
+    "bg_focal": "center bottom"
+  },
+  "generic_enabled_screens": [1, 2, 5, 7, 10],
+  "simple_enabled_screens": [1, 2, 5, 7, 10],
+  "defaults": {
+    "brand_text": "德威莱克商用清洁设备",
+    "brand": "德威莱克",
+    "brand_en": "DWEILK",
+    "model_name": "DZ50X",
+    "product_name": "商用清洁机器人",
+    "tagline_line1": "",
+    "tagline_line2": "",
+    "tagline_sub": "专业解决地面清洁难题"
+  },
+  "hero_params": [
+    {"label": "洗地效率", "default_value": "350-450m²/h"},
+    {"label": "清扫作业宽度", "default_value": "490mm"},
+    {"label": "清水箱", "default_value": "10L"},
+    {"label": "续航时间", "default_value": "2-4h"}
+  ],
+  "default_specs": [
+    {"name": "洗地效率", "value": "350-450m²/h"},
+    {"name": "扫地效率", "value": "400-550m²/h"},
+    {"name": "吸尘效率", "value": "350-400m²/h"},
+    {"name": "尘推效率", "value": "500-600m²/h"},
+    {"name": "洗地作业宽度", "value": "370mm"},
+    {"name": "清扫作业宽度", "value": "490mm"},
+    {"name": "续航时间", "value": "2-4h"},
+    {"name": "充电时间", "value": "1.8h"},
+    {"name": "电池容量", "value": "30Ah"},
+    {"name": "产品净重", "value": "60kg"},
+    {"name": "产品尺寸", "value": "500*580*600mm"}
+  ],
+  "default_dims": {
+    "height": "600mm",
+    "width": "580mm",
+    "length": "500mm"
+  },
+  "fixed_screens": {
+    "场所": "screen_fixed_场所.jpg",
+    "污渍": "screen_fixed_污渍.jpg"
+  },
+  "blocks_hardcoded": {
+    "block_b2": {
+      "title_num": "9",
+      "title_text": "大硬核优势",
+      "subtitle": "AI清洁创新升级",
+      "grid_columns": 3,
+      "items": [
+        {"icon_image": "", "icon_text": "⏱", "label": "定时任务"},
+        {"icon_image": "", "icon_text": "◎", "label": "洗地·扫地·吸尘<br>尘推一体"},
+        {"icon_image": "", "icon_text": "🔋", "label": "自主回充<br>加排水"},
+        {"icon_image": "", "icon_text": "📊", "label": "智慧管理<br>APP&云平台"},
+        {"icon_image": "", "icon_text": "🧭", "label": "自主导航<br>&环境识别"},
+        {"icon_image": "", "icon_text": "🛡", "label": "多重<br>安全防护"},
+        {"icon_image": "", "icon_text": "📍", "label": "适用各种污渍<br>全覆盖清扫"},
+        {"icon_image": "", "icon_text": "🎤", "label": "人机交互<br>拟人化设计"},
+        {"icon_image": "", "icon_text": "▦", "label": "硬质地面<br>地毯兼容"}
+      ]
+    },
+    "block_b3": {
+      "header_line1": "双滚拖+滚刷设计",
+      "header_line2": "有效去除顽固污渍。",
+      "hero_image": "",
+      "caption_line1": "500转/分/滚拖，1300转/分/滚刷",
+      "caption_line2": "洗刷一体，同步进行",
+      "floor_title": "",
+      "floor_items": [
+        {"icon_text": "岩", "label": "大理石"},
+        {"icon_text": "磨", "label": "水磨石"},
+        {"icon_text": "塑", "label": "塑胶地板"},
+        {"icon_text": "瓷", "label": "瓷砖"},
+        {"icon_text": "环", "label": "环氧地坪"},
+        {"icon_text": "人", "label": "人造石"},
+        {"icon_text": "毯", "label": "短毛地毯"},
+        {"icon_text": "砂", "label": "砂岩"}
+      ],
+      "footer_line1": "地面、地毯强力直吸，20000PA超大吸力",
+      "footer_line2": "灰尘、碎屑一吸而净"
+    },
+    "block_c1": {
+      "title_line1": "1次充电工作3H左右",
+      "title_line2": "锂电与铅酸",
+      "title_line2_red": "的区别。",
+      "subtitle": "锂电上午工作3H，中午快充2H，<br>下午再用2H，1天可工作5H左右",
+      "left_image": "",
+      "left_label": "全新电芯锂电1块",
+      "right_image": "",
+      "right_label": "铅酸电池2块",
+      "rows": [
+        {"label": "充电时长", "left_value": "4小时充满", "left_note": "* 以100AH为例", "right_value": "8小时充满", "right_note": "* 以100AH为例"},
+        {"label": "充放电数", "left_value": "充放电1500~2000次", "left_note": "循环充放电次数多", "right_value": "充放电500次以内", "right_note": "循环充放电次数少"},
+        {"label": "体积重量", "left_value": "体积小 重量轻", "left_note": "同等电压重约20KG", "right_value": "体积大 重量重", "right_note": "重量是锂电的3倍"},
+        {"label": "充电方式", "left_value": "随充随用 可快充", "left_note": "午休的机会也能充电", "right_value": "不支持快充", "right_note": "充满8小时才能使用"},
+        {"label": "安装耗时", "left_value": "1分钟安装完成", "left_note": "节约安装时间，省时", "right_value": "安装耗时长", "right_note": "用时是锂电的4倍"}
+      ]
+    },
+    "block_f": {
+      "title_line1": "1台顶",
+      "title_line1_red": "8-10",
+      "title_line1_end": "人",
+      "title_line2": "机洗与人工",
+      "title_line2_red": "的区别。",
+      "vs_left_title": "机械清洁",
+      "vs_left_sub": "省时省钱省心",
+      "vs_right_title": "传统人工",
+      "vs_right_sub": "费时费钱费心",
+      "vs_left_bottom": "1台可顶8-10人<br>一年劲省26W+元",
+      "vs_right_bottom": "人工效率低<br>成本高"
+    },
+    "block_d1": {
+      "title_line1_pre": "3600m²/h",
+      "title_line1_red": "清洁效率",
+      "title_line1_end": "",
+      "title_line2": "适用万平场所清洁。",
+      "badge_text": ""
+    },
+    "block_c3": {
+      "title_before": "升级前",
+      "title_after": "升级后",
+      "comparisons": [
+        {"before_image": "", "after_image": "", "before_title": "单前轮", "before_desc": "转向不平稳易打滑", "after_title": "双前轮", "after_desc": "转向平稳不打滑"},
+        {"before_image": "", "after_image": "", "before_title": "细支架", "before_desc": "支架过细，不安全", "after_title": "粗支架", "after_desc": "加粗防侧翻支架"}
+      ]
+    },
+    "block_d2": {
+      "title_line1": "操作简单易上手",
+      "title_line2": "老年人也能轻松驾驭",
+      "subtitle": "面板清晰，标识易懂，节约培训成本",
+      "detail_image": "",
+      "bottom_text": "匠心打造，精工品质"
+    }
+  },
+  "legacy_defaults": {
+    "efficiency_claim": "1台顶8-10人",
+    "efficiency_value": "3600m²/h",
+    "savings_claim": "26W+元",
+    "people_count": "8-10",
+    "machine_name": "商用清洁设备"
+  },
+  "fixed_selling_images": [],
+  "ai_detail_key_priority": [
+    "清洗宽度", "清扫宽度", "吸水宽度", "清水容量", "污水容量", "水箱容量",
+    "工作效率", "工作时间", "续航时间", "刷盘功率", "吸水功率", "驱动功率",
+    "刷盘电机", "吸水电机", "刷盘压力", "工作噪音", "电瓶容量", "锂电容量",
+    "整机重量", "产品尺寸", "设备尺寸"
+  ]
+}

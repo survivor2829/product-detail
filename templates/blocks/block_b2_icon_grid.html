@@ -1,0 +1,63 @@
+<!--
+  Block B2 — 图标宫格屏（icon_grid）
+  用途：红色背景 + 大标题 + 6个圆形图标带文字
+  宽度：750px
+  
+  需要传入的变量：
+  - title_num: 数字部分（如"6"）
+  - title_text: 标题文字（如"大硬核优势"）
+  - subtitle: 副标题（如"Plus 创新升级"）
+  - items: 图标项列表，每项格式：
+      {
+        "icon_image": "图标图片路径（可选，留空用文字代替）",
+        "icon_text": "图标内文字（当没有icon_image时显示，如"电"）",
+        "label": "底部文字（如"全新锂电\n续航久"）"
+      }
+    可任意项数；grid_columns（默认3）控制列数，行数随 items 自动换行。
+-->
+<div style="width:750px; font-family:'PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif; overflow:hidden;">
+  
+  <!-- 红色背景区 -->
+  <div style="background:linear-gradient(180deg, #E8231A 0%, #d41f17 100%); padding:50px 36px 50px;">
+    
+    <!-- 标题（title_num 留空则使用 items 数量） -->
+    {% set _cols = (grid_columns|default(3))|int %}
+    {% set _tn = title_num if title_num else (items|length|string) %}
+    <div style="display:flex; align-items:baseline; gap:4px;">
+      <span style="font-size:80px; font-weight:900; color:#fff; line-height:1;">{{ _tn }}</span>
+      <span style="font-size:48px; font-weight:800; color:#fff;">{{ title_text }}</span>
+    </div>
+    
+    <!-- 副标题 + 红色箭头 -->
+    <div style="display:flex; align-items:center; gap:12px; margin-top:18px;">
+      <div style="display:flex; gap:2px; flex-shrink:0;">
+        <span style="display:inline-block; width:0; height:0; border-top:7px solid transparent; border-bottom:7px solid transparent; border-left:10px solid #fff;"></span>
+        <span style="display:inline-block; width:0; height:0; border-top:7px solid transparent; border-bottom:7px solid transparent; border-left:10px solid #fff;"></span>
+        <span style="display:inline-block; width:0; height:0; border-top:7px solid transparent; border-bottom:7px solid transparent; border-left:10px solid #fff;"></span>
+      </div>
+      <div style="font-size:26px; color:rgba(255,255,255,0.9);">{{ subtitle }}</div>
+    </div>
+    
+    <!-- 图标网格：列数可配置（如 3 列=每行3个，6/9 大优势均适配） -->
+    <div style="display:grid; grid-template-columns:repeat({{ _cols }}, 1fr); gap:30px 20px; margin-top:40px;">
+      {% for item in items %}
+      <div style="text-align:center;">
+        <!-- 圆形图标 -->
+        <div style="width:120px; height:120px; margin:0 auto; background:rgba(255,255,255,0.92); border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 15px rgba(0,0,0,0.1);">
+          {% if item.icon_image %}
+          <img src="{{ item.icon_image }}" style="width:56px; height:56px; object-fit:contain;" alt="">
+          {% else %}
+          <span style="font-size:40px; color:#999;">{{ item.icon_text|default('●') }}</span>
+          {% endif %}
+        </div>
+        <!-- 文字标签 -->
+        <div style="margin-top:14px; font-size:22px; font-weight:600; color:#fff; line-height:1.5;">
+          {{ item.label | replace('\n', '<br>') | safe }}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    
+  </div>
+  
+</div>

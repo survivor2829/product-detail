@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>{{ config.name }} · 快速生成</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", sans-serif; max-width: 720px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+  h1 { margin-bottom: 6px; font-size: 22px; }
+  .subtitle { color: #666; font-size: 14px; margin-bottom: 20px; line-height: 1.5; }
+  .section { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  .section-title { font-size: 16px; font-weight: bold; margin-bottom: 14px; color: #222; border-left: 4px solid #E8231A; padding-left: 10px; }
+  .upload-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .upload-box { border: 2px dashed #ccc; border-radius: 8px; padding: 14px; text-align: center; position: relative; background: #fafafa; min-height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: border-color .2s; }
+  .upload-box:hover { border-color: #E8231A; }
+  .upload-box.required { border-color: #E8231A; }
+  .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-box .icon { font-size: 28px; color: #ccc; margin-bottom: 5px; }
+  .upload-box .label { font-size: 13px; font-weight: bold; color: #333; }
+  .upload-box .hint { font-size: 11px; color: #999; margin-top: 4px; line-height: 1.4; }
+  .upload-box .tag-required { position: absolute; top: 6px; right: 6px; background: #E8231A; color: #fff; font-size: 10px; padding: 2px 5px; border-radius: 3px; }
+  .upload-box .preview-img { max-width: 100%; max-height: 80px; display: none; border-radius: 4px; }
+  .field { margin: 10px 0; display: flex; align-items: flex-start; gap: 10px; }
+  .field label { min-width: 88px; font-size: 14px; color: #555; text-align: right; padding-top: 8px; }
+  .field textarea { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: inherit; min-height: 130px; resize: vertical; }
+  .ai-actions { margin: 6px 0 0 98px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ai-btn { background: #E8231A; color: #fff; border: none; border-radius: 6px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
+  .ai-btn:hover { background: #c91a12; }
+  .ai-btn:disabled { background: #999; cursor: wait; }
+  .ai-status { font-size: 13px; color: #888; }
+  button[type="submit"] { background: #E8231A; color: #fff; border: none; padding: 14px 40px; font-size: 17px; border-radius: 8px; cursor: pointer; margin-top: 6px; display: block; width: 100%; }
+  button[type="submit"]:hover { background: #c91a12; }
+  .hidden-fields { display: none !important; }
+  .step-num { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: #E8231A; color: #fff; border-radius: 50%; font-size: 12px; margin-right: 8px; vertical-align: middle; }
+  /* 生成加载遮罩 */
+  #genOverlay {
+    display: none; position: fixed; inset: 0; z-index: 99999;
+    background: rgba(10,12,20,0.85); backdrop-filter: blur(6px);
+    flex-direction: column; align-items: center; justify-content: center;
+  }
+  #genOverlay.active { display: flex; }
+  .gen-card {
+    background: #1e2235; border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 18px; padding: 44px 60px; text-align: center;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.5); min-width: 280px;
+  }
+  .gen-spinner {
+    width: 52px; height: 52px; border: 4px solid rgba(255,255,255,0.1);
+    border-top-color: #E8231A; border-radius: 50%;
+    animation: gspin .75s linear infinite; margin: 0 auto 22px;
+  }
+  @keyframes gspin { to { transform: rotate(360deg); } }
+  .gen-title { color: #fff; font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .gen-steps { color: rgba(255,255,255,0.4); font-size: 13px; line-height: 1.8; }
+  .params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .param-row { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; }
+  .param-row input { min-width: 0; flex: 1; padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+  .param-row .param-label-input { flex: 0 0 90px; min-width: 0; color: #888; }
+  .specs-table { width: 100%; border-collapse: collapse; }
+  .specs-table th, .specs-table td { padding: 6px 8px; border: 1px solid #eee; font-size: 13px; }
+  .specs-table th { background: #f9f9f9; color: #555; text-align: left; width: 140px; }
+  .specs-table input { width: 100%; border: none; outline: none; font-size: 13px; background: transparent; }
+  .dims-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .dims-row label { font-size: 13px; color: #666; min-width: 36px; }
+  .dims-row input { flex: 1; padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>{{ config.name }} · 详情长图</h1>
+<p class="subtitle">
+  <span class="step-num">1</span>上传产品图与场景图 &rarr;
+  <span class="step-num">2</span>粘贴资料并 AI 识别 &rarr;
+  <span class="step-num">3</span>生成预览 &rarr;
+  <span class="step-num">4</span>导出 PNG
+</p>
+
+<!-- 生成加载遮罩 -->
+<div id="genOverlay">
+  <div class="gen-card">
+    <div class="gen-spinner"></div>
+    <div class="gen-title">正在组装详情页…</div>
+    <div class="gen-steps">上传图片 · 渲染积木 · 合成预览</div>
+  </div>
+</div>
+
+<form method="POST" enctype="multipart/form-data" id="buildForm">
+<input type="hidden" name="product_type" value="{{ product_type }}">
+
+{# 隐藏字段：英雄屏文案（AI识别后填入，或使用默认值） #}
+{% set hc = config.get('hero_cover_defaults', {}) %}
+<div id="hiddenFormFields" class="hidden-fields" aria-hidden="true">
+  <input type="text" name="category_line" value="{{ hc.get('category_line', '') }}">
+  <input type="text" name="main_title" value="{{ hc.get('main_title', '') }}">
+  <input type="text" name="hero_subtitle_pre" value="{{ hc.get('hero_subtitle_pre', '') }}">
+  <input type="text" name="hero_subtitle_em" value="{{ hc.get('hero_subtitle_em', '') }}">
+  <input type="text" name="hero_subtitle_post" value="{{ hc.get('hero_subtitle_post', '') }}">
+  <textarea name="footer_note" rows="1">{{ hc.get('footer_note', '') }}</textarea>
+  <input type="hidden" name="bg_focal" value="{{ hc.get('bg_focal', 'center bottom') }}">
+  <input type="text" name="brand_text" value="{{ config.defaults.brand_text }}">
+  <input type="text" name="tagline_line1" value="{{ config.defaults.tagline_line1 }}">
+  <input type="text" name="tagline_line2" value="{{ config.defaults.tagline_line2 }}">
+  <input type="text" name="tagline_sub" value="{{ config.defaults.tagline_sub }}">
+</div>
+
+{# ── 图片上传 ── #}
+<div class="section">
+  <div class="section-title">上传图片</div>
+  <div class="upload-grid">
+    <div class="upload-box required" id="box_product">
+      <span class="tag-required">必填</span>
+      <div class="icon">📷</div>
+      <div class="label">产品主图</div>
+      <div class="hint">透明底抠图，叠在首屏场景上</div>
+      <img class="preview-img" id="preview_product" alt="">
+      <input type="file" name="product_image" accept="image/*" required onchange="previewFile(this,'preview_product')">
+    </div>
+    <div class="upload-box required" id="box_scene">
+      <span class="tag-required">必填</span>
+      <div class="icon">🏢</div>
+      <div class="label">场景底图</div>
+      <div class="hint">首屏背景，地面场景渲染图</div>
+      <img class="preview-img" id="preview_scene" alt="">
+      <input type="file" name="scene_image" accept="image/*" required onchange="previewFile(this,'preview_scene')">
+    </div>
+    <div class="upload-box" id="box_side">
+      <div class="icon">📐</div>
+      <div class="label">侧面/参数图</div>
+      <div class="hint">可选，用于末屏参数表</div>
+      <img class="preview-img" id="preview_side" alt="">
+      <input type="file" name="product_side_image" accept="image/*" onchange="previewFile(this,'preview_side')">
+    </div>
+  </div>
+</div>
+
+{# ── AI 识别 ── #}
+<div class="section">
+  <div class="section-title">产品资料 · AI 识别</div>
+  <div class="field" style="align-items:flex-start;">
+    <label>粘贴文本</label>
+    <textarea id="ai_text_input" placeholder="粘贴彩页、参数表、电商文案或 JSON（品牌、型号、规格、尺寸等），点击识别后自动填入下方字段。"></textarea>
+  </div>
+  <div class="ai-actions">
+    <button type="button" class="ai-btn" id="ai_parse_btn" onclick="parseAiTextForBuild()">AI 识别并填表</button>
+    <span class="ai-status" id="ai_parse_status">识别后可直接生成；跳过则使用下方手填值或默认参数</span>
+  </div>
+</div>
+
+{# ── 型号 & 英雄参数 ── #}
+<div class="section">
+  <div class="section-title">型号 & 首屏参数</div>
+  <div class="field">
+    <label>型号</label>
+    <input type="text" name="model_name" value="{{ config.defaults.model_name }}" style="flex:1;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+  </div>
+  <div style="margin-top:10px;font-size:13px;color:#666;margin-bottom:8px;">首屏参数条（4 项，标签 + 值）</div>
+  <div class="params-grid">
+    {% for hp in config.hero_params %}
+    <div class="param-row">
+      <input class="param-label-input" type="text" name="param_{{ loop.index }}_label" value="{{ hp.label }}" placeholder="标签">
+      <input type="text" name="param_{{ loop.index }}_value" value="{{ hp.default_value }}" placeholder="值">
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── 产品参数表 ── #}
+<div class="section">
+  <div class="section-title">产品参数表（末屏）</div>
+  <div class="dims-row">
+    <label>长</label>
+    <input type="text" name="e_dim_length" value="{{ config.default_dims.length }}" placeholder="500mm">
+    <label>宽</label>
+    <input type="text" name="e_dim_width"  value="{{ config.default_dims.width  }}" placeholder="580mm">
+    <label>高</label>
+    <input type="text" name="e_dim_height" value="{{ config.default_dims.height }}" placeholder="600mm">
+  </div>
+  <table class="specs-table">
+    <thead><tr><th>参数名</th><th>参数值</th></tr></thead>
+    <tbody>
+      {% for sp in config.default_specs %}
+      <tr>
+        <td><input type="text" name="e_spec_name_{{ loop.index }}"  value="{{ sp.name }}"></td>
+        <td><input type="text" name="e_spec_value_{{ loop.index }}" value="{{ sp.value }}"></td>
+      </tr>
+      {% endfor %}
+      {% for i in range(config.default_specs|length + 1, 13) %}
+      <tr>
+        <td><input type="text" name="e_spec_name_{{ i }}"  placeholder="参数名"></td>
+        <td><input type="text" name="e_spec_value_{{ i }}" placeholder="参数值"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<button type="submit">生成详情页预览</button>
+</form>
+
+<script>
+var currentProductType = '{{ product_type }}';
+
+// 表单提交 → 显示加载遮罩
+document.getElementById('buildForm').addEventListener('submit', function() {
+  document.getElementById('genOverlay').classList.add('active');
+});
+
+function previewFile(input, imgId) {
+  var img = document.getElementById(imgId);
+  if (input.files && input.files[0]) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      img.src = e.target.result;
+      img.style.display = 'block';
+      var box = input.parentElement;
+      ['icon','label','hint'].forEach(function(cls) {
+        var el = box.querySelector('.' + cls);
+        if (el) el.style.display = 'none';
+      });
+    };
+    reader.readAsDataURL(input.files[0]);
+  }
+}
+
+function setFieldValue(name, value) {
+  if (value === undefined || value === null) return;
+  var el = document.querySelector('[name="' + name + '"]');
+  if (el) el.value = value;
+}
+
+function buildSpecsFromDetail(detail) {
+  if (!detail || typeof detail !== 'object') return [];
+  var priority = {{ config.ai_detail_key_priority | default([]) | tojson }};
+  var used = {}, rows = [];
+  (priority || []).forEach(function(k) {
+    if (rows.length >= 12) return;
+    var v = (detail[k] || '').toString().trim();
+    if (v) { rows.push({name:k,value:v}); used[k]=true; }
+  });
+  Object.keys(detail).forEach(function(k) {
+    if (rows.length >= 12 || used[k]) return;
+    var v = (detail[k] || '').toString().trim();
+    if (k && v) rows.push({name:k,value:v});
+  });
+  return rows;
+}
+
+function splitSloganText(text) {
+  text = (text || '').trim();
+  if (!text) return ['', ''];
+  var seps = ['，', ',', '。', '；', ';', '、'];
+  for (var i = 0; i < seps.length; i++) {
+    var sep = seps[i];
+    if (text.indexOf(sep) >= 0) {
+      var parts = text.split(sep).map(function(x){return x.trim();}).filter(Boolean);
+      if (parts.length >= 2) return [parts[0] + ((sep==='，'||sep===',') ? sep : ''), parts[1]];
+    }
+  }
+  if (text.length <= 12) return [text, ''];
+  var mid = Math.max(4, Math.floor(text.length / 2));
+  return [text.slice(0, mid), text.slice(mid)];
+}
+
+function normalizeParsedForBuild(data) {
+  // 如果服务器已返回映射好的字段，直接用
+  if (data.model_name || data.brand_text || Array.isArray(data.e_specs)) return data;
+  // 否则在客户端映射
+  var parsed = data || {};
+  var detail = (parsed.detail_params && typeof parsed.detail_params === 'object') ? parsed.detail_params : {};
+  var dimensions = (parsed.dimensions && typeof parsed.dimensions === 'object') ? parsed.dimensions : {};
+  var lines = splitSloganText(parsed.slogan || '');
+  var brand = (parsed.brand || '').toString().trim();
+  var pType = (parsed.product_type || '').toString().trim();
+  return {
+    brand_text: brand ? (brand + (pType || '')) : '',
+    model_name: parsed.model || parsed.product_name || '',
+    tagline_line1: lines[0] || '', tagline_line2: lines[1] || '',
+    tagline_sub: parsed.sub_slogan || '',
+    category_line: parsed.category_line || '',
+    main_title: parsed.main_title || parsed.product_name || '',
+    param_1_label: '工作效率', param_1_value: parsed.param_efficiency || detail['工作效率'] || detail['清洁效率'] || '',
+    param_2_label: '清扫作业宽度', param_2_value: parsed.param_width || detail['清扫作业宽度'] || detail['清洗宽度'] || detail['清扫宽度'] || '',
+    param_3_label: '清水箱', param_3_value: parsed.param_capacity || detail['清水容量'] || detail['水箱容量'] || detail['尘箱容量'] || '',
+    param_4_label: '续航时间', param_4_value: parsed.param_runtime || detail['续航时间'] || detail['工作时间'] || '',
+    e_specs: buildSpecsFromDetail(detail),
+    e_dim_length: dimensions.length || '', e_dim_width: dimensions.width || '', e_dim_height: dimensions.height || ''
+  };
+}
+
+async function postJson(url, payload) {
+  var resp = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+  var text = await resp.text();
+  var json;
+  try { json = JSON.parse(text); } catch(e) { throw new Error('接口返回非JSON（HTTP ' + resp.status + '）'); }
+  if (!resp.ok) throw new Error(json.error || ('请求失败（HTTP ' + resp.status + '）'));
+  return json;
+}
+
+async function parseAiTextForBuild() {
+  var text = (document.getElementById('ai_text_input').value || '').trim();
+  var btn = document.getElementById('ai_parse_btn');
+  var status = document.getElementById('ai_parse_status');
+  if (!text) { status.style.color='#c00'; status.textContent='请先粘贴产品资料文本'; return; }
+  btn.disabled = true; btn.textContent = '识别中…';
+  status.style.color = '#888'; status.textContent = '正在识别…';
+  try {
+    var data;
+    try { data = await postJson('/api/build/' + encodeURIComponent(currentProductType) + '/parse-text', {text:text}); }
+    catch(e) { data = await postJson('/api/parse-text', {text:text}); }
+    data = normalizeParsedForBuild(data);
+
+    setFieldValue('brand_text', data.brand_text || '');
+    setFieldValue('model_name', data.model_name || '');
+    if (data.category_line) setFieldValue('category_line', data.category_line);
+    if (data.main_title) setFieldValue('main_title', data.main_title);
+    setFieldValue('tagline_line1', data.tagline_line1 || '');
+    setFieldValue('tagline_line2', data.tagline_line2 || '');
+    setFieldValue('tagline_sub', data.tagline_sub || '');
+
+    for (var p = 1; p <= 4; p++) {
+      setFieldValue('param_' + p + '_label', data['param_' + p + '_label'] || '');
+      setFieldValue('param_' + p + '_value', data['param_' + p + '_value'] || '');
+    }
+
+    var specs = Array.isArray(data.e_specs) ? data.e_specs : [];
+    for (var i = 1; i <= 12; i++) {
+      var row = specs[i-1] || {};
+      setFieldValue('e_spec_name_' + i, row.name || '');
+      setFieldValue('e_spec_value_' + i, row.value || '');
+    }
+    setFieldValue('e_dim_height', data.e_dim_height || '');
+    setFieldValue('e_dim_width',  data.e_dim_width  || '');
+    setFieldValue('e_dim_length', data.e_dim_length || '');
+
+    status.style.color = '#2a7'; status.textContent = '识别完成！请检查参数后点击生成';
+  } catch(err) {
+    status.style.color = '#c00'; status.textContent = '识别失败：' + err.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'AI 识别并填表';
+  }
+}
+</script>
+</body>
+</html>
