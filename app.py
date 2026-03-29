@@ -339,7 +339,7 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
     _main = _first_nonempty(_to_str(parsed.get("main_title", "")), _pn)
     _cat = _to_str(parsed.get("category_line", ""))
 
-    return {
+    result = {
         "brand_text": brand_text,
         "model_name": model,
         "tagline_line1": tagline_line1,
@@ -356,6 +356,24 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         "e_dim_width": dim_width,
         "e_dim_height": dim_height,
     }
+
+    # block_b2 优势标签（来自实际产品功能）
+    advantage_labels = parsed.get("advantage_labels", [])
+    if isinstance(advantage_labels, list):
+        for i, label in enumerate(advantage_labels[:9]):
+            v = _to_str(label)
+            if v:
+                result[f"b2_label_{i+1}"] = v
+
+    # block_b3 清洁故事文案
+    clean_story = parsed.get("clean_story", {})
+    if isinstance(clean_story, dict):
+        for field in ["header_line1", "header_line2", "caption_line1", "caption_line2", "footer_line1", "footer_line2"]:
+            v = _to_str(clean_story.get(field, ""))
+            if v:
+                result[f"b3_{field}"] = v
+
+    return result
 
 
 # ── 配置加载 ─────────────────────────────────────────────────────────
@@ -465,11 +483,22 @@ def _call_deepseek_parse(raw_text: str) -> dict:
                 {
                     "role": "user",
                     "content": (
-                        "请把以下产品数据解析为JSON，字段包括：brand, brand_en, product_name, model, "
-                        "product_type（清洁设备类型）, slogan, sub_slogan, "
+                        "请把以下产品数据解析为JSON，字段包括：\n"
+                        "brand, brand_en, product_name, model, "
+                        "product_type（清洁设备类型）, slogan, sub_slogan,\n"
                         "detail_params（所有技术参数的完整键值对dict，如清洗宽度/清扫作业宽度/清水容量/"
-                        "工作效率/续航时间/电池容量/整机重量/产品尺寸等）, "
-                        "advantages(数组,最多6个), dimensions(length/width/height)。"
+                        "工作效率/续航时间/电池容量/整机重量/产品尺寸等）,\n"
+                        "dimensions（length/width/height），\n"
+                        "advantage_labels（数组，6-9个产品实际优势标签，简短词组，严格基于产品真实功能，不要编造），\n"
+                        "clean_story（对象，包含：\n"
+                        "  header_line1: 清洁核心机构或技术名称（如'双滚拖+滚刷设计'，必须是产品实有功能），\n"
+                        "  header_line2: 对该机构效果的简短声明（如'有效去除顽固污渍。'），\n"
+                        "  caption_line1: 关键技术参数短语（如'洗地宽度370mm，续航2-4h'，用产品实际数据），\n"
+                        "  caption_line2: 总结短语（如'全面清洁，一步到位'），\n"
+                        "  footer_line1: 核心能力宣称（如'20000PA超大吸力'，必须有对应真实参数支撑，无则留空），\n"
+                        "  footer_line2: 效果描述短句（如'灰尘碎屑一吸而净'）\n"
+                        ")。\n"
+                        "所有文案必须严格基于产品提供的真实数据，不得编造或套用通用模板。\n"
                         "只返回JSON，不要其他文字：\n\n" + raw_text
                     )
                 }
@@ -610,13 +639,30 @@ def build_submit_generic(product_type):
         "footnote": "*人工测量有误差",
     }
 
-    # ── blocks_hardcoded（从配置读）──
+    # ── blocks_hardcoded（从配置读，表单值可覆盖）──
     blocks_hc = cfg.get("blocks_hardcoded", {})
 
-    # ── Block B3（清洁故事）— 产品图注入 ──
+    # ── Block B2（优势网格）— 表单标签覆盖 ──
+    block_b2 = dict(blocks_hc.get("block_b2", {}))
+    b2_items_raw = block_b2.get("items", [])
+    b2_items = []
+    for i, item in enumerate(b2_items_raw):
+        it = dict(item)
+        form_label = form_text(f"b2_label_{i+1}", "")
+        if form_label:
+            it["label"] = form_label
+        b2_items.append(it)
+    block_b2["items"] = b2_items
+
+    # ── Block B3（清洁故事）— 表单文案覆盖 + 场景图注入 ──
     block_b3 = dict(blocks_hc.get("block_b3", {}))
+    for _field in ["header_line1", "header_line2", "caption_line1", "caption_line2", "footer_line1", "footer_line2"]:
+        _v = form_text(f"b3_{_field}", "")
+        if _v:
+            block_b3[_field] = _v
     if not (block_b3.get("hero_image") or "").strip():
         block_b3["hero_image"] = product_image
+    block_b3["scene_image"] = scene_image  # 场景图作为背景
 
     # ── Block F（1台顶8人）— 图片注入 ──
     block_f = dict(blocks_hc.get("block_f", {}))
@@ -632,7 +678,7 @@ def build_submit_generic(product_type):
     data = {
         "product_type": product_type,
         "block_a": block_a,
-        "block_b2": blocks_hc.get("block_b2", {}),
+        "block_b2": block_b2,
         "block_b3": block_b3,
         "block_f": block_f,
         "block_e": block_e,
