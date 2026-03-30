@@ -52,6 +52,28 @@
   @keyframes gspin { to { transform: rotate(360deg); } }
   .gen-title { color: #fff; font-size: 18px; font-weight: 700; margin-bottom: 8px; }
   .gen-steps { color: rgba(255,255,255,0.4); font-size: 13px; line-height: 1.8; }
+  /* 进度条 */
+  .gen-progress-wrap {
+    width: 100%; height: 6px; background: rgba(255,255,255,0.1);
+    border-radius: 3px; margin: 18px 0 12px; overflow: hidden;
+  }
+  .gen-progress-bar {
+    height: 100%; width: 0%; border-radius: 3px;
+    background: linear-gradient(90deg, #E8231A, #ff6b5e);
+    transition: width 0.4s ease;
+  }
+  .gen-step-list {
+    text-align: left; margin: 0; padding: 0; list-style: none;
+  }
+  .gen-step-list li {
+    color: rgba(255,255,255,0.3); font-size: 13px; padding: 3px 0;
+    transition: color 0.3s;
+  }
+  .gen-step-list li.active { color: #ffe9a8; }
+  .gen-step-list li.done { color: #4ade80; }
+  .gen-step-list li::before { content: '○ '; }
+  .gen-step-list li.active::before { content: '◉ '; }
+  .gen-step-list li.done::before { content: '✓ '; }
   .params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .param-row { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; }
   .param-row input { min-width: 0; flex: 1; padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
@@ -85,12 +107,13 @@
   <span class="step-num">4</span>导出 PNG
 </p>
 
-<!-- 生成加载遮罩 -->
+<!-- 生成/识别 进度遮罩 -->
 <div id="genOverlay">
   <div class="gen-card">
     <div class="gen-spinner"></div>
-    <div class="gen-title">正在组装详情页…</div>
-    <div class="gen-steps">上传图片 · 渲染积木 · 合成预览</div>
+    <div class="gen-title" id="genTitle">正在组装详情页…</div>
+    <div class="gen-progress-wrap"><div class="gen-progress-bar" id="genProgressBar"></div></div>
+    <ul class="gen-step-list" id="genStepList"></ul>
   </div>
 </div>
 
@@ -266,27 +289,55 @@
 <script>
 var currentProductType = '{{ product_type }}';
 
+// ── 进度条控制 ──
+function showProgress(title, steps) {
+  var overlay = document.getElementById('genOverlay');
+  document.getElementById('genTitle').textContent = title;
+  document.getElementById('genProgressBar').style.width = '0%';
+  var list = document.getElementById('genStepList');
+  list.innerHTML = '';
+  steps.forEach(function(s) {
+    var li = document.createElement('li');
+    li.textContent = s;
+    list.appendChild(li);
+  });
+  overlay.classList.add('active');
+}
+function updateProgress(stepIndex, totalSteps) {
+  var items = document.getElementById('genStepList').children;
+  var pct = Math.round(((stepIndex + 1) / totalSteps) * 100);
+  document.getElementById('genProgressBar').style.width = pct + '%';
+  for (var i = 0; i < items.length; i++) {
+    items[i].className = i < stepIndex ? 'done' : i === stepIndex ? 'active' : '';
+  }
+}
+function setProgressTitle(title) {
+  document.getElementById('genTitle').textContent = title;
+}
+
 // 表单提交：若有产品文本且卖点为空，先自动AI识别再提交
 document.getElementById('buildForm').addEventListener('submit', async function(e) {
   var text = (document.getElementById('ai_text_input') ? document.getElementById('ai_text_input').value : '').trim();
   var b2Label1 = (document.querySelector('[name="b2_label_1"]') ? document.querySelector('[name="b2_label_1"]').value : '').trim();
-  var overlay = document.getElementById('genOverlay');
 
   if (text && !b2Label1) {
     e.preventDefault();
-    overlay.querySelector('.gen-title').textContent = '正在AI分析卖点…';
-    overlay.querySelector('.gen-steps').textContent = '根据产品参数自动生成优势标签和清洁故事';
-    overlay.classList.add('active');
+    showProgress('正在AI分析卖点…', ['连接AI服务', '解析产品参数', '生成营销文案', '填入表单字段']);
+    updateProgress(0, 4);
     try {
       await parseAiTextForBuild();
-    } catch(err) {
-      // AI失败也继续提交，后端会用默认值
-    }
-    overlay.querySelector('.gen-title').textContent = '正在组装详情页…';
-    overlay.querySelector('.gen-steps').textContent = '上传图片 · 渲染积木 · 合成预览';
+    } catch(err) {}
+    showProgress('正在生成详情页…', ['读取表单数据', '上传图片到服务器', '渲染HTML积木', '合成预览页面']);
+    updateProgress(0, 4);
+    setTimeout(function(){ updateProgress(1, 4); }, 200);
+    setTimeout(function(){ updateProgress(2, 4); }, 500);
     document.getElementById('buildForm').submit();
   } else {
-    overlay.classList.add('active');
+    showProgress('正在生成详情页…', ['读取表单数据', '上传图片到服务器', '渲染HTML积木', '合成预览页面']);
+    updateProgress(0, 4);
+    setTimeout(function(){ updateProgress(1, 4); }, 300);
+    setTimeout(function(){ updateProgress(2, 4); }, 700);
+    setTimeout(function(){ updateProgress(3, 4); }, 1200);
   }
 });
 
@@ -318,12 +369,12 @@ function buildSpecsFromDetail(detail) {
   var priority = {{ config.ai_detail_key_priority | default([]) | tojson }};
   var used = {}, rows = [];
   (priority || []).forEach(function(k) {
-    if (rows.length >= 12) return;
+    if (rows.length >= 20) return;
     var v = (detail[k] || '').toString().trim();
     if (v) { rows.push({name:k,value:v}); used[k]=true; }
   });
   Object.keys(detail).forEach(function(k) {
-    if (rows.length >= 12 || used[k]) return;
+    if (rows.length >= 20 || used[k]) return;
     var v = (detail[k] || '').toString().trim();
     if (k && v) rows.push({name:k,value:v});
   });
@@ -386,11 +437,21 @@ async function parseAiTextForBuild() {
   var btn = document.getElementById('ai_parse_btn');
   var status = document.getElementById('ai_parse_status');
   if (!text) { status.style.color='#c00'; status.textContent='请先粘贴产品资料文本'; return; }
-  btn.disabled = true; btn.textContent = 'AI 识别中（约30秒）…';
-  status.style.color = '#888'; status.textContent = '正在调用 DeepSeek 解析+生成文案…';
+  btn.disabled = true; btn.textContent = 'AI 识别中…';
+
+  // 显示AI识别进度
+  var aiSteps = ['连接AI服务', '解析产品参数', '生成营销文案', '填入表单字段'];
+  showProgress('AI 识别中…', aiSteps);
+  updateProgress(0, 4);
+
+  // 模拟步骤进展（AI调用期间按时间推进前3步）
+  var stepTimer1 = setTimeout(function(){ updateProgress(1, 4); setProgressTitle('正在解析产品参数…'); }, 3000);
+  var stepTimer2 = setTimeout(function(){ updateProgress(2, 4); setProgressTitle('正在生成营销文案…'); }, 8000);
+
   try {
-    // 调用后端接口，后端会调 DeepSeek 一次完成解析+文案生成
     var data = await postJson('/api/build/' + encodeURIComponent(currentProductType) + '/parse-text', {text:text});
+    clearTimeout(stepTimer1); clearTimeout(stepTimer2);
+    updateProgress(3, 4); setProgressTitle('正在填入表单…');
     console.log('[AI识别] 服务器返回:', JSON.stringify(data).slice(0, 500));
 
     // ── 基础字段 ──
@@ -442,9 +503,12 @@ async function parseAiTextForBuild() {
 
     status.style.color = '#2a7';
     status.textContent = '识别完成！优势' + advFilled + '项已填入。请核对后点击生成';
+    // 关闭进度遮罩
+    document.getElementById('genOverlay').classList.remove('active');
   } catch(err) {
     console.error('[AI识别] 失败:', err);
     status.style.color = '#c00'; status.textContent = '识别失败：' + err.message;
+    document.getElementById('genOverlay').classList.remove('active');
   } finally {
     btn.disabled = false; btn.textContent = 'AI 识别并填表';
   }
