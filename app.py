@@ -35,6 +35,28 @@ PROXY = {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.after_request
+def _no_cache(response):
+    """禁止浏览器缓存，确保每次拿到最新数据"""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+# ── rembg 可用性检测 ──
+REMBG_SESSION = None
+try:
+    import rembg as _rembg_check
+    from rembg import new_session as _rembg_new_session
+    REMBG_AVAILABLE = True
+    REMBG_SESSION = _rembg_new_session("isnet-general-use")
+    print("[启动] rembg 已安装（isnet-general-use 模型），产品图将自动抠图")
+except ImportError:
+    REMBG_AVAILABLE = False
+    print("[启动] ⚠ rembg 未安装，产品图将保留原背景。运行: pip install rembg onnxruntime")
 
 
 # ── 工具函数 ─────────────────────────────────────────────────────────
@@ -362,7 +384,11 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
 
     _pn = _to_str(parsed.get("product_name", ""))
     _main = _first_nonempty(_to_str(parsed.get("main_title", "")), _pn)
-    _cat = _to_str(parsed.get("category_line", ""))
+    _cat = _first_nonempty(
+        _to_str(parsed.get("category_line", "")),
+        _to_str(parsed.get("product_type", "")),
+    )
+    _hero_sub = _to_str(parsed.get("hero_subtitle", ""))
 
     result = {
         "brand_text": brand_text,
@@ -372,6 +398,9 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         "tagline_sub": sub_slogan,
         "category_line": _cat,
         "main_title": _main,
+        "hero_subtitle_pre": _hero_sub,
+        "hero_subtitle_em": "",
+        "hero_subtitle_post": "",
         "param_1_label": "工作效率", "param_1_value": param_efficiency,
         "param_2_label": "清洗宽度", "param_2_value": param_width,
         "param_3_label": "清水箱", "param_3_value": param_capacity,
@@ -406,6 +435,28 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
     result["b3_footer_line1"] = _to_str(parsed.get("story_bottom_1", ""))
     result["b3_footer_line2"] = _to_str(parsed.get("story_bottom_2", ""))
 
+    # ── VS对比文案（AI生成）──
+    vs = parsed.get("vs_comparison", {})
+    if isinstance(vs, dict):
+        count_num = _to_str(vs.get("replace_count", ""))
+        left_title = _to_str(vs.get("left_title", ""))
+        result["f_title_line1"] = "1台顶"
+        result["f_title_line1_red"] = count_num or "多"
+        result["f_title_line1_end"] = "人"
+        result["f_title_line2"] = left_title + "与人工" if left_title else ""
+        result["f_title_line2_red"] = "的区别。"
+        result["f_vs_left_title"] = left_title
+        result["f_vs_left_sub"] = _to_str(vs.get("left_sub", ""))
+        result["f_vs_right_title"] = "传统人工"
+        result["f_vs_right_sub"] = _to_str(vs.get("right_sub", ""))
+        result["f_vs_left_bottom"] = _to_str(vs.get("left_bottom", ""))
+        result["f_vs_right_bottom"] = _to_str(vs.get("right_bottom", ""))
+
+    # ── 适用地面材质（AI生成）──
+    floor_items = parsed.get("floor_items", [])
+    if isinstance(floor_items, list) and floor_items:
+        result["b3_floor_items_json"] = json.dumps(floor_items, ensure_ascii=False)
+
     print(f"[映射] b2_label_1={result.get('b2_label_1','(空)')}, b3_header_line1={result.get('b3_header_line1','(空)')}")
 
     return result
@@ -413,18 +464,20 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
 
 # ── 配置加载 ─────────────────────────────────────────────────────────
 
-_build_config_cache = {}
+_build_config_cache = {}   # {product_type: (mtime, cfg)}
 
 
 def _load_build_config(product_type: str) -> dict:
-    if product_type in _build_config_cache:
-        return _build_config_cache[product_type]
     cfg_path = TEMPLATES_DIR / product_type / "build_config.json"
     if not cfg_path.exists():
         return {}
+    mtime = cfg_path.stat().st_mtime
+    cached = _build_config_cache.get(product_type)
+    if cached and cached[0] == mtime:
+        return cached[1]
     with open(cfg_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
-    _build_config_cache[product_type] = cfg
+    _build_config_cache[product_type] = (mtime, cfg)
     return cfg
 
 
@@ -449,10 +502,11 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
     save_path = STATIC_UPLOADS / filename
     f.save(str(save_path))
 
-    if auto_rembg:
+    if auto_rembg and REMBG_AVAILABLE:
         try:
             from PIL import Image as _Img
             import numpy as np
+            import rembg
             # 如果已有真实透明区域则跳过
             needs_rembg = True
             with _Img.open(save_path) as im:
@@ -460,20 +514,45 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
                     alpha = np.array(im)[:, :, 3]
                     if alpha.min() < 250:
                         needs_rembg = False
-                        print(f"[抠图] {filename} 已有透明底，跳过")
+                        print(f"[抠图] {filename} 已有透明底，跳过", flush=True)
             if needs_rembg:
-                import rembg
-                print(f"[抠图] 开始处理 {filename}…")
+                from PIL import ImageFilter
+                import io as _io
+                print(f"[抠图] 开始处理 {filename}（AI+色值混合）…", flush=True)
+
+                # 读取原图 RGB
+                orig = _Img.open(save_path).convert("RGB")
+                arr = np.array(orig)
+                h, w = arr.shape[:2]
+
+                # 1) AI 抠图
                 with open(save_path, "rb") as inp:
-                    result_bytes = rembg.remove(inp.read())
+                    ai_bytes = rembg.remove(inp.read(), session=REMBG_SESSION)
+                ai_img = _Img.open(_io.BytesIO(ai_bytes)).convert("RGBA")
+                ai_alpha = np.array(ai_img)[:, :, 3]
+
+                # 2) 用色值清理 AI 遗漏的纯白背景残留
+                corners = [arr[:15, :15], arr[:15, -15:], arr[-15:, :15], arr[-15:, -15:]]
+                bg_min = np.concatenate([c.reshape(-1, 3) for c in corners]).min(axis=0)
+                threshold = max(int(bg_min.min()) - 2, 248)
+                pure_bg = np.all(arr >= threshold, axis=2)
+                # AI 认为半透明 + 色值是纯白 → 设为全透明
+                ai_alpha[pure_bg & (ai_alpha < 200)] = 0
+
+                # 3) 保存
+                result_arr = np.dstack([arr, ai_alpha])
+                result_img = _Img.fromarray(result_arr.astype(np.uint8), "RGBA")
                 nobg_filename = f"{uid}_nobg.png"
                 nobg_path = STATIC_UPLOADS / nobg_filename
-                with open(nobg_path, "wb") as out:
-                    out.write(result_bytes)
-                print(f"[抠图] 完成 → {nobg_filename}")
+                result_img.save(str(nobg_path))
+                print(f"[抠图] 完成 → {nobg_filename}", flush=True)
                 return f"/static/uploads/{nobg_filename}"
         except Exception as e:
-            print(f"[抠图] 失败，使用原图: {e}")
+            import traceback
+            print(f"[抠图] 失败，使用原图: {e}", flush=True)
+            traceback.print_exc()
+    elif auto_rembg and not REMBG_AVAILABLE:
+        print(f"[抠图] rembg 未安装，跳过 {filename}。运行: pip install rembg onnxruntime", flush=True)
 
     return f"/static/uploads/{filename}"
 
@@ -499,41 +578,7 @@ def upload():
     save_path = STATIC_UPLOADS / filename
     file.save(str(save_path))
     return jsonify({"path": str(save_path), "filename": filename, "url": f"/static/uploads/{filename}"})
-
-
-@app.route("/api/uploads/<path:filename>")
-def serve_upload(filename):
-    return send_from_directory(str(UPLOAD_DIR), filename)
-
-
-@app.route("/api/output/<path:filename>")
-def serve_output(filename):
-    return send_from_directory(str(OUTPUT_DIR), filename)
-
-
 # ── 文本解析（DeepSeek API）──────────────────────────────────────────
-
-@app.route("/api/parse-text", methods=["POST"])
-def parse_text():
-    data = request.get_json(silent=True)
-    if not data or not data.get("text"):
-        return jsonify({"error": "缺少 text 字段"}), 400
-    raw_text = data["text"].strip()
-    if not raw_text:
-        return jsonify({"error": "文本内容为空"}), 400
-    try:
-        parsed = json.loads(raw_text)
-        if isinstance(parsed, dict):
-            return jsonify(parsed)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    try:
-        result = _call_deepseek_parse(raw_text)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": f"AI 解析失败: {e}"}), 500
-
-
 def _call_deepseek_parse(raw_text: str) -> dict:
     """调用 DeepSeek API，一次完成：解析产品参数 + 生成营销文案"""
     import requests as req
@@ -553,8 +598,11 @@ def _call_deepseek_parse(raw_text: str) -> dict:
         '  "product_name": "产品全称",\n'
         '  "model": "型号",\n'
         '  "product_type": "设备中文类型（如驾驶式扫地车）",\n'
-        '  "detail_params": {"参数名":"参数值", ...},\n'
+        '  "detail_params": {"参数名":"参数值（完整展示，商用产品参数要详细全面）", ...},\n'
         '  "dimensions": {"length":"mm值","width":"mm值","height":"mm值"},\n'
+        '  "category_line": "产品品类短语（如 驾驶式洗地机 / 商用清洁机器人，不超过10字）",\n'
+        '  "hero_subtitle": "首屏副标题（描述适用场景+核心能力，如 大型商场高效清洁专家，不超过15字）",\n'
+        '  "floor_items": [{"icon_text":"单字","label":"地面材质名"},...] （根据产品适用场景列出4-8种适用地面材质，如大理石、环氧地坪、瓷砖、水磨石、PVC地板等，没有相关信息则返回空数组）,\n'
         '  "slogan": "主标语（一句话概括产品最大卖点，用真实数据）",\n'
         '  "sub_slogan": "副标语（补充说明）",\n'
         '  "advantages": [\n'
@@ -567,7 +615,16 @@ def _call_deepseek_parse(raw_text: str) -> dict:
         '  "story_desc_1": "图片说明行1（关键参数短语，如 主刷660mm、4组边刷500mm、清扫宽度1800mm）",\n'
         '  "story_desc_2": "图片说明行2（总结短句，如 宽幅清扫，一步到位）",\n'
         '  "story_bottom_1": "底部卖点1（最亮眼的数字宣称，如 14600m²/h超大清扫效率，没有突出数据就留空字符串）",\n'
-        '  "story_bottom_2": "底部卖点2（效果短句，如 大场所清扫首选）"\n'
+        '  "story_bottom_2": "底部卖点2（效果短句，如 大场所清扫首选）",\n'
+        '  "vs_comparison": {\n'
+        '    "replace_count": "只填数字，如 8-10 或 3-5（估算可替代人数，没依据填 多）",\n'
+        '    "annual_saving": "只填金额，如 26W+ 或 15W+（估算年省人力成本，没依据留空）",\n'
+        '    "left_title": "产品类型简称，不超过8字（如 智能洗扫机器人）",\n'
+        '    "left_sub": "机械优势3-6字（如 省时省钱省心）",\n'
+        '    "right_sub": "人工劣势3-6字（如 费时费钱费心）",\n'
+        '    "left_bottom": "机械结论两行用<br>隔开（如 1台可顶8-10人<br>一年劲省26W+元）",\n'
+        '    "right_bottom": "人工结论两行用<br>隔开（如 人工效率低<br>成本高）"\n'
+        '  }\n'
         "}\n"
         "```\n\n"
         "【advantages规则】\n"
@@ -616,13 +673,21 @@ def _call_deepseek_parse(raw_text: str) -> dict:
     print(f"[DeepSeek] story_title_1={parsed.get('story_title_1','(无)')}")
 
     # ── 极限词过滤 ──
-    for _field in ["slogan", "sub_slogan", "story_title_1", "story_title_2",
+    for _field in ["slogan", "sub_slogan", "category_line", "hero_subtitle",
+                   "story_title_1", "story_title_2",
                    "story_desc_1", "story_desc_2", "story_bottom_1", "story_bottom_2"]:
         if _field in parsed:
             parsed[_field] = _strip_extreme_words(_to_str(parsed[_field]))
     for _adv in parsed.get("advantages", []):
         if isinstance(_adv, dict) and "text" in _adv:
             _adv["text"] = _strip_extreme_words(_to_str(_adv["text"]))
+    # VS对比字段极限词过滤
+    vs = parsed.get("vs_comparison", {})
+    if isinstance(vs, dict):
+        for _vf in ["replace_count", "annual_saving", "left_title", "left_sub",
+                     "right_sub", "left_bottom", "right_bottom"]:
+            if _vf in vs:
+                vs[_vf] = _strip_extreme_words(_to_str(vs[_vf]))
 
     return parsed
 
@@ -658,48 +723,6 @@ def _derive_advantages_from_specs(detail_params: dict) -> list:
         if len(items) >= 9:
             break
     return items
-
-
-@app.route("/api/test-fill", methods=["GET"])
-def test_fill():
-    """调试接口：返回硬编码测试数据，验证前端填表是否正常工作"""
-    return jsonify({
-        "brand_text": "坦龙驾驶式扫地车",
-        "model_name": "TL-1800",
-        "tagline_line1": "14600m²/h",
-        "tagline_line2": "超强清扫效率",
-        "tagline_sub": "驾驶式大型工业扫地车",
-        "param_1_label": "清扫效率", "param_1_value": "14600m²/h",
-        "param_2_label": "清扫宽度", "param_2_value": "1800mm",
-        "param_3_label": "垃圾箱容量", "param_3_value": "180L",
-        "param_4_label": "续航时间", "param_4_value": "2-4h",
-        "b2_icon_1": "🚀", "b2_label_1": "14600㎡/h高效",
-        "b2_icon_2": "🧹", "b2_label_2": "1800mm超宽清扫",
-        "b2_icon_3": "🗑️", "b2_label_3": "180L超大垃圾箱",
-        "b2_icon_4": "💧", "b2_label_4": "50L大水箱",
-        "b2_icon_5": "🛡️", "b2_label_5": "电泳工艺防锈",
-        "b2_icon_6": "⛰️", "b2_label_6": "20%强力爬坡",
-        "b2_icon_7": "🛑", "b2_label_7": "双碟刹安全制动",
-        "b2_icon_8": "🔋", "b2_label_8": "48V70AH长续航",
-        "b2_icon_9": "🏎️", "b2_label_9": "8km/h高速作业",
-        "b2_title_num": "9", "b2_title_text": "大核心优势",
-        "b2_subtitle": "驾驶式扫地车创新升级",
-        "b3_header_line1": "660mm大直径主刷+4组边刷设计",
-        "b3_header_line2": "高效清扫14600m²/h大面积场所。",
-        "b3_caption_line1": "主刷660mm、4组边刷500mm、清扫宽度1800mm",
-        "b3_caption_line2": "宽幅清扫，一步到位",
-        "b3_footer_line1": "14600m²/h超大清扫效率",
-        "b3_footer_line2": "大场所清扫首选",
-        "e_specs": [
-            {"name": "清扫宽度", "value": "1800mm"},
-            {"name": "工作效率", "value": "14600m²/h"},
-            {"name": "垃圾箱容量", "value": "180L"},
-            {"name": "水箱容量", "value": "50L"},
-        ],
-        "e_dim_length": "1810mm", "e_dim_width": "1400mm", "e_dim_height": "1520mm",
-    })
-
-
 @app.route("/api/build/<product_type>/parse-text", methods=["POST"])
 def parse_text_for_build(product_type):
     data = request.get_json(silent=True)
@@ -809,7 +832,7 @@ def build_submit_generic(product_type):
         "title": "产品参数",
         "subtitle": form_text("e_table_subtitle", "规格一览"),
         "red_bar_text": _e_red or f"{model_name}创新升级",
-        "product_image": effect_image or product_side_image or product_image,
+        "product_image": product_side_image or product_image,
         "dim_height": form_text('e_dim_height', _dims.get("height", "")),
         "dim_width":  form_text('e_dim_width',  _dims.get("width", "")),
         "dim_length": form_text('e_dim_length', _dims.get("length", "")),
@@ -839,19 +862,33 @@ def build_submit_generic(product_type):
         "items": b2_items,
     }
 
-    # ── Block B3（清洁故事）— 表单文案覆盖 + 场景图注入 ──
+    # ── Block B3（清洁故事）— 表单文案覆盖 ──
     block_b3 = dict(blocks_hc.get("block_b3", {}))
     for _field in ["header_line1", "header_line2", "caption_line1", "caption_line2", "footer_line1", "footer_line2"]:
         _v = form_text(f"b3_{_field}", "")
         if _v:
             block_b3[_field] = _v
     if not (block_b3.get("hero_image") or "").strip():
-        block_b3["hero_image"] = effect_image or product_image
-    block_b3["scene_image"] = scene_image  # 场景图作为背景
+        block_b3["hero_image"] = product_image
+    # AI 生成的地面材质覆盖硬编码
+    _floor_json = form_text("b3_floor_items_json", "")
+    if _floor_json:
+        try:
+            _floor_list = json.loads(_floor_json)
+            if isinstance(_floor_list, list) and _floor_list:
+                block_b3["floor_items"] = _floor_list
+        except (json.JSONDecodeError, ValueError):
+            pass
 
-    # ── Block F（1台顶8人）— 图片注入 ──
+    # ── Block F（VS对比）— 表单文案覆盖 + 图片注入 ──
     block_f = dict(blocks_hc.get("block_f", {}))
-    block_f["bg_image"] = scene_image
+    for _field in ["title_line1", "title_line1_red", "title_line1_end",
+                    "title_line2", "title_line2_red",
+                    "vs_left_title", "vs_left_sub", "vs_right_title", "vs_right_sub",
+                    "vs_left_bottom", "vs_right_bottom"]:
+        _v = form_text(f"f_{_field}", "")
+        if _v:
+            block_f[_field] = _v
     block_f["product_image"] = product_image
 
     # ── 固定卖点图 ──
@@ -970,7 +1007,7 @@ def preview_equipment():
             "hero_subtitle_em": _hcov.get("hero_subtitle_em", ""),
             "hero_subtitle_post": _hcov.get("hero_subtitle_post", ""),
             "footer_note": _hcov.get("footer_note", ""),
-            "cover_image": f"/static/{PRODUCT_TYPE}/ref_dz50x_cover.png",
+            "cover_image": f"/static/{PRODUCT_TYPE}/{cfg.get('default_cover_image', '')}",
             "floor_bg_image": "",
             "bg_focal": _hcov.get("bg_focal", "center bottom"),
             "show_hero_params": False,
@@ -1002,7 +1039,32 @@ def preview_equipment():
 
 # ────────────────────────────────────────────────────────────────────
 
+def _kill_old_flask(port=5000):
+    """启动前自动清理占用端口的旧 Flask 进程（Windows）"""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+        )
+        pids = set()
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.split()
+                if parts:
+                    pids.add(parts[-1])
+        my_pid = str(os.getpid())
+        pids.discard(my_pid)
+        pids.discard("0")
+        for pid in pids:
+            print(f"[启动] 杀掉旧进程 PID={pid} (占用端口 {port})")
+            subprocess.run(["taskkill", "/F", "/PID", pid],
+                           capture_output=True, timeout=5)
+    except Exception as e:
+        print(f"[启动] 清理旧进程时出错(可忽略): {e}")
+
+
 if __name__ == "__main__":
+    _kill_old_flask(5000)
     print("=" * 50)
     print("  物保云产品详情页生成器 - Web UI")
     print("=" * 50)

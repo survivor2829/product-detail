@@ -5,6 +5,7 @@
   "default_engine": "blocks",
   "hero_block_template": "blocks/block_a_hero_robot_cover.html",
   "spec_block_template": "blocks/block_e_glass_dimension.html",
+  "default_cover_image": "ref_dz50x_cover.png",
   "screen_7_block": "b3",
   "hero_cover_defaults": {
     "category_line": "多功能清洁机器人",

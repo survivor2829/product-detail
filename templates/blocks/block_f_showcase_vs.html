@@ -34,7 +34,9 @@
   <div style="width:750px; height:760px; position:relative; overflow:hidden; background:#c8c8c8;">
     
     <!-- 场景背景图 -->
+    {% if bg_image %}
     <img src="{{ bg_image }}" style="width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0;" alt="">
+    {% endif %}
     
     <!-- 产品+人物图 -->
     <div style="position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; height:520px; z-index:1; display:flex; align-items:center; justify-content:center;">

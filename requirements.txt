@@ -6,5 +6,5 @@ numpy
 pdfplumber
 python-docx
 openpyxl
-# rembg 和 onnxruntime 首次使用时自动安装，也可手动安装加速：
-# pip install rembg onnxruntime
+rembg
+onnxruntime

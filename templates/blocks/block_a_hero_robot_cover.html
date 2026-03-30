@@ -28,7 +28,7 @@
 
   {% else %}
   <!-- ── 合成模式：场景图满铺 + 产品图叠放 ── -->
-  <div style="position:relative; width:750px; min-height:520px; overflow:hidden; background:#c8d8ec;">
+  <div style="position:relative; width:750px; min-height:680px; overflow:hidden; background:#c8d8ec; display:flex; flex-direction:column;">
 
     <!-- 场景底图：铺满整个英雄屏 -->
     {% if floor_bg_image %}
@@ -42,7 +42,7 @@
     <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(10,20,40,0.55) 0%, rgba(10,20,40,0.25) 40%, rgba(0,0,0,0) 65%); pointer-events:none;"></div>
 
     <!-- 文字区（叠加在场景图上） -->
-    <div style="position:relative; z-index:2; padding:32px 28px 10px; text-align:center;">
+    <div style="position:relative; z-index:2; padding:24px 28px 6px; text-align:center;">
       {% if logo_image %}
       <div style="margin-bottom:14px;">
         <img src="{{ logo_image }}" alt="" style="max-height:52px; max-width:240px; object-fit:contain; vertical-align:middle;">
@@ -76,10 +76,10 @@
     </div>
 
     <!-- 产品图（叠在场景上，底部对齐） -->
-    <div style="position:relative; z-index:2; width:100%; height:360px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:16px;">
+    <div style="position:relative; z-index:2; width:100%; flex:1; display:flex; align-items:flex-end; justify-content:center; padding-bottom:10px;">
       {% if product_image %}
       <img src="{{ product_image }}" alt=""
-        style="max-width:75%; max-height:340px; object-fit:contain; filter:drop-shadow(0 16px 32px rgba(0,0,0,0.30));">
+        style="max-width:92%; max-height:595px; object-fit:contain; filter:drop-shadow(0 16px 32px rgba(0,0,0,0.30));">
       {% else %}
       <div style="padding:32px; color:rgba(255,255,255,0.6); font-size:18px; text-align:center;">请上传产品主图（抠图）</div>
       {% endif %}
