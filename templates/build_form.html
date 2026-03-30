@@ -64,8 +64,10 @@
   .dims-row label { font-size: 13px; color: #666; min-width: 36px; }
   .dims-row input { flex: 1; padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
   .subsection-title { font-size: 13px; font-weight: bold; color: #555; margin: 14px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #eee; }
-  .advantage-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
-  .advantage-grid input { padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; width: 100%; }
+  .advantage-grid-v2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .adv-item { display: flex; gap: 4px; }
+  .adv-icon-input { width: 42px !important; min-width: 42px; flex: 0 0 42px; text-align: center; padding: 7px 4px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; }
+  .adv-label-input { flex: 1; padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; min-width: 0; }
   .b3-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .b3-field { display: flex; flex-direction: column; gap: 4px; }
   .b3-field label { font-size: 12px; color: #888; }
@@ -177,40 +179,46 @@
   <div class="section-title">卖点文案（AI识别填入，请核对）</div>
   <p class="warn-note">⚠️ 以下文案由 AI 从产品资料中提取，生成前请逐项核对是否与实际产品一致，不符的请手动修改。</p>
 
-  <div class="subsection-title">产品优势标签（9项，对应第2屏优势格）</div>
-  <div class="advantage-grid">
-    {% set b2_items = config.blocks_hardcoded.block_b2.items %}
-    {% for item in b2_items %}
-    <input type="text" name="b2_label_{{ loop.index }}" value="{{ item.label | replace('<br>', ' ') }}" placeholder="优势{{ loop.index }}">
+  {# 优势屏标题（隐藏，AI填入） #}
+  <input type="hidden" name="b2_title_num" value="">
+  <input type="hidden" name="b2_title_text" value="">
+  <input type="hidden" name="b2_subtitle" value="">
+
+  <div class="subsection-title">产品优势标签（第2屏）<span style="font-weight:normal;color:#aaa;font-size:12px;margin-left:8px">— AI 根据产品参数自动生成，含emoji图标</span></div>
+  <div class="advantage-grid-v2">
+    {% for i in range(1, 10) %}
+    <div class="adv-item">
+      <input type="text" name="b2_icon_{{ i }}" value="" class="adv-icon-input" placeholder="图标">
+      <input type="text" name="b2_label_{{ i }}" value="" class="adv-label-input" placeholder="优势{{ i }}（AI自动填）">
+    </div>
     {% endfor %}
   </div>
 
-  <div class="subsection-title">清洁故事文案（第3屏）</div>
-  {% set b3 = config.blocks_hardcoded.block_b3 %}
+  <div class="subsection-title">清洁故事文案（第3屏）<span style="font-weight:normal;color:#aaa;font-size:12px;margin-left:8px">— AI识别后自动填入</span></div>
   <div class="b3-grid">
     <div class="b3-field">
       <label>大标题行1（清洁机构名称）</label>
-      <input type="text" name="b3_header_line1" value="{{ b3.header_line1 }}" placeholder="如：双滚拖+滚刷设计">
+      <input type="text" name="b3_header_line1" value="" placeholder="AI自动生成（如：1800mm超宽主刷设计）">
     </div>
     <div class="b3-field">
       <label>大标题行2（效果声明）</label>
-      <input type="text" name="b3_header_line2" value="{{ b3.header_line2 }}" placeholder="如：有效去除顽固污渍。">
+      <input type="text" name="b3_header_line2" value="" placeholder="AI自动生成（如：高效清扫大面积场所。）">
     </div>
     <div class="b3-field">
       <label>图片说明行1（技术参数）</label>
-      <input type="text" name="b3_caption_line1" value="{{ b3.caption_line1 }}" placeholder="填写真实参数数据">
+      <input type="text" name="b3_caption_line1" value="" placeholder="AI自动生成（用实际参数）">
     </div>
     <div class="b3-field">
       <label>图片说明行2（总结）</label>
-      <input type="text" name="b3_caption_line2" value="{{ b3.caption_line2 }}" placeholder="如：洗刷一体，同步进行">
+      <input type="text" name="b3_caption_line2" value="" placeholder="AI自动生成">
     </div>
     <div class="b3-field">
-      <label>底部卖点行1（核心能力，需有数据支撑）</label>
-      <input type="text" name="b3_footer_line1" value="{{ b3.footer_line1 }}" placeholder="如：吸力20000PA，有数据才填">
+      <label>底部卖点行1</label>
+      <input type="text" name="b3_footer_line1" value="" placeholder="AI自动生成（有数据支撑才填）">
     </div>
     <div class="b3-field">
-      <label>底部卖点行2（效果描述）</label>
-      <input type="text" name="b3_footer_line2" value="{{ b3.footer_line2 }}" placeholder="如：灰尘碎屑一吸而净">
+      <label>底部卖点行2</label>
+      <input type="text" name="b3_footer_line2" value="" placeholder="AI自动生成">
     </div>
   </div>
 </div>
@@ -251,9 +259,28 @@
 <script>
 var currentProductType = '{{ product_type }}';
 
-// 表单提交 → 显示加载遮罩
-document.getElementById('buildForm').addEventListener('submit', function() {
-  document.getElementById('genOverlay').classList.add('active');
+// 表单提交：若有产品文本且卖点为空，先自动AI识别再提交
+document.getElementById('buildForm').addEventListener('submit', async function(e) {
+  var text = (document.getElementById('ai_text_input') ? document.getElementById('ai_text_input').value : '').trim();
+  var b2Label1 = (document.querySelector('[name="b2_label_1"]') ? document.querySelector('[name="b2_label_1"]').value : '').trim();
+  var overlay = document.getElementById('genOverlay');
+
+  if (text && !b2Label1) {
+    e.preventDefault();
+    overlay.querySelector('.gen-title').textContent = '正在AI分析卖点…';
+    overlay.querySelector('.gen-steps').textContent = '根据产品参数自动生成优势标签和清洁故事';
+    overlay.classList.add('active');
+    try {
+      await parseAiTextForBuild();
+    } catch(err) {
+      // AI失败也继续提交，后端会用默认值
+    }
+    overlay.querySelector('.gen-title').textContent = '正在组装详情页…';
+    overlay.querySelector('.gen-steps').textContent = '上传图片 · 渲染积木 · 合成预览';
+    document.getElementById('buildForm').submit();
+  } else {
+    overlay.classList.add('active');
+  }
 });
 
 function previewFile(input, imgId) {
@@ -352,14 +379,14 @@ async function parseAiTextForBuild() {
   var btn = document.getElementById('ai_parse_btn');
   var status = document.getElementById('ai_parse_status');
   if (!text) { status.style.color='#c00'; status.textContent='请先粘贴产品资料文本'; return; }
-  btn.disabled = true; btn.textContent = '识别中…';
-  status.style.color = '#888'; status.textContent = '正在识别…';
+  btn.disabled = true; btn.textContent = 'AI 识别中（约30秒）…';
+  status.style.color = '#888'; status.textContent = '正在调用 DeepSeek 解析+生成文案…';
   try {
-    var data;
-    try { data = await postJson('/api/build/' + encodeURIComponent(currentProductType) + '/parse-text', {text:text}); }
-    catch(e) { data = await postJson('/api/parse-text', {text:text}); }
-    data = normalizeParsedForBuild(data);
+    // 调用后端接口，后端会调 DeepSeek 一次完成解析+文案生成
+    var data = await postJson('/api/build/' + encodeURIComponent(currentProductType) + '/parse-text', {text:text});
+    console.log('[AI识别] 服务器返回:', JSON.stringify(data).slice(0, 500));
 
+    // ── 基础字段 ──
     setFieldValue('brand_text', data.brand_text || '');
     setFieldValue('model_name', data.model_name || '');
     if (data.category_line) setFieldValue('category_line', data.category_line);
@@ -368,11 +395,13 @@ async function parseAiTextForBuild() {
     setFieldValue('tagline_line2', data.tagline_line2 || '');
     setFieldValue('tagline_sub', data.tagline_sub || '');
 
+    // ── 英雄屏核心参数 ──
     for (var p = 1; p <= 4; p++) {
       setFieldValue('param_' + p + '_label', data['param_' + p + '_label'] || '');
       setFieldValue('param_' + p + '_value', data['param_' + p + '_value'] || '');
     }
 
+    // ── 产品参数表 ──
     var specs = Array.isArray(data.e_specs) ? data.e_specs : [];
     for (var i = 1; i <= 12; i++) {
       var row = specs[i-1] || {};
@@ -383,21 +412,31 @@ async function parseAiTextForBuild() {
     setFieldValue('e_dim_width',  data.e_dim_width  || '');
     setFieldValue('e_dim_length', data.e_dim_length || '');
 
-    // block_b2 优势标签
+    // ── 产品优势（AI生成的 emoji + 文案）──
+    var advFilled = 0;
     for (var b = 1; b <= 9; b++) {
-      var lbl = data['b2_label_' + b];
-      if (lbl) setFieldValue('b2_label_' + b, lbl);
+      var lbl = data['b2_label_' + b] || '';
+      var ico = data['b2_icon_' + b] || '';
+      setFieldValue('b2_label_' + b, lbl);
+      setFieldValue('b2_icon_' + b, ico);
+      if (lbl) advFilled++;
     }
+    setFieldValue('b2_title_num', data.b2_title_num || '');
+    setFieldValue('b2_title_text', data.b2_title_text || '');
+    setFieldValue('b2_subtitle', data.b2_subtitle || '');
+    console.log('[AI识别] 优势标签填入 ' + advFilled + ' 项');
 
-    // block_b3 清洁故事文案
+    // ── 清洁故事文案（AI生成）──
     var b3fields = ['header_line1','header_line2','caption_line1','caption_line2','footer_line1','footer_line2'];
     b3fields.forEach(function(f) {
-      var v = data['b3_' + f];
-      if (v) setFieldValue('b3_' + f, v);
+      setFieldValue('b3_' + f, data['b3_' + f] || '');
     });
+    console.log('[AI识别] 清洁故事: title1=' + (data.b3_header_line1 || '(空)'));
 
-    status.style.color = '#2a7'; status.textContent = '识别完成！请核对卖点文案后再点击生成';
+    status.style.color = '#2a7';
+    status.textContent = '识别完成！优势' + advFilled + '项已填入。请核对后点击生成';
   } catch(err) {
+    console.error('[AI识别] 失败:', err);
     status.style.color = '#c00'; status.textContent = '识别失败：' + err.message;
   } finally {
     btn.disabled = false; btn.textContent = 'AI 识别并填表';

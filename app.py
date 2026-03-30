@@ -357,21 +357,31 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         "e_dim_height": dim_height,
     }
 
-    # block_b2 优势标签（来自实际产品功能）
-    advantage_labels = parsed.get("advantage_labels", [])
-    if isinstance(advantage_labels, list):
-        for i, label in enumerate(advantage_labels[:9]):
-            v = _to_str(label)
-            if v:
-                result[f"b2_label_{i+1}"] = v
+    # ── 产品优势（AI生成 或 兜底推导）──
+    advantages = parsed.get("advantages", [])
+    if not advantages:
+        advantages = _derive_advantages_from_specs(detail_params)
+    for i, item in enumerate(advantages[:9]):
+        if isinstance(item, dict):
+            result[f"b2_icon_{i+1}"] = _to_str(item.get("emoji", "✅"))
+            result[f"b2_label_{i+1}"] = _to_str(item.get("text", ""))
+        elif isinstance(item, str):
+            result[f"b2_icon_{i+1}"] = "✅"
+            result[f"b2_label_{i+1}"] = item
+    n = len(advantages[:9])
+    result["b2_title_num"] = str(n)
+    result["b2_title_text"] = "大核心优势"
+    result["b2_subtitle"] = _to_str(parsed.get("product_type", "")) + "创新升级"
 
-    # block_b3 清洁故事文案
-    clean_story = parsed.get("clean_story", {})
-    if isinstance(clean_story, dict):
-        for field in ["header_line1", "header_line2", "caption_line1", "caption_line2", "footer_line1", "footer_line2"]:
-            v = _to_str(clean_story.get(field, ""))
-            if v:
-                result[f"b3_{field}"] = v
+    # ── 清洁故事文案（AI生成）──
+    result["b3_header_line1"] = _to_str(parsed.get("story_title_1", ""))
+    result["b3_header_line2"] = _to_str(parsed.get("story_title_2", ""))
+    result["b3_caption_line1"] = _to_str(parsed.get("story_desc_1", ""))
+    result["b3_caption_line2"] = _to_str(parsed.get("story_desc_2", ""))
+    result["b3_footer_line1"] = _to_str(parsed.get("story_bottom_1", ""))
+    result["b3_footer_line2"] = _to_str(parsed.get("story_bottom_2", ""))
+
+    print(f"[映射] b2_label_1={result.get('b2_label_1','(空)')}, b3_header_line1={result.get('b3_header_line1','(空)')}")
 
     return result
 
@@ -469,39 +479,53 @@ def parse_text():
 
 
 def _call_deepseek_parse(raw_text: str) -> dict:
+    """调用 DeepSeek API，一次完成：解析产品参数 + 生成营销文案"""
     import requests as req
+    prompt = (
+        "你是一个清洁设备营销文案专家。请根据以下产品参数，完成两件事：\n\n"
+        "第一，提取所有技术参数（型号、尺寸、功率等）填入对应字段。\n"
+        "第二，根据这些参数生成营销文案（严格基于真实数据，不得编造产品没有的功能）。\n\n"
+        "返回以下JSON格式（所有字段必须返回，不要遗漏）：\n"
+        "```json\n"
+        "{\n"
+        '  "brand": "品牌中文名",\n'
+        '  "brand_en": "品牌英文名",\n'
+        '  "product_name": "产品全称",\n'
+        '  "model": "型号",\n'
+        '  "product_type": "设备中文类型（如驾驶式扫地车）",\n'
+        '  "detail_params": {"参数名":"参数值", ...},\n'
+        '  "dimensions": {"length":"mm值","width":"mm值","height":"mm值"},\n'
+        '  "slogan": "主标语（一句话概括产品最大卖点，用真实数据）",\n'
+        '  "sub_slogan": "副标语（补充说明）",\n'
+        '  "advantages": [\n'
+        '    {"emoji":"🧹","text":"超宽清扫"},\n'
+        '    {"emoji":"⚡","text":"高效清扫"},\n'
+        '    ...\n'
+        '  ],\n'
+        '  "story_title_1": "清洁故事大标题1（突出核心清洁机构，如 660mm大直径主刷+4边刷设计）",\n'
+        '  "story_title_2": "清洁故事大标题2（效果声明，如 高效清扫14600m²/h大面积场所。）",\n'
+        '  "story_desc_1": "图片说明行1（关键参数短语，如 主刷660mm、4组边刷500mm、清扫宽度1800mm）",\n'
+        '  "story_desc_2": "图片说明行2（总结短句，如 宽幅清扫，一步到位）",\n'
+        '  "story_bottom_1": "底部卖点1（最亮眼的数字宣称，如 14600m²/h超大清扫效率，没有突出数据就留空字符串）",\n'
+        '  "story_bottom_2": "底部卖点2（效果短句，如 大场所清扫首选）"\n'
+        "}\n"
+        "```\n\n"
+        "【advantages规则】\n"
+        "- 必须6-9项，每项2-6个字（如 超强续航、一机多用、电泳防锈）\n"
+        "- 每项附带一个贴切的emoji\n"
+        "- 从产品参数推导，覆盖效率/容量/工艺/安全/动力/续航等维度\n"
+        "- 严禁出现产品没有的功能（没有AI导航就不能写智能避障）\n\n"
+        "只返回JSON，不要其他解释文字：\n\n" + raw_text
+    )
+    print(f"[DeepSeek] 发送请求，文本长度={len(raw_text)}...")
     resp = req.post(
         DEEPSEEK_API_URL,
         headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
         json={
             "model": DEEPSEEK_MODEL,
             "messages": [
-                {
-                    "role": "system",
-                    "content": "你是产品数据解析助手，把用户提供的产品信息提取为标准JSON格式"
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "请把以下产品数据解析为JSON，字段包括：\n"
-                        "brand, brand_en, product_name, model, "
-                        "product_type（清洁设备类型）, slogan, sub_slogan,\n"
-                        "detail_params（所有技术参数的完整键值对dict，如清洗宽度/清扫作业宽度/清水容量/"
-                        "工作效率/续航时间/电池容量/整机重量/产品尺寸等）,\n"
-                        "dimensions（length/width/height），\n"
-                        "advantage_labels（数组，6-9个产品实际优势标签，简短词组，严格基于产品真实功能，不要编造），\n"
-                        "clean_story（对象，包含：\n"
-                        "  header_line1: 清洁核心机构或技术名称（如'双滚拖+滚刷设计'，必须是产品实有功能），\n"
-                        "  header_line2: 对该机构效果的简短声明（如'有效去除顽固污渍。'），\n"
-                        "  caption_line1: 关键技术参数短语（如'洗地宽度370mm，续航2-4h'，用产品实际数据），\n"
-                        "  caption_line2: 总结短语（如'全面清洁，一步到位'），\n"
-                        "  footer_line1: 核心能力宣称（如'20000PA超大吸力'，必须有对应真实参数支撑，无则留空），\n"
-                        "  footer_line2: 效果描述短句（如'灰尘碎屑一吸而净'）\n"
-                        ")。\n"
-                        "所有文案必须严格基于产品提供的真实数据，不得编造或套用通用模板。\n"
-                        "只返回JSON，不要其他文字：\n\n" + raw_text
-                    )
-                }
+                {"role": "system", "content": "你是清洁设备营销文案专家。解析产品参数并生成营销文案。只返回JSON。"},
+                {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
         },
@@ -511,6 +535,9 @@ def _call_deepseek_parse(raw_text: str) -> dict:
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
     raw = (msg.get("content") or "").strip()
+
+    print(f"[DeepSeek] 原始响应长度={len(raw)}")
+    print(f"[DeepSeek] 响应前200字: {raw[:200]}")
 
     if "```" in raw:
         m = re.search(r"```(?:json)?\s*([\s\S]+?)```", raw)
@@ -522,7 +549,85 @@ def _call_deepseek_parse(raw_text: str) -> dict:
         if start != -1:
             raw = raw[start:]
 
-    return json.loads(raw.strip())
+    parsed = json.loads(raw.strip())
+    print(f"[DeepSeek] 解析成功，字段: {list(parsed.keys())}")
+    adv = parsed.get("advantages", [])
+    print(f"[DeepSeek] advantages数量={len(adv)}，前3项={adv[:3]}")
+    print(f"[DeepSeek] story_title_1={parsed.get('story_title_1','(无)')}")
+    return parsed
+
+
+def _derive_advantages_from_specs(detail_params: dict) -> list:
+    """兜底：当 AI 不返回 advantages 时，从参数规格自动推导"""
+    if not isinstance(detail_params, dict):
+        return []
+    mapping = [
+        (["清扫宽度", "清扫作业宽度"], "🧹", "超宽清扫"),
+        (["工作效率", "清洁效率", "最大清洁效率"], "⚡", "高效清扫"),
+        (["垃圾箱容量"], "🗑️", "超大垃圾箱"),
+        (["水箱容量", "清水容量"], "💧", "大容量水箱"),
+        (["爬坡能力"], "⛰️", "强力爬坡"),
+        (["制动方式"], "🛑", "安全制动"),
+        (["电池容量", "电瓶容量", "锂电容量"], "🔋", "持久续航"),
+        (["连续工作时间", "工作时间", "续航时间"], "⏱️", "持续作业"),
+        (["最大行驶速度", "最大工作速度"], "🏎️", "高速作业"),
+        (["外壳材质"], "🛡️", "防腐耐用"),
+        (["驱动功率"], "💪", "强劲动力"),
+        (["主刷"], "🔄", "大直径主刷"),
+        (["边刷"], "🌀", "多组边刷"),
+        (["清洗宽度", "吸水宽度"], "🧽", "高效洗地"),
+    ]
+    items = []
+    used = set()
+    for keys, emoji, text in mapping:
+        for k in keys:
+            if detail_params.get(k) and k not in used:
+                items.append({"emoji": emoji, "text": text})
+                used.add(k)
+                break
+        if len(items) >= 9:
+            break
+    return items
+
+
+@app.route("/api/test-fill", methods=["GET"])
+def test_fill():
+    """调试接口：返回硬编码测试数据，验证前端填表是否正常工作"""
+    return jsonify({
+        "brand_text": "坦龙驾驶式扫地车",
+        "model_name": "TL-1800",
+        "tagline_line1": "14600m²/h",
+        "tagline_line2": "超强清扫效率",
+        "tagline_sub": "驾驶式大型工业扫地车",
+        "param_1_label": "清扫效率", "param_1_value": "14600m²/h",
+        "param_2_label": "清扫宽度", "param_2_value": "1800mm",
+        "param_3_label": "垃圾箱容量", "param_3_value": "180L",
+        "param_4_label": "续航时间", "param_4_value": "2-4h",
+        "b2_icon_1": "🚀", "b2_label_1": "14600㎡/h高效",
+        "b2_icon_2": "🧹", "b2_label_2": "1800mm超宽清扫",
+        "b2_icon_3": "🗑️", "b2_label_3": "180L超大垃圾箱",
+        "b2_icon_4": "💧", "b2_label_4": "50L大水箱",
+        "b2_icon_5": "🛡️", "b2_label_5": "电泳工艺防锈",
+        "b2_icon_6": "⛰️", "b2_label_6": "20%强力爬坡",
+        "b2_icon_7": "🛑", "b2_label_7": "双碟刹安全制动",
+        "b2_icon_8": "🔋", "b2_label_8": "48V70AH长续航",
+        "b2_icon_9": "🏎️", "b2_label_9": "8km/h高速作业",
+        "b2_title_num": "9", "b2_title_text": "大核心优势",
+        "b2_subtitle": "驾驶式扫地车创新升级",
+        "b3_header_line1": "660mm大直径主刷+4组边刷设计",
+        "b3_header_line2": "高效清扫14600m²/h大面积场所。",
+        "b3_caption_line1": "主刷660mm、4组边刷500mm、清扫宽度1800mm",
+        "b3_caption_line2": "宽幅清扫，一步到位",
+        "b3_footer_line1": "14600m²/h超大清扫效率",
+        "b3_footer_line2": "大场所清扫首选",
+        "e_specs": [
+            {"name": "清扫宽度", "value": "1800mm"},
+            {"name": "工作效率", "value": "14600m²/h"},
+            {"name": "垃圾箱容量", "value": "180L"},
+            {"name": "水箱容量", "value": "50L"},
+        ],
+        "e_dim_length": "1810mm", "e_dim_width": "1400mm", "e_dim_height": "1520mm",
+    })
 
 
 @app.route("/api/build/<product_type>/parse-text", methods=["POST"])
@@ -535,13 +640,15 @@ def parse_text_for_build(product_type):
     if not raw_text:
         return jsonify({"error": "文本内容为空"}), 400
 
-    parsed = _extract_json_object(raw_text)
-    if not isinstance(parsed, dict):
-        parsed = _parse_text_by_template(raw_text)
-    if not isinstance(parsed, dict) or not parsed:
-        try:
-            parsed = _call_deepseek_parse(raw_text)
-        except Exception as e:
+    # 直接调 DeepSeek —— 必须用 AI 才能生成 advantage_labels 和 clean_story
+    try:
+        parsed = _call_deepseek_parse(raw_text)
+    except Exception as e:
+        # DeepSeek 失败时降级到模板解析（不含卖点生成）
+        parsed = _extract_json_object(raw_text)
+        if not isinstance(parsed, dict):
+            parsed = _parse_text_by_template(raw_text)
+        if not isinstance(parsed, dict) or not parsed:
             return jsonify({"error": f"AI 解析失败: {e}"}), 500
 
     mapped = _map_parsed_to_form_fields(parsed)
@@ -642,17 +749,24 @@ def build_submit_generic(product_type):
     # ── blocks_hardcoded（从配置读，表单值可覆盖）──
     blocks_hc = cfg.get("blocks_hardcoded", {})
 
-    # ── Block B2（优势网格）— 表单标签覆盖 ──
-    block_b2 = dict(blocks_hc.get("block_b2", {}))
-    b2_items_raw = block_b2.get("items", [])
+    # ── Block B2（优势网格）— 完全从表单构建 ──
+    block_b2_cfg = blocks_hc.get("block_b2", {})
     b2_items = []
-    for i, item in enumerate(b2_items_raw):
-        it = dict(item)
-        form_label = form_text(f"b2_label_{i+1}", "")
-        if form_label:
-            it["label"] = form_label
-        b2_items.append(it)
-    block_b2["items"] = b2_items
+    for i in range(1, 10):
+        label = form_text(f"b2_label_{i}", "")
+        icon = form_text(f"b2_icon_{i}", "")
+        if label:
+            b2_items.append({"icon_image": "", "icon_text": icon or "✅", "label": label})
+    # 兜底：没有表单数据时用配置默认
+    if not b2_items:
+        b2_items = block_b2_cfg.get("items", [])
+    block_b2 = {
+        "title_num": form_text("b2_title_num", "") or block_b2_cfg.get("title_num", str(len(b2_items))),
+        "title_text": form_text("b2_title_text", "") or block_b2_cfg.get("title_text", "大核心优势"),
+        "subtitle": form_text("b2_subtitle", "") or block_b2_cfg.get("subtitle", ""),
+        "grid_columns": block_b2_cfg.get("grid_columns", 3),
+        "items": b2_items,
+    }
 
     # ── Block B3（清洁故事）— 表单文案覆盖 + 场景图注入 ──
     block_b3 = dict(blocks_hc.get("block_b3", {}))
