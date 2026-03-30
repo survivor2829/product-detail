@@ -17,14 +17,6 @@
     <span style="color:#fff; font-size:24px; font-weight:800; letter-spacing:0.5px;">{{ red_bar_text or '产品 创新升级' }}</span>
   </div>
 
-  <!-- 场景图（宽幅填充，展示人+产品使用场景） -->
-  {% if product_image %}
-  <div style="width:750px; overflow:hidden; line-height:0;">
-    <img src="{{ product_image }}" alt=""
-      style="width:750px; max-height:380px; object-fit:cover; object-position:center center; display:block;">
-  </div>
-  {% endif %}
-
   <!-- 文字尺寸标注（一横行） -->
   {% if dim_length or dim_width or dim_height %}
   <div style="text-align:center; padding:4px 20px 20px; font-size:17px; color:#4a5566; font-weight:600; letter-spacing:0.3px;">

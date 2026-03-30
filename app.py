@@ -30,7 +30,7 @@ ALLOWED_IMG = {"jpg", "jpeg", "png", "webp"}
 # ── DeepSeek API 配置 ─────────────────────────────────────────────────
 DEEPSEEK_API_KEY = "***REMOVED***"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL   = "deepseek-reasoner"
+DEEPSEEK_MODEL   = "deepseek-chat"
 PROXY = {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
 
 app = Flask(__name__)
