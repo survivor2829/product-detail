@@ -815,7 +815,7 @@ def build_submit_generic(product_type):
         if _v:
             block_b3[_field] = _v
     if not (block_b3.get("hero_image") or "").strip():
-        block_b3["hero_image"] = product_image
+        block_b3["hero_image"] = effect_image or product_image
     block_b3["scene_image"] = scene_image  # 场景图作为背景
 
     # ── Block F（1台顶8人）— 图片注入 ──
