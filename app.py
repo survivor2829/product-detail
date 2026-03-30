@@ -436,14 +436,45 @@ STATIC_OUTPUTS = BASE_DIR / "static" / "outputs"
 STATIC_OUTPUTS.mkdir(parents=True, exist_ok=True)
 
 
-def _save_upload(file_field_name) -> str:
-    """保存上传图片到 static/uploads/，返回 /static/uploads/xxx.ext URL"""
+def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
+    """保存上传图片到 static/uploads/，返回 /static/uploads/xxx.ext URL
+    auto_rembg=True 时对白底产品图自动抠图（只处理 product_image）
+    """
     f = request.files.get(file_field_name)
     if not f or not f.filename:
         return ""
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "png"
-    filename = f"{uuid.uuid4().hex}.{ext}"
-    f.save(str(STATIC_UPLOADS / filename))
+    uid = uuid.uuid4().hex
+    filename = f"{uid}.{ext}"
+    save_path = STATIC_UPLOADS / filename
+    f.save(str(save_path))
+
+    if auto_rembg:
+        try:
+            from PIL import Image as _Img
+            import numpy as np
+            # 如果已有真实透明区域则跳过
+            needs_rembg = True
+            with _Img.open(save_path) as im:
+                if im.mode == "RGBA":
+                    alpha = np.array(im)[:, :, 3]
+                    if alpha.min() < 250:
+                        needs_rembg = False
+                        print(f"[抠图] {filename} 已有透明底，跳过")
+            if needs_rembg:
+                import rembg
+                print(f"[抠图] 开始处理 {filename}…")
+                with open(save_path, "rb") as inp:
+                    result_bytes = rembg.remove(inp.read())
+                nobg_filename = f"{uid}_nobg.png"
+                nobg_path = STATIC_UPLOADS / nobg_filename
+                with open(nobg_path, "wb") as out:
+                    out.write(result_bytes)
+                print(f"[抠图] 完成 → {nobg_filename}")
+                return f"/static/uploads/{nobg_filename}"
+        except Exception as e:
+            print(f"[抠图] 失败，使用原图: {e}")
+
     return f"/static/uploads/{filename}"
 
 
@@ -718,7 +749,7 @@ def build_submit_generic(product_type):
         return _fallback_text(F.get(name, ""), default)
 
     # ── 图片上传 ──
-    product_image    = _save_upload('product_image')
+    product_image    = _save_upload('product_image', auto_rembg=True)  # 自动抠白底
     scene_image      = _save_upload('scene_image')
     product_side_image = _save_upload('product_side_image')
     effect_image     = _save_upload('effect_image')
