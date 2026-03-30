@@ -138,6 +138,13 @@
 </div>
 {% endif %}
 
+{# ── 效果图全宽屏（场景+人+产品合成图，插在优势格之后）── #}
+{% if effect_image %}
+<div class="screen" id="screen_effect">
+  <img class="fixed-screen" src="{{ effect_image }}" alt="">
+</div>
+{% endif %}
+
 {# ── Screen 3: 清洁故事（地坪材质 + 产品清洁能力）── #}
 {% if block_b3 %}
 <div class="screen" id="screen3">

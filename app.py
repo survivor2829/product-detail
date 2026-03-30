@@ -300,8 +300,10 @@ def _build_spec_rows(detail_params: dict) -> list:
         if not k or not v or k in used:
             continue
         rows.append({"name": k, "value": v})
+        if len(rows) >= 20:
+            break
 
-    return rows
+    return rows[:20]
 
 
 def _map_parsed_to_form_fields(parsed: dict) -> dict:
@@ -538,7 +540,7 @@ def _call_deepseek_parse(raw_text: str) -> dict:
         "}\n"
         "```\n\n"
         "【advantages规则】\n"
-        "- 必须6-9项，每项2-6个字（如 超强续航、一机多用、电泳防锈）\n"
+        "- 6-9项，根据产品实际功能特点决定数量，不强制凑满9个，每项2-6个字（如 超强续航、一机多用、电泳防锈）\n"
         "- 每项附带一个贴切的emoji\n"
         "- 从产品参数推导，覆盖效率/容量/工艺/安全/动力/续航等维度\n"
         "- 严禁出现产品没有的功能（没有AI导航就不能写智能避障）\n\n"
@@ -719,6 +721,7 @@ def build_submit_generic(product_type):
     product_image    = _save_upload('product_image')
     scene_image      = _save_upload('scene_image')
     product_side_image = _save_upload('product_side_image')
+    effect_image     = _save_upload('effect_image')
     logo_image       = _save_upload('logo_image')
 
     # ── 英雄屏参数条（跳过空值、占位符、过长值）──
@@ -762,7 +765,7 @@ def build_submit_generic(product_type):
 
     # ── Block E（参数表）──
     e_specs = []
-    for i in range(1, 51):
+    for i in range(1, 21):
         name = form_text(f'e_spec_name_{i}', '')
         value = form_text(f'e_spec_value_{i}', '')
         if name and value:
@@ -775,7 +778,7 @@ def build_submit_generic(product_type):
         "title": "产品参数",
         "subtitle": form_text("e_table_subtitle", "规格一览"),
         "red_bar_text": _e_red or f"{model_name}创新升级",
-        "product_image": scene_image or product_side_image or product_image,
+        "product_image": effect_image or product_side_image or product_image,
         "dim_height": form_text('e_dim_height', _dims.get("height", "")),
         "dim_width":  form_text('e_dim_width',  _dims.get("width", "")),
         "dim_length": form_text('e_dim_length', _dims.get("length", "")),
@@ -834,6 +837,7 @@ def build_submit_generic(product_type):
         "block_f": block_f,
         "block_e": block_e,
         "fixed_selling_images": fixed_selling_images,
+        "effect_image": effect_image,
         "hero_block_template": cfg.get("hero_block_template", "blocks/block_a_hero_robot_cover.html"),
         "spec_block_template": cfg.get("spec_block_template", "blocks/block_e_glass_dimension.html"),
     }

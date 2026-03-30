@@ -136,9 +136,16 @@
     <div class="upload-box" id="box_side">
       <div class="icon">📐</div>
       <div class="label">侧面/参数图</div>
-      <div class="hint">可选，用于末屏参数表</div>
+      <div class="hint">可选，用于末屏参数表兜底</div>
       <img class="preview-img" id="preview_side" alt="">
       <input type="file" name="product_side_image" accept="image/*" onchange="previewFile(this,'preview_side')">
+    </div>
+    <div class="upload-box" id="box_effect">
+      <div class="icon">🎬</div>
+      <div class="label">效果图</div>
+      <div class="hint">场景+人+产品合成图，插在优势格之后；末屏参数表也用此图</div>
+      <img class="preview-img" id="preview_effect" alt="">
+      <input type="file" name="effect_image" accept="image/*" onchange="previewFile(this,'preview_effect')">
     </div>
   </div>
 </div>
@@ -243,7 +250,7 @@
         <td><input type="text" name="e_spec_value_{{ loop.index }}" value="{{ sp.value }}"></td>
       </tr>
       {% endfor %}
-      {% for i in range(config.default_specs|length + 1, 51) %}
+      {% for i in range(config.default_specs|length + 1, 21) %}
       <tr>
         <td><input type="text" name="e_spec_name_{{ i }}"  placeholder="参数名"></td>
         <td><input type="text" name="e_spec_value_{{ i }}" placeholder="参数值"></td>
@@ -403,7 +410,7 @@ async function parseAiTextForBuild() {
 
     // ── 产品参数表 ──
     var specs = Array.isArray(data.e_specs) ? data.e_specs : [];
-    for (var i = 1; i <= 50; i++) {
+    for (var i = 1; i <= 20; i++) {
       var row = specs[i-1] || {};
       setFieldValue('e_spec_name_' + i, row.name || '');
       setFieldValue('e_spec_value_' + i, row.value || '');
