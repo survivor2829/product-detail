@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>物保云 · 详情页生成器</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif; background:#0f111a; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 20px; }
+  .header { text-align:center; margin-bottom:40px; }
+  .header h1 { font-size:28px; font-weight:900; color:#fff; letter-spacing:2px; }
+  .header p { margin-top:10px; font-size:14px; color:rgba(255,255,255,0.5); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:680px; width:100%; }
+  .card { border-radius:18px; padding:28px 24px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.10); cursor:pointer; text-decoration:none; transition:all .2s; position:relative; overflow:hidden; }
+  .card:hover { transform:translateY(-3px); border-color:rgba(255,255,255,0.25); background:rgba(255,255,255,0.08); }
+  .card .icon { font-size:36px; margin-bottom:14px; }
+  .card .name { font-size:20px; font-weight:800; color:#fff; }
+  .card .desc { margin-top:8px; font-size:13px; color:rgba(255,255,255,0.6); line-height:1.6; }
+  .card .arrow { position:absolute; right:20px; top:50%; transform:translateY(-50%); font-size:18px; color:rgba(255,255,255,0.3); transition:all .2s; }
+  .card:hover .arrow { color:rgba(255,255,255,0.7); right:16px; }
+  .card .bar { position:absolute; left:0; top:0; width:4px; height:100%; border-radius:0 4px 4px 0; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>物保云 · 产品详情页生成器</h1>
+  <p>选择产品类型，开始生成电商详情长图</p>
+</div>
+<div class="grid">
+  {% for c in categories %}
+  <a class="card" href="/build/{{ c.type }}">
+    <div class="bar" style="background:{{ c.color }};"></div>
+    <div class="icon">{{ c.icon }}</div>
+    <div class="name">{{ c.type }}</div>
+    <div class="desc">{{ c.desc }}</div>
+    <span class="arrow">&rarr;</span>
+  </a>
+  {% endfor %}
+</div>
+</body>
+</html>

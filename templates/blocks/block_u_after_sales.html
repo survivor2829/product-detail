@@ -1,0 +1,32 @@
+{#
+  售后服务承诺屏
+  变量:
+  - section_title: 标题（默认"售后无忧"）
+  - section_subtitle: 副标题
+  - promises: [{icon_text, number, unit, label}, ...] 承诺卡片
+  - service_note: 底部补充说明
+#}
+<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:linear-gradient(135deg,#0f1526 0%,#1a2240 100%); padding:50px 40px;">
+
+  <div style="text-align:center; margin-bottom:36px;">
+    <div style="font-size:28px; font-weight:800; color:#fff; letter-spacing:1px;">{{ section_title|default('售后无忧') }}</div>
+    {% if section_subtitle %}
+    <div style="font-size:14px; color:rgba(255,255,255,0.45); margin-top:8px;">{{ section_subtitle }}</div>
+    {% endif %}
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+    {% for p in promises|default([]) %}
+    <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:24px 20px; text-align:center;">
+      <div style="font-size:28px; margin-bottom:10px;">{{ p.icon_text|default('🛡️') }}</div>
+      <div style="font-size:36px; font-weight:900; color:#fff;">{{ p.number }}<span style="font-size:16px; font-weight:400; color:rgba(255,255,255,0.5); margin-left:4px;">{{ p.unit }}</span></div>
+      <div style="font-size:13px; color:rgba(255,255,255,0.6); margin-top:8px; line-height:1.5;">{{ p.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if service_note %}
+  <div style="text-align:center; margin-top:20px; font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6;">{{ service_note }}</div>
+  {% endif %}
+
+</div>

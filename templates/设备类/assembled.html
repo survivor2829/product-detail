@@ -1,166 +1,27 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+{% extends "assembled_base.html" %}
 
-  {% if not export_mode|default(false) %}
-  /* ── 预览模式：深色背景 + 内容居中 ── */
-  html { background: #1a1c28; }
-  body {
-    width: 750px;
-    margin: 0 auto;
-    background: #fff;
-    padding-top: 58px;
-  }
-
-  .export-bar {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-    background: linear-gradient(90deg, #0f111a, #1a1d2e);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    padding: 0 24px;
-    height: 58px;
-    display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  }
-  .export-bar .left { display:flex; align-items:center; gap:14px; }
-  .export-bar .back-btn {
-    color: rgba(255,255,255,0.75); text-decoration: none; font-size: 13px;
-    border: 1px solid rgba(255,255,255,0.2); border-radius: 999px;
-    padding: 6px 14px; display:flex; align-items:center; gap:5px;
-    transition: all .15s;
-  }
-  .export-bar .back-btn:hover { color:#fff; border-color:rgba(255,255,255,0.5); }
-  .export-bar .bar-title { color: rgba(255,255,255,0.5); font-size: 13px; }
-  .export-bar .bar-tag {
-    background: rgba(232,35,26,0.15); color: #ff5e57;
-    font-size: 12px; padding: 3px 10px; border-radius: 999px;
-    border: 1px solid rgba(232,35,26,0.3);
-  }
-  .export-bar .right { display:flex; align-items:center; gap:12px; }
-  .export-bar .status { color: #ffe9a8; font-size: 13px; }
-  .export-bar .export-btn {
-    background: linear-gradient(135deg, #ff3b2f, #d61d14);
-    color: #fff; border: none; padding: 9px 22px;
-    font-size: 14px; font-weight: 700; border-radius: 8px; cursor: pointer;
-    box-shadow: 0 4px 14px rgba(232,35,26,.4);
-    transition: all .15s;
-    display: flex; align-items: center; gap: 7px;
-  }
-  .export-btn:hover { background: linear-gradient(135deg, #ff4f44, #c91a12); transform: translateY(-1px); }
-  .export-btn:disabled { background: #555; cursor: wait; box-shadow: none; transform: none; }
-
-  /* 导出进度遮罩 */
-  #exportOverlay {
-    display: none; position: fixed; inset: 0; z-index: 99999;
-    background: rgba(10,12,20,0.88); backdrop-filter: blur(6px);
-    flex-direction: column; align-items: center; justify-content: center; gap: 20px;
-  }
-  #exportOverlay.active { display: flex; }
-  .ov-card {
-    background: #1e2235; border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 18px; padding: 40px 52px; text-align: center;
-    box-shadow: 0 24px 64px rgba(0,0,0,0.5);
-  }
-  .ov-spinner {
-    width: 48px; height: 48px; border: 4px solid rgba(255,255,255,0.1);
-    border-top-color: #E8231A; border-radius: 50%;
-    animation: spin .8s linear infinite; margin: 0 auto 20px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .ov-title { color: #fff; font-size: 18px; font-weight: 700; margin-bottom: 6px; }
-  .ov-sub { color: rgba(255,255,255,0.45); font-size: 13px; }
-  {% else %}
-  /* ── 导出模式：无边距无背景 ── */
-  body { width: 750px; background: #fff; }
-  {% endif %}
-
-  .screen { width: 750px; }
-  .screen img.fixed-screen { width: 750px; display: block; }
-</style>
-</head>
-<body data-product-type="{{ product_type|default('设备类') }}">
-
-{% if not export_mode|default(false) %}
-<div class="export-bar">
-  <div class="left">
-    <a class="back-btn" href="javascript:history.back()">&#8592; 返回修改</a>
-    <span class="bar-title">详情页预览</span>
-    <span class="bar-tag">750px</span>
-  </div>
-  <div class="right">
-    <span class="status" id="exportStatus"></span>
-    <button class="export-btn" id="exportBtn" onclick="doExport()">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      导出高清 PNG
-    </button>
-  </div>
-</div>
-
-<!-- 导出进度遮罩 -->
-<div id="exportOverlay">
-  <div class="ov-card">
-    <div class="ov-spinner"></div>
-    <div class="ov-title">正在生成高清截图…</div>
-    <div class="ov-sub">Playwright 截图中，750px 全页，请稍候</div>
-  </div>
-</div>
-{% endif %}
-
-{# ── Screen 1: 英雄屏 ── #}
-<div class="screen" id="screen1">
-  {% with
-    brand_text=block_a.brand_text, model_name=block_a.model_name,
-    logo_image=block_a.logo_image, category_line=block_a.category_line,
-    main_title=block_a.main_title,
-    hero_subtitle_pre=block_a.hero_subtitle_pre,
-    hero_subtitle_em=block_a.hero_subtitle_em,
-    hero_subtitle_post=block_a.hero_subtitle_post,
-    tagline_sub=block_a.tagline_sub,
-    cover_image=block_a.cover_image,
-    floor_bg_image=block_a.floor_bg_image,
-    product_image=block_a.product_image,
-    bg_focal=block_a.bg_focal, footer_note=block_a.footer_note,
-    show_hero_params=block_a.show_hero_params, params=block_a.params
-  %}
-    {% include 'blocks/block_a_hero_robot_cover.html' %}
-  {% endwith %}
-</div>
-
-{# ── Screen 2: 九大优势 ── #}
-{% if block_b2 %}
-<div class="screen" id="screen2">
-  {% with title_num=block_b2.title_num, title_text=block_b2.title_text,
-          subtitle=block_b2.subtitle, items=block_b2["items"],
-          grid_columns=block_b2.grid_columns|default(3) %}
-    {% include 'blocks/block_b2_icon_grid.html' %}
-  {% endwith %}
-</div>
-{% endif %}
-
-{# ── 效果图全宽屏（场景+人+产品合成图，插在优势格之后）── #}
+{% block category_screens %}
+{# ── 效果图全宽屏 ── #}
 {% if effect_image %}
 <div class="screen" id="screen_effect">
   <img class="fixed-screen" src="{{ effect_image }}" alt="">
 </div>
 {% endif %}
 
-{# ── Screen 3: 清洁故事（地坪材质 + 产品清洁能力）── #}
+{# ── 清洁故事 ── #}
 {% if block_b3 %}
 <div class="screen" id="screen3">
-  {% with
-    header_line1=block_b3.header_line1, header_line2=block_b3.header_line2,
+  {% with header_line1=block_b3.header_line1, header_line2=block_b3.header_line2,
     hero_image=block_b3.hero_image, scene_image=block_b3.scene_image,
     caption_line1=block_b3.caption_line1, caption_line2=block_b3.caption_line2,
     floor_title=block_b3.floor_title, floor_items=block_b3.floor_items,
-    footer_line1=block_b3.footer_line1, footer_line2=block_b3.footer_line2
-  %}
+    footer_line1=block_b3.footer_line1, footer_line2=block_b3.footer_line2 %}
     {% include 'blocks/block_b3_clean_story.html' %}
   {% endwith %}
 </div>
 {% endif %}
 
-{# ── Screen 4: 品牌背书 ── #}
+{# ── 品牌背书 ── #}
 {% if block_g and block_g.brand_title %}
 <div class="screen" id="screen_g">
   {% with brand_title=block_g.brand_title, brand_subtitle=block_g.brand_subtitle,
@@ -170,7 +31,7 @@
 </div>
 {% endif %}
 
-{# ── Screen 5: 适用场景 ── #}
+{# ── 适用场景 ── #}
 {% if block_h and block_h.scenes %}
 <div class="screen" id="screen_h">
   {% with section_title=block_h.section_title, section_subtitle=block_h.section_subtitle,
@@ -180,7 +41,7 @@
 </div>
 {% endif %}
 
-{# ── Screen 6: KPI 大数字条 ── #}
+{# ── KPI 数据 ── #}
 {% if block_i and block_i.kpis %}
 <div class="screen" id="screen_i">
   {% with section_title=block_i.section_title, kpis=block_i.kpis %}
@@ -189,7 +50,7 @@
 </div>
 {% endif %}
 
-{# ── Screen 7: 核心技术 ── #}
+{# ── 核心技术 ── #}
 {% if block_j and block_j.tech_items %}
 <div class="screen" id="screen_j">
   {% with section_title=block_j.section_title, section_subtitle=block_j.section_subtitle,
@@ -199,42 +60,54 @@
 </div>
 {% endif %}
 
-{# ── 固定卖点图（中间插入）── #}
-{% for img_url in fixed_selling_images|default([]) %}
-<div class="screen">
-  <img class="fixed-screen" src="{{ img_url }}" alt="">
-</div>
-{% endfor %}
-
-{# ── Screen N-1: 1台顶8-10人 VS 对比屏 ── #}
+{# ── VS 对比屏 ── #}
 {% if block_f and block_f.title_line1 %}
 <div class="screen" id="screen_f">
-  {% with
-    title_line1=block_f.title_line1, title_line1_red=block_f.title_line1_red,
+  {% with title_line1=block_f.title_line1, title_line1_red=block_f.title_line1_red,
     title_line1_end=block_f.title_line1_end,
     title_line2=block_f.title_line2, title_line2_red=block_f.title_line2_red,
     bg_image=block_f.bg_image, product_image=block_f.product_image,
     vs_left_title=block_f.vs_left_title, vs_left_sub=block_f.vs_left_sub,
     vs_right_title=block_f.vs_right_title, vs_right_sub=block_f.vs_right_sub,
-    vs_left_bottom=block_f.vs_left_bottom, vs_right_bottom=block_f.vs_right_bottom
-  %}
+    vs_left_bottom=block_f.vs_left_bottom, vs_right_bottom=block_f.vs_right_bottom %}
     {% include 'blocks/block_f_showcase_vs.html' %}
   {% endwith %}
 </div>
 {% endif %}
 
-{# ── 产品参数表 ── #}
-<div class="screen" id="screen_spec">
-  {% with
-    title=block_e.title, subtitle=block_e.subtitle,
-    red_bar_text=block_e.red_bar_text, product_image=block_e.product_image,
-    dim_height=block_e.dim_height, dim_width=block_e.dim_width,
-    dim_length=block_e.dim_length, specs=block_e.specs, footnote=block_e.footnote
-  %}
-    {% include 'blocks/block_e_glass_dimension.html' %}
+{# ── 实测数据 ── #}
+{% if block_x and block_x.metrics %}
+<div class="screen" id="screen_x">
+  {% with section_title=block_x.section_title, section_subtitle=block_x.section_subtitle,
+          metrics=block_x.metrics, test_note=block_x.test_note %}
+    {% include 'blocks/block_x_durability.html' %}
   {% endwith %}
 </div>
+{% endif %}
 
+{# ── 视频封面 ── #}
+{% if block_w and block_w.cover_image %}
+<div class="screen" id="screen_w">
+  {% with section_title=block_w.section_title, video_title=block_w.video_title,
+          video_duration=block_w.video_duration, cover_image=block_w.cover_image,
+          qr_image=block_w.qr_image, qr_text=block_w.qr_text %}
+    {% include 'blocks/block_w_video_cover.html' %}
+  {% endwith %}
+</div>
+{% endif %}
+
+{# ── 型号对比 ── #}
+{% if block_v and block_v.models %}
+<div class="screen" id="screen_v">
+  {% with section_title=block_v.section_title, section_subtitle=block_v.section_subtitle,
+          models=block_v.models, spec_labels=block_v.spec_labels %}
+    {% include 'blocks/block_v_model_compare.html' %}
+  {% endwith %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block category_tail %}
 {# ── 资质认证 ── #}
 {% if block_k and block_k.badge_items %}
 <div class="screen" id="screen_k">
@@ -265,61 +138,33 @@
 </div>
 {% endif %}
 
-{# ── 询价 CTA ── #}
-{% if block_n and block_n.cta_title %}
-<div class="screen" id="screen_n">
-  {% with cta_title=block_n.cta_title, cta_subtitle=block_n.cta_subtitle,
-          contact_items=block_n.contact_items, highlights=block_n.highlights,
-          qr_image=block_n.qr_image, qr_caption=block_n.qr_caption %}
-    {% include 'blocks/block_n_quote_cta.html' %}
+{# ── 客户案例 ── #}
+{% if block_t and (block_t.client_logos or block_t.cases) %}
+<div class="screen" id="screen_t">
+  {% with section_title=block_t.section_title, section_subtitle=block_t.section_subtitle,
+          client_count=block_t.client_count, client_logos=block_t.client_logos, cases=block_t.cases %}
+    {% include 'blocks/block_t_customer_cases.html' %}
   {% endwith %}
 </div>
 {% endif %}
 
-{# ── 免责声明 ── #}
-{% if block_o and block_o.disclaimer_text %}
-<div class="screen" id="screen_o">
-  {% with disclaimer_title=block_o.disclaimer_title, disclaimer_text=block_o.disclaimer_text %}
-    {% include 'blocks/block_o_disclaimer.html' %}
+{# ── 售后服务 ── #}
+{% if block_u and block_u.promises %}
+<div class="screen" id="screen_u">
+  {% with section_title=block_u.section_title, section_subtitle=block_u.section_subtitle,
+          promises=block_u.promises, service_note=block_u.service_note %}
+    {% include 'blocks/block_u_after_sales.html' %}
   {% endwith %}
 </div>
 {% endif %}
 
-{% if not export_mode|default(false) %}
-<script>
-function doExport() {
-  var btn = document.getElementById('exportBtn');
-  var status = document.getElementById('exportStatus');
-  var overlay = document.getElementById('exportOverlay');
-  var pt = document.body.getAttribute('data-product-type') || '设备类';
-
-  btn.disabled = true;
-  overlay.classList.add('active');
-  status.textContent = '';
-
-  fetch(window.location.pathname.replace('/build/', '/export/'), { method: 'POST' })
-    .then(function(resp) {
-      if (!resp.ok) return resp.json().then(function(d) { throw new Error(d.error || '导出失败'); });
-      return resp.blob();
-    })
-    .then(function(blob) {
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url; a.download = pt + '_详情页.png'; a.click();
-      URL.revokeObjectURL(url);
-      overlay.classList.remove('active');
-      btn.disabled = false;
-      status.textContent = '✓ 导出成功';
-      setTimeout(function(){ status.textContent = ''; }, 3000);
-    })
-    .catch(function(err) {
-      overlay.classList.remove('active');
-      btn.disabled = false;
-      status.textContent = '✗ ' + err.message;
-    });
-}
-</script>
+{# ── FAQ ── #}
+{% if block_s and block_s.faqs %}
+<div class="screen" id="screen_s">
+  {% with section_title=block_s.section_title, section_subtitle=block_s.section_subtitle,
+          faqs=block_s.faqs %}
+    {% include 'blocks/block_s_faq.html' %}
+  {% endwith %}
+</div>
 {% endif %}
-
-</body>
-</html>
+{% endblock %}

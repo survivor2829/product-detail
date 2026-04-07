@@ -19,6 +19,9 @@ static/设备类/ref_*.png
 *.png
 *.jpg
 
+# 允许通用场景图片
+!static/scenes/*.jpg
+
 # 工具生成文件
 .omc/
 PROJECT_ARCHITECTURE.md

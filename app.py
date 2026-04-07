@@ -24,11 +24,16 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 PRODUCT_TYPE = "设备类"
+_EXTRA_BLOCK_KEYS = ["block_g", "block_h", "block_i", "block_j", "block_k",
+                     "block_l", "block_m", "block_n", "block_o",
+                     "block_p", "block_q", "block_r",
+                     "block_s", "block_t", "block_u", "block_v",
+                     "block_w", "block_x", "block_y"]
 
 ALLOWED_IMG = {"jpg", "jpeg", "png", "webp"}
 
 # ── DeepSeek API 配置 ─────────────────────────────────────────────────
-DEEPSEEK_API_KEY = "***REMOVED***"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "***REMOVED***")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL   = "deepseek-chat"
 PROXY = {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
@@ -40,10 +45,12 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 @app.after_request
 def _no_cache(response):
-    """禁止浏览器缓存，确保每次拿到最新数据"""
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
+    """禁止浏览器缓存 HTML/JSON，静态资源允许缓存"""
+    ct = response.content_type or ""
+    if "text/html" in ct or "application/json" in ct:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
 
 # ── rembg 可用性检测 ──
@@ -457,35 +464,22 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
     if isinstance(floor_items, list) and floor_items:
         result["b3_floor_items_json"] = json.dumps(floor_items, ensure_ascii=False)
 
-    # ── 兼容机型（配耗类）──
-    compat_models = parsed.get("compat_models")
-    if isinstance(compat_models, list) and compat_models:
-        result["block_p_json"] = json.dumps(compat_models, ensure_ascii=False)
-
-    # ── 安装步骤（配耗类）或 使用步骤（耗材类）──
-    install_steps = parsed.get("install_steps") or parsed.get("usage_steps")
-    if isinstance(install_steps, list) and install_steps:
-        result["block_m_json"] = json.dumps(install_steps, ensure_ascii=False)
-
-    # ── 包装清单（配耗类 / 工具类）──
-    package_items = parsed.get("package_items")
-    if isinstance(package_items, list) and package_items:
-        result["block_r_json"] = json.dumps(package_items, ensure_ascii=False)
-
-    # ── 关键指标（耗材类）──
-    kpis = parsed.get("kpis")
-    if isinstance(kpis, list) and kpis:
-        result["block_i_json"] = json.dumps(kpis, ensure_ascii=False)
-
-    # ── 适用场景（工具类）──
-    scenes = parsed.get("scenes")
-    if isinstance(scenes, list) and scenes:
-        result["block_h_json"] = json.dumps(scenes, ensure_ascii=False)
-
-    # ── 使用前后对比（耗材类 / 工具类）──
-    before_after = parsed.get("before_after")
-    if isinstance(before_after, list) and before_after:
-        result["block_q_json"] = json.dumps(before_after, ensure_ascii=False)
+    # ── 品类扩展字段（列表类 → JSON）──
+    _list_field_map = {
+        "compat_models": "block_p_json",
+        "package_items": "block_r_json",
+        "kpis":          "block_i_json",
+        "scenes":        "block_h_json",
+        "before_after":  "block_q_json",
+    }
+    for src_key, dest_key in _list_field_map.items():
+        val = parsed.get(src_key)
+        if isinstance(val, list) and val:
+            result[dest_key] = json.dumps(val, ensure_ascii=False)
+    # install_steps / usage_steps 合并为 block_m_json
+    steps = parsed.get("install_steps") or parsed.get("usage_steps")
+    if isinstance(steps, list) and steps:
+        result["block_m_json"] = json.dumps(steps, ensure_ascii=False)
 
     print(f"[映射] b2_label_1={result.get('b2_label_1','(空)')}, b3_header_line1={result.get('b3_header_line1','(空)')}")
 
@@ -539,19 +533,19 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
             import rembg
             # 如果已有真实透明区域则跳过
             needs_rembg = True
-            with _Img.open(save_path) as im:
-                if im.mode == "RGBA":
-                    alpha = np.array(im)[:, :, 3]
-                    if alpha.min() < 250:
-                        needs_rembg = False
-                        print(f"[抠图] {filename} 已有透明底，跳过", flush=True)
+            im = _Img.open(save_path)
+            if im.mode == "RGBA":
+                alpha = np.array(im)[:, :, 3]
+                if alpha.min() < 250:
+                    needs_rembg = False
+                    print(f"[抠图] {filename} 已有透明底，跳过", flush=True)
             if needs_rembg:
                 from PIL import ImageFilter
                 import io as _io
                 print(f"[抠图] 开始处理 {filename}（AI+色值混合）…", flush=True)
 
-                # 读取原图 RGB
-                orig = _Img.open(save_path).convert("RGB")
+                # 复用已打开的图片，转 RGB
+                orig = im.convert("RGB")
                 arr = np.array(orig)
                 h, w = arr.shape[:2]
 
@@ -589,37 +583,16 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
 
 # ── 基础路由 ─────────────────────────────────────────────────────────
 
+_CATEGORIES = [
+    {"type": "设备类", "desc": "商用清洁机器人、洗地机、扫地车等大型设备", "color": "#E8231A", "icon": "🤖"},
+    {"type": "配耗类", "desc": "刷盘、滤芯、吸水胶条等设备配件", "color": "#1E6FBF", "icon": "🔧"},
+    {"type": "耗材类", "desc": "清洁剂、除垢液、清洁垫等消耗品", "color": "#2E8B57", "icon": "🧪"},
+    {"type": "工具类", "desc": "拖把、刮水器、清洁桶等手动工具", "color": "#E87C1A", "icon": "🧹"},
+]
+
 @app.route("/")
 def index():
-    categories = [
-        {"type": "设备类", "name": "设备类", "desc": "商用清洁机器人、洗地机、扫地车等大型设备", "color": "#E8231A", "icon": "🤖"},
-        {"type": "配耗类", "name": "配耗类", "desc": "刷盘、滤芯、吸水胶条等设备配件", "color": "#1E6FBF", "icon": "🔧"},
-        {"type": "耗材类", "name": "耗材类", "desc": "清洁剂、除垢液、清洁垫等消耗品", "color": "#2E8B57", "icon": "🧪"},
-        {"type": "工具类", "name": "工具类", "desc": "拖把、刮水器、清洁桶等手动工具", "color": "#E87C1A", "icon": "🧹"},
-    ]
-    html = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>物保云 · 详情页生成器</title>
-    <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif; background:#0f111a; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 20px; }
-    .header { text-align:center; margin-bottom:40px; }
-    .header h1 { font-size:28px; font-weight:900; color:#fff; letter-spacing:2px; }
-    .header p { margin-top:10px; font-size:14px; color:rgba(255,255,255,0.5); }
-    .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:680px; width:100%; }
-    .card { border-radius:18px; padding:28px 24px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.10); cursor:pointer; text-decoration:none; transition:all .2s; position:relative; overflow:hidden; }
-    .card:hover { transform:translateY(-3px); border-color:rgba(255,255,255,0.25); background:rgba(255,255,255,0.08); }
-    .card .icon { font-size:36px; margin-bottom:14px; }
-    .card .name { font-size:20px; font-weight:800; color:#fff; }
-    .card .desc { margin-top:8px; font-size:13px; color:rgba(255,255,255,0.6); line-height:1.6; }
-    .card .arrow { position:absolute; right:20px; top:50%; transform:translateY(-50%); font-size:18px; color:rgba(255,255,255,0.3); transition:all .2s; }
-    .card:hover .arrow { color:rgba(255,255,255,0.7); right:16px; }
-    .card .bar { position:absolute; left:0; top:0; width:4px; height:100%; border-radius:0 4px 4px 0; }
-    </style></head><body>
-    <div class="header"><h1>物保云 · 产品详情页生成器</h1><p>选择产品类型，开始生成电商详情长图</p></div>
-    <div class="grid">"""
-    for c in categories:
-        html += f'<a class="card" href="/build/{c["type"]}"><div class="bar" style="background:{c["color"]};"></div><div class="icon">{c["icon"]}</div><div class="name">{c["name"]}</div><div class="desc">{c["desc"]}</div><span class="arrow">→</span></a>'
-    html += "</div></body></html>"
-    return html
+    return render_template("index.html", categories=_CATEGORIES)
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -1104,10 +1077,7 @@ def build_submit_generic(product_type):
     ]
 
     # ── 扩展积木（从配置读取默认值 + 表单覆盖）──
-    _extra_block_keys = ["block_g", "block_h", "block_i", "block_j", "block_k",
-                         "block_l", "block_m", "block_n", "block_o",
-                         "block_p", "block_q", "block_r"]
-    extra_blocks = {k: dict(cfg.get(k, {})) for k in _extra_block_keys}
+    extra_blocks = {k: dict(cfg.get(k, {})) for k in _EXTRA_BLOCK_KEYS}
 
     # 品牌背书 (block_g) — 表单文本覆盖
     _g_title = form_text("g_brand_title", "")
@@ -1273,9 +1243,7 @@ def preview_equipment():
             ],
             "footnote": "*人工测量有误差",
         },
-        **{k: cfg.get(k, {}) for k in ["block_g","block_h","block_i","block_j","block_k",
-                                          "block_l","block_m","block_n","block_o",
-                                          "block_p","block_q","block_r"]},
+        **{k: cfg.get(k, {}) for k in _EXTRA_BLOCK_KEYS},
     }
     return render_template(f"{PRODUCT_TYPE}/assembled.html", **data)
 

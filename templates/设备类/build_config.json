@@ -162,10 +162,10 @@
     "section_title": "适用场景",
     "section_subtitle": "覆盖多行业高频清洁需求",
     "scenes": [
-      {"name": "商超卖场", "desc": "大面积高频通道清洁", "image": ""},
-      {"name": "医院", "desc": "低噪音，减少打扰", "image": ""},
-      {"name": "酒店大堂", "desc": "高标准洁净要求", "image": ""},
-      {"name": "写字楼", "desc": "办公区域日常保洁", "image": ""}
+      {"name": "商超卖场", "desc": "大面积高频通道清洁", "image": "/static/scenes/mall.jpg"},
+      {"name": "医院", "desc": "低噪音，减少打扰", "image": "/static/scenes/hospital.jpg"},
+      {"name": "酒店大堂", "desc": "高标准洁净要求", "image": "/static/scenes/hotel.jpg"},
+      {"name": "写字楼", "desc": "办公区域日常保洁", "image": "/static/scenes/office.jpg"}
     ]
   },
   "block_i": {
@@ -215,6 +215,49 @@
   "block_o": {
     "disclaimer_title": "温馨提示",
     "disclaimer_text": "1. 产品参数为实验室标准工况下测试数据，实际使用中因场地、污渍类型等因素可能存在差异。\n2. 产品外观及颜色以实物为准，图片仅供参考。\n3. 产品不定期升级优化，恕不另行通知。"
+  },
+  "block_s": {
+    "section_title": "常见问题",
+    "section_subtitle": "购买前您可能想了解",
+    "faqs": []
+  },
+  "block_t": {
+    "section_title": "他们都在用",
+    "section_subtitle": "覆盖商场、酒店、工厂等多种商业场景",
+    "client_count": "",
+    "client_logos": [],
+    "cases": []
+  },
+  "block_u": {
+    "section_title": "售后无忧",
+    "section_subtitle": "全方位服务保障",
+    "promises": [
+      {"icon_text": "🛡️", "number": "3", "unit": "年", "label": "整机质保"},
+      {"icon_text": "🔧", "number": "5", "unit": "年", "label": "核心部件质保"},
+      {"icon_text": "📦", "number": "10", "unit": "年", "label": "配件供应保障"},
+      {"icon_text": "📞", "number": "24", "unit": "h", "label": "售后响应"}
+    ],
+    "service_note": ""
+  },
+  "block_v": {
+    "section_title": "型号对比",
+    "section_subtitle": "选择最适合您的型号",
+    "models": [],
+    "spec_labels": []
+  },
+  "block_w": {
+    "section_title": "产品视频",
+    "video_title": "",
+    "video_duration": "",
+    "cover_image": "",
+    "qr_image": "",
+    "qr_text": "扫码看完整视频"
+  },
+  "block_x": {
+    "section_title": "实测数据",
+    "section_subtitle": "权威机构检测认证",
+    "metrics": [],
+    "test_note": ""
   },
   "legacy_defaults": {
     "efficiency_claim": "1台顶8-10人",
