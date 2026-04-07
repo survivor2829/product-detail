@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+# 国内 apt 源（腾讯云）
+RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+    sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list 2>/dev/null; true
+
 # 系统依赖（Playwright Chromium 需要）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-cjk \
@@ -10,11 +14,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# 国内 pip 源（腾讯云）
+RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.cloud.tencent.com
+
 # Python 依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn requests
 
-# Playwright Chromium
+# Playwright Chromium（使用国内CDN）
+ENV PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 RUN playwright install chromium
 
 # 复制项目文件
