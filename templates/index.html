@@ -18,9 +18,23 @@
   .card .arrow { position:absolute; right:20px; top:50%; transform:translateY(-50%); font-size:18px; color:rgba(255,255,255,0.3); transition:all .2s; }
   .card:hover .arrow { color:rgba(255,255,255,0.7); right:16px; }
   .card .bar { position:absolute; left:0; top:0; width:4px; height:100%; border-radius:0 4px 4px 0; }
+  .user-bar { position:fixed; top:0; right:0; left:0; padding:10px 24px; display:flex; justify-content:flex-end; align-items:center; gap:14px; z-index:100; }
+  .user-bar span { color:rgba(255,255,255,0.5); font-size:13px; }
+  .user-bar a { color:rgba(255,255,255,0.6); font-size:13px; text-decoration:none; padding:4px 10px; border-radius:4px; transition:all .2s; }
+  .user-bar a:hover { color:#fff; background:rgba(255,255,255,0.1); }
+  .user-bar .admin-link { background:rgba(232,35,26,0.15); color:#E8231A; }
+  .user-bar .admin-link:hover { background:rgba(232,35,26,0.3); color:#fff; }
 </style>
 </head>
 <body>
+<div class="user-bar">
+  <span>{{ current_user.username }}</span>
+  <a href="/settings">账号设置</a>
+  {% if current_user.is_admin %}
+    <a href="/admin/users" class="admin-link">管理后台</a>
+  {% endif %}
+  <a href="/auth/logout">退出</a>
+</div>
 <div class="header">
   <h1>物保云 · 产品详情页生成器</h1>
   <p>选择产品类型，开始生成电商详情长图</p>

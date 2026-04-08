@@ -1,6 +1,10 @@
 # 环境变量（含 API Key，绝对不能提交）
 .env
 
+# 数据库文件
+*.db
+instance/
+
 # Python
 __pycache__/
 *.py[cod]

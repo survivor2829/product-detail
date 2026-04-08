@@ -29,7 +29,7 @@ RUN playwright install chromium
 COPY . .
 
 # 创建运行时目录
-RUN mkdir -p static/uploads static/outputs output
+RUN mkdir -p static/uploads static/outputs output instance
 
 # 环境变量
 ENV FLASK_ENV=production
@@ -38,4 +38,5 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 5000
 
 # 用 gunicorn 生产级启动（Render 用 $PORT 环境变量，本地默认 5000）
-CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 --timeout 180 app:app
+# workers 默认2，支持多用户并发；可通过 WORKERS 环境变量调整
+CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers ${WORKERS:-2} --timeout 180 app:app

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}管理后台{% endblock %} · 物保云</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", sans-serif; background: #f0f2f5; color: #333; }
+  .topbar {
+    background: #1a1a2e; color: #fff; padding: 12px 24px; display: flex;
+    align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100;
+  }
+  .topbar h1 { font-size: 16px; font-weight: 600; }
+  .topbar .nav { display: flex; gap: 18px; align-items: center; }
+  .topbar a { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; padding: 4px 10px; border-radius: 4px; }
+  .topbar a:hover, .topbar a.active { color: #fff; background: rgba(255,255,255,0.15); }
+  .topbar .user-info { font-size: 12px; color: rgba(255,255,255,0.5); }
+  .container { max-width: 1100px; margin: 20px auto; padding: 0 20px; }
+  .card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .card-title { font-size: 15px; font-weight: bold; margin-bottom: 14px; color: #222; border-left: 4px solid #E8231A; padding-left: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f8f9fa; padding: 10px 12px; text-align: left; color: #666; font-weight: 600; border-bottom: 2px solid #e9ecef; }
+  td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+  tr:hover td { background: #fafafa; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+  .badge-green { background: #e8f5e9; color: #2e7d32; }
+  .badge-red { background: #fff0f0; color: #d32f2f; }
+  .badge-blue { background: #e3f2fd; color: #1565c0; }
+  .badge-orange { background: #fff3e0; color: #e65100; }
+  .badge-gray { background: #f5f5f5; color: #666; }
+  .btn { padding: 4px 10px; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn-sm { padding: 3px 8px; font-size: 11px; }
+  .btn-green { background: #e8f5e9; color: #2e7d32; }
+  .btn-green:hover { background: #c8e6c9; }
+  .btn-red { background: #fff0f0; color: #d32f2f; }
+  .btn-red:hover { background: #ffcdd2; }
+  .btn-blue { background: #e3f2fd; color: #1565c0; }
+  .btn-blue:hover { background: #bbdefb; }
+  .btn-orange { background: #fff3e0; color: #e65100; }
+  .btn-orange:hover { background: #ffe0b2; }
+  .flash-msg { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+  .flash-success { background: #e8f5e9; color: #2e7d32; }
+  .flash-info { background: #e3f2fd; color: #1565c0; }
+  .flash-error { background: #fff0f0; color: #d32f2f; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat-box { background: #fff; border-radius: 10px; padding: 16px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .stat-num { font-size: 28px; font-weight: 700; color: #E8231A; }
+  .stat-label { font-size: 12px; color: #888; margin-top: 4px; }
+  .pagination { display: flex; gap: 6px; justify-content: center; margin-top: 16px; }
+  .pagination a, .pagination span { padding: 6px 12px; border-radius: 4px; font-size: 13px; text-decoration: none; }
+  .pagination a { background: #fff; color: #333; border: 1px solid #ddd; }
+  .pagination a:hover { background: #f0f0f0; }
+  .pagination .current { background: #E8231A; color: #fff; }
+  .search-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+  .search-bar input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; flex: 1; max-width: 250px; }
+  .search-bar button { padding: 8px 16px; background: #E8231A; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>物保云 · 管理后台</h1>
+  <div class="nav">
+    <a href="{{ url_for('admin.users') }}" class="{% if request.endpoint == 'admin.users' %}active{% endif %}">用户管理</a>
+    <a href="{{ url_for('admin.logs') }}" class="{% if request.endpoint == 'admin.logs' %}active{% endif %}">生成记录</a>
+    <a href="{{ url_for('admin.stats') }}" class="{% if request.endpoint == 'admin.stats' %}active{% endif %}">使用统计</a>
+    <a href="{{ url_for('index') }}">返回前台</a>
+    <span class="user-info">{{ current_user.username }}</span>
+  </div>
+</div>
+<div class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash-msg flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>

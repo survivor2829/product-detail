@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · 物保云</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  }
+  .login-card {
+    background: #fff; border-radius: 16px; padding: 40px 36px;
+    width: 380px; max-width: 90vw;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  .logo { text-align: center; margin-bottom: 28px; }
+  .logo h1 { font-size: 22px; color: #222; margin-bottom: 4px; }
+  .logo .brand { font-size: 13px; color: #999; }
+  .logo .icon { font-size: 36px; margin-bottom: 8px; display: block; }
+  .form-group { margin-bottom: 18px; }
+  .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
+  .form-group input {
+    width: 100%; padding: 11px 14px; border: 1px solid #ddd; border-radius: 8px;
+    font-size: 14px; outline: none; transition: border-color .2s;
+  }
+  .form-group input:focus { border-color: #E8231A; }
+  .submit-btn {
+    width: 100%; padding: 12px; background: #E8231A; color: #fff; border: none;
+    border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer;
+    margin-top: 6px; transition: background .2s;
+  }
+  .submit-btn:hover { background: #c91a12; }
+  .links { text-align: center; margin-top: 18px; font-size: 13px; color: #888; }
+  .links a { color: #E8231A; text-decoration: none; }
+  .links a:hover { text-decoration: underline; }
+  .flash-msg {
+    padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; line-height: 1.5;
+  }
+  .flash-error { background: #fff0f0; color: #d32f2f; border: 1px solid #fdd; }
+  .flash-warning { background: #fff8e1; color: #f57f17; border: 1px solid #ffe082; }
+  .flash-success { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
+  .flash-info { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="logo">
+    <span class="icon">&#x1f3ed;</span>
+    <h1>物保云</h1>
+    <div class="brand">产品详情页自动生成平台</div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash-msg flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="POST" action="{{ url_for('auth.login', next=request.args.get('next', '')) }}">
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" name="username" placeholder="请输入用户名" required autofocus>
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" name="password" placeholder="请输入密码" required>
+    </div>
+    <button type="submit" class="submit-btn">登 录</button>
+  </form>
+
+  <div class="links">
+    还没有账号？<a href="{{ url_for('auth.register') }}">立即注册</a>
+  </div>
+</div>
+</body>
+</html>

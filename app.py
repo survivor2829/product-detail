@@ -13,16 +13,13 @@ import uuid
 import json
 import re
 from pathlib import Path
+from dotenv import load_dotenv
 
 # 加载 .env 文件（本地开发用，生产环境靠系统环境变量）
-_env_file = Path(__file__).parent / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
-from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, redirect, url_for
+load_dotenv(Path(__file__).parent / ".env")
+
+from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, redirect, url_for, abort, flash
+from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).parent
@@ -51,6 +48,52 @@ PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else {}
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-change-me-in-production")
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///wubaoyun.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# ── 初始化扩展 ──
+from extensions import db, login_manager, migrate
+from models import User, GenerationLog
+
+db.init_app(app)
+login_manager.init_app(app)
+migrate.init_app(app, db)
+
+@login_manager.user_loader
+def _load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# ── product_type 白名单校验（防止路径遍历）──
+ALLOWED_PRODUCT_TYPES = {"设备类", "耗材类", "配耗类", "工具类"}
+
+def _validate_product_type(product_type):
+    if product_type not in ALLOWED_PRODUCT_TYPES:
+        abort(404, f"不支持的产品类型: {product_type}")
+
+# ── 全局请求钩子：更新活跃时间 + 拦截未审核用户 ──
+from datetime import datetime as _dt
+
+@app.before_request
+def _before_request():
+    if current_user.is_authenticated:
+        # 更新最后活跃时间（每次请求写一次太频繁，改为5分钟更新一次）
+        now = _dt.utcnow()
+        if not current_user.last_active or (now - current_user.last_active).seconds > 300:
+            current_user.last_active = now
+            db.session.commit()
+        # 未审核用户只能访问 auth 相关页面
+        if not current_user.is_approved and request.endpoint and not request.endpoint.startswith("auth.") and request.endpoint != "static":
+            from flask import render_template_string
+            return render_template_string("""
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>等待审核</title>
+<style>body{font-family:"Microsoft YaHei",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f5;}
+.card{background:#fff;padding:40px;border-radius:16px;text-align:center;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
+h2{color:#333;margin-bottom:12px;} p{color:#666;font-size:14px;line-height:1.6;}
+a{color:#E8231A;text-decoration:none;font-size:14px;display:inline-block;margin-top:16px;}</style></head>
+<body><div class="card"><h2>&#x23F3; 账号审核中</h2><p>您的账号正在等待管理员审核<br>审核通过后即可正常使用所有功能</p>
+<a href="{{ url_for('auth.logout') }}">退出登录</a></div></body></html>
+            """), 200
 
 
 @app.after_request
@@ -540,8 +583,22 @@ STATIC_OUTPUTS = BASE_DIR / "static" / "outputs"
 STATIC_OUTPUTS.mkdir(parents=True, exist_ok=True)
 
 
+def _user_upload_dir():
+    """返回当前用户的上传目录，按 user_id 隔离"""
+    uid = current_user.id if current_user.is_authenticated else 0
+    d = STATIC_UPLOADS / str(uid)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _user_output_dir():
+    """返回当前用户的输出目录，按 user_id 隔离"""
+    uid = current_user.id if current_user.is_authenticated else 0
+    d = OUTPUT_DIR / str(uid)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
-    """保存上传图片到 static/uploads/，返回 /static/uploads/xxx.ext URL
+    """保存上传图片到 static/uploads/{user_id}/，返回 URL
     auto_rembg=True 时对白底产品图自动抠图（只处理 product_image）
     """
     f = request.files.get(file_field_name)
@@ -549,8 +606,9 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
         return ""
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "png"
     uid = uuid.uuid4().hex
+    user_dir = _user_upload_dir()
     filename = f"{uid}.{ext}"
-    save_path = STATIC_UPLOADS / filename
+    save_path = user_dir / filename
     f.save(str(save_path))
 
     if auto_rembg and _ensure_rembg():
@@ -594,10 +652,10 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
                 result_arr = np.dstack([arr, ai_alpha])
                 result_img = _Img.fromarray(result_arr.astype(np.uint8), "RGBA")
                 nobg_filename = f"{uid}_nobg.png"
-                nobg_path = STATIC_UPLOADS / nobg_filename
+                nobg_path = user_dir / nobg_filename
                 result_img.save(str(nobg_path))
                 print(f"[抠图] 完成 → {nobg_filename}", flush=True)
-                return f"/static/uploads/{nobg_filename}"
+                return f"/static/uploads/{current_user.id}/{nobg_filename}"
         except Exception as e:
             import traceback
             print(f"[抠图] 失败，使用原图: {e}", flush=True)
@@ -605,7 +663,7 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
     elif auto_rembg and not REMBG_AVAILABLE:
         print(f"[抠图] rembg 未安装，跳过 {filename}。运行: pip install rembg onnxruntime", flush=True)
 
-    return f"/static/uploads/{filename}"
+    return f"/static/uploads/{current_user.id}/{filename}"
 
 
 # ── 基础路由 ─────────────────────────────────────────────────────────
@@ -618,11 +676,55 @@ _CATEGORIES = [
 ]
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html", categories=_CATEGORIES)
 
 
+# ── 用户设置页 ──
+@app.route("/settings", methods=["GET", "POST"])
+@login_required
+def user_settings():
+    from crypto_utils import encrypt_api_key, decrypt_api_key
+    has_custom_key = bool(current_user.custom_api_key_enc)
+
+    if request.method == "POST":
+        new_key = request.form.get("custom_api_key", "").strip()
+        if new_key:
+            current_user.custom_api_key_enc = encrypt_api_key(new_key)
+            db.session.commit()
+            flash("API Key 已保存", "success")
+        elif not new_key and has_custom_key:
+            pass  # 空提交不清除已有 Key
+        return redirect(url_for("user_settings"))
+
+    return render_template("auth/settings.html", has_custom_key=has_custom_key)
+
+
+def _get_user_api_key():
+    """获取当前用户应使用的 API Key，返回 (key, source)
+    source: 'custom' | 'platform' | None
+    """
+    from crypto_utils import decrypt_api_key
+    # 优先使用用户自定义 Key
+    if current_user.custom_api_key_enc:
+        try:
+            key = decrypt_api_key(current_user.custom_api_key_enc)
+            if key:
+                return key, "custom"
+        except Exception:
+            pass
+    # 付费用户使用平台 Key
+    if current_user.is_paid and DEEPSEEK_API_KEY:
+        return DEEPSEEK_API_KEY, "platform"
+    # 管理员也使用平台 Key
+    if current_user.is_admin and DEEPSEEK_API_KEY:
+        return DEEPSEEK_API_KEY, "platform"
+    return None, None
+
+
 @app.route("/api/upload", methods=["POST"])
+@login_required
 def upload():
     if "file" not in request.files:
         return jsonify({"error": "请求中没有文件字段"}), 400
@@ -633,9 +735,10 @@ def upload():
         return jsonify({"error": f"不支持的格式，请上传 {', '.join(ALLOWED_IMG)}"}), 400
     ext = file.filename.rsplit(".", 1)[1].lower()
     filename = f"{uuid.uuid4().hex}.{ext}"
-    save_path = STATIC_UPLOADS / filename
+    user_dir = _user_upload_dir()
+    save_path = user_dir / filename
     file.save(str(save_path))
-    return jsonify({"path": str(save_path), "filename": filename, "url": f"/static/uploads/{filename}"})
+    return jsonify({"path": str(save_path), "filename": filename, "url": f"/static/uploads/{current_user.id}/{filename}"})
 # ── 文本解析（DeepSeek API）──────────────────────────────────────────
 _EXTREME_WORDS_RULE = (
     "【合规要求】文案中严禁出现以下极限词（电商平台违禁词）：\n"
@@ -836,14 +939,17 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
         )
 
 
-def _call_deepseek_parse(raw_text: str, product_type: str = "设备类") -> dict:
+def _call_deepseek_parse(raw_text: str, product_type: str = "设备类", api_key: str = "") -> dict:
     """调用 DeepSeek API，一次完成：解析产品参数 + 生成营销文案"""
     import requests as req
+    use_key = api_key or DEEPSEEK_API_KEY
+    if not use_key:
+        raise ValueError("未配置 API Key，无法调用 AI 服务")
     prompt = _build_category_prompt(product_type, raw_text)
     print(f"[DeepSeek] 发送请求，文本长度={len(raw_text)}...")
     resp = req.post(
         DEEPSEEK_API_URL,
-        headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+        headers={"Authorization": f"Bearer {use_key}"},
         json={
             "model": DEEPSEEK_MODEL,
             "messages": [
@@ -930,7 +1036,9 @@ def _derive_advantages_from_specs(detail_params: dict) -> list:
             break
     return items
 @app.route("/api/build/<product_type>/parse-text", methods=["POST"])
+@login_required
 def parse_text_for_build(product_type):
+    _validate_product_type(product_type)
     data = request.get_json(silent=True)
     if not data or not data.get("text"):
         return jsonify({"error": "缺少 text 字段"}), 400
@@ -939,9 +1047,14 @@ def parse_text_for_build(product_type):
     if not raw_text:
         return jsonify({"error": "文本内容为空"}), 400
 
+    # 检查用户是否有 API Key 可用
+    api_key, key_source = _get_user_api_key()
+    if not api_key:
+        return jsonify({"error": "请先在「账号设置」中配置您的 DeepSeek API Key，或联系管理员开通付费权限"}), 403
+
     # 直接调 DeepSeek —— 必须用 AI 才能生成 advantage_labels 和 clean_story
     try:
-        parsed = _call_deepseek_parse(raw_text, product_type)
+        parsed = _call_deepseek_parse(raw_text, product_type, api_key=api_key)
     except Exception as e:
         # DeepSeek 失败时降级到模板解析（不含卖点生成）
         parsed = _extract_json_object(raw_text)
@@ -949,6 +1062,17 @@ def parse_text_for_build(product_type):
             parsed = _parse_text_by_template(raw_text)
         if not isinstance(parsed, dict) or not parsed:
             return jsonify({"error": f"AI 解析失败: {e}"}), 500
+
+    # 记录生成日志
+    log = GenerationLog(
+        user_id=current_user.id,
+        product_type=product_type,
+        model_name=parsed.get("model", ""),
+        api_key_source=key_source,
+        action="ai_parse",
+    )
+    db.session.add(log)
+    db.session.commit()
 
     mapped = _map_parsed_to_form_fields(parsed)
     return jsonify(mapped)
@@ -959,7 +1083,9 @@ def parse_text_for_build(product_type):
 # ══════════════════════════════════════════════════════════════════════
 
 @app.route('/build/<product_type>', methods=['GET'])
+@login_required
 def build_form_generic(product_type):
+    _validate_product_type(product_type)
     cfg = _load_build_config(product_type)
     if not cfg:
         return f"未找到产品类型 [{product_type}] 的配置", 404
@@ -967,7 +1093,9 @@ def build_form_generic(product_type):
 
 
 @app.route('/build/<product_type>', methods=['POST'])
+@login_required
 def build_submit_generic(product_type):
+    _validate_product_type(product_type)
     cfg = _load_build_config(product_type)
     if not cfg:
         return f"未找到产品类型 [{product_type}] 的配置", 404
@@ -1152,9 +1280,10 @@ def build_submit_generic(product_type):
         "spec_block_template": cfg.get("spec_block_template", "blocks/block_e_glass_dimension.html"),
     }
 
-    # 保存预览数据供导出使用
+    # 保存预览数据供导出使用（按用户隔离）
     _save_data = dict(data)
-    _last_preview = OUTPUT_DIR / f"_last_{product_type}_preview.json"
+    _user_out = _user_output_dir()
+    _last_preview = _user_out / f"_last_{product_type}_preview.json"
     with open(_last_preview, "w", encoding="utf-8") as fp:
         json.dump(_save_data, fp, ensure_ascii=False)
 
@@ -1164,8 +1293,11 @@ def build_submit_generic(product_type):
 # ── 导出PNG（Playwright截图）────────────────────────────────────────
 
 @app.route('/export/<product_type>', methods=['POST'])
+@login_required
 def export_generic(product_type):
-    preview_json = OUTPUT_DIR / f"_last_{product_type}_preview.json"
+    _validate_product_type(product_type)
+    _user_out = _user_output_dir()
+    preview_json = _user_out / f"_last_{product_type}_preview.json"
     if not preview_json.exists():
         return jsonify({"error": "没有预览数据，请先生成预览"}), 400
 
@@ -1189,7 +1321,9 @@ def export_generic(product_type):
     model_name = data.get("block_a", {}).get("model_name", product_type)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_filename = f"{product_type}_{model_name}_{timestamp}.png"
-    out_path = STATIC_OUTPUTS / out_filename
+    _user_outputs = STATIC_OUTPUTS / str(current_user.id)
+    _user_outputs.mkdir(parents=True, exist_ok=True)
+    out_path = _user_outputs / out_filename
 
     try:
         from playwright.sync_api import sync_playwright
@@ -1209,6 +1343,17 @@ def export_generic(product_type):
     except Exception as exc:
         import traceback; traceback.print_exc()
         return jsonify({"error": f"Playwright截图失败: {exc}"}), 500
+
+    # 记录导出日志
+    log = GenerationLog(
+        user_id=current_user.id,
+        product_type=product_type,
+        model_name=data.get("block_a", {}).get("model_name", ""),
+        api_key_source="",
+        action="export",
+    )
+    db.session.add(log)
+    db.session.commit()
 
     return send_file(str(out_path), mimetype="image/png",
                      as_attachment=True, download_name=out_filename)
@@ -1304,6 +1449,35 @@ def _kill_old_flask(port=5000):
                            capture_output=True, timeout=5)
     except Exception as e:
         print(f"[启动] 清理旧进程时出错(可忽略): {e}")
+
+
+# ── 注册蓝图 ──
+from auth import auth_bp
+from admin import admin_bp
+app.register_blueprint(auth_bp)
+app.register_blueprint(admin_bp)
+
+# ── CLI 命令：创建管理员 ──
+import click
+
+@app.cli.command("create-admin")
+@click.option("--username", prompt=True, help="管理员用户名")
+@click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True, help="管理员密码")
+def create_admin(username, password):
+    """创建管理员账号"""
+    existing = User.query.filter_by(username=username).first()
+    if existing:
+        click.echo(f"用户 {username} 已存在")
+        return
+    admin = User(username=username, is_admin=True, is_approved=True, is_paid=True)
+    admin.set_password(password)
+    db.session.add(admin)
+    db.session.commit()
+    click.echo(f"管理员 {username} 创建成功")
+
+# ── 启动时自动建表 ──
+with app.app_context():
+    db.create_all()
 
 
 if __name__ == "__main__":

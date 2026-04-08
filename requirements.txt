@@ -9,3 +9,8 @@ openpyxl
 rembg
 onnxruntime
 requests
+flask-sqlalchemy
+flask-login
+flask-migrate
+python-dotenv
+cryptography
