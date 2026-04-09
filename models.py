@@ -21,7 +21,8 @@ class User(UserMixin, db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
 
-    logs = db.relationship("GenerationLog", backref="user", lazy="dynamic")
+    logs = db.relationship("GenerationLog", backref="user", lazy="dynamic",
+                           cascade="all, delete-orphan", passive_deletes=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)

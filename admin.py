@@ -71,7 +71,6 @@ def toggle_admin(uid):
 def delete_user(uid):
     u = db.session.get(User, uid)
     if u and u.id != current_user.id:
-        GenerationLog.query.filter_by(user_id=uid).delete()
         db.session.delete(u)
         db.session.commit()
         flash(f"已删除用户 {u.username}", "info")
@@ -101,18 +100,29 @@ def stats():
     week_start = today_start - timedelta(days=now.weekday())
     month_start = today_start.replace(day=1)
 
-    total_users = User.query.count()
-    approved_users = User.query.filter_by(is_approved=True).count()
-    paid_users = User.query.filter_by(is_paid=True).count()
-    pending_users = User.query.filter_by(is_approved=False).count()
+    # 用户统计：1 次查询
+    user_stats = db.session.query(
+        func.count(User.id),
+        func.sum(db.case((User.is_approved == True, 1), else_=0)),
+        func.sum(db.case((User.is_paid == True, 1), else_=0)),
+        func.sum(db.case((User.is_approved == False, 1), else_=0)),
+    ).one()
+    total_users, approved_users, paid_users, pending_users = (
+        user_stats[0], int(user_stats[1] or 0), int(user_stats[2] or 0), int(user_stats[3] or 0)
+    )
 
-    total_logs = GenerationLog.query.count()
-    today_logs = GenerationLog.query.filter(GenerationLog.created_at >= today_start).count()
-    week_logs = GenerationLog.query.filter(GenerationLog.created_at >= week_start).count()
-    month_logs = GenerationLog.query.filter(GenerationLog.created_at >= month_start).count()
-
-    platform_calls = GenerationLog.query.filter_by(api_key_source="platform").count()
-    custom_calls = GenerationLog.query.filter_by(api_key_source="custom").count()
+    # 日志统计：1 次查询
+    log_stats = db.session.query(
+        func.count(GenerationLog.id),
+        func.sum(db.case((GenerationLog.created_at >= today_start, 1), else_=0)),
+        func.sum(db.case((GenerationLog.created_at >= week_start, 1), else_=0)),
+        func.sum(db.case((GenerationLog.created_at >= month_start, 1), else_=0)),
+        func.sum(db.case((GenerationLog.api_key_source == "platform", 1), else_=0)),
+        func.sum(db.case((GenerationLog.api_key_source == "custom", 1), else_=0)),
+    ).one()
+    total_logs = log_stats[0]
+    today_logs, week_logs, month_logs = int(log_stats[1] or 0), int(log_stats[2] or 0), int(log_stats[3] or 0)
+    platform_calls, custom_calls = int(log_stats[4] or 0), int(log_stats[5] or 0)
 
     # 每个用户的使用量排行
     user_usage = (

@@ -5,11 +5,16 @@ import os
 from cryptography.fernet import Fernet
 
 _FERNET_KEY = os.environ.get("FERNET_KEY", "")
+_fernet_instance = None
 
 def _get_fernet():
+    global _fernet_instance
+    if _fernet_instance is not None:
+        return _fernet_instance
     if not _FERNET_KEY:
         raise RuntimeError("未设置 FERNET_KEY 环境变量，无法加密/解密 API Key")
-    return Fernet(_FERNET_KEY.encode() if isinstance(_FERNET_KEY, str) else _FERNET_KEY)
+    _fernet_instance = Fernet(_FERNET_KEY.encode() if isinstance(_FERNET_KEY, str) else _FERNET_KEY)
+    return _fernet_instance
 
 def encrypt_api_key(plaintext: str) -> str:
     """加密 API Key，返回密文字符串"""

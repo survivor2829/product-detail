@@ -1,6 +1,7 @@
 """
 用户认证蓝图：登录 / 注册 / 登出
 """
+from urllib.parse import urlparse
 from flask import Blueprint, render_template, redirect, url_for, request, flash
 from flask_login import login_user, logout_user, login_required, current_user
 from extensions import db
@@ -29,6 +30,8 @@ def login():
 
         login_user(user, remember=True)
         next_page = request.args.get("next")
+        if next_page and urlparse(next_page).netloc:
+            next_page = None
         return redirect(next_page or url_for("index"))
 
     return render_template("auth/login.html")
