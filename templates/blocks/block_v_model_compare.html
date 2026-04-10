@@ -6,7 +6,7 @@
   - models: [{name, image, recommended, specs: {key: value, ...}}, ...]
   - spec_labels: [label1, label2, ...] 参数行标签顺序
 #}
-{% if models and spec_labels %}<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:#0f1120; padding:50px 30px;">
+{% if models and spec_labels %}<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:var(--theme-bg-dark, #0f1120); padding:50px 30px;">
 
   <div style="text-align:center; margin-bottom:36px;">
     <div style="font-size:28px; font-weight:800; color:#fff; letter-spacing:1px;">{{ section_title|default('型号对比') }}</div>
@@ -24,9 +24,9 @@
     <div style="display:flex; border-bottom:1px solid rgba(255,255,255,0.1);">
       <div style="width:120px; flex-shrink:0; padding:16px 12px; background:rgba(255,255,255,0.02);"></div>
       {% for m in models %}
-      <div style="flex:1; padding:16px 10px; text-align:center; {{ 'border-left:2px solid #E8231A; background:rgba(232,35,26,0.06);' if m.recommended else 'border-left:1px solid rgba(255,255,255,0.06);' }}">
+      <div style="flex:1; padding:16px 10px; text-align:center; {{ 'border-left:2px solid var(--theme-primary, #E8231A); background:var(--theme-primary-light, rgba(232,35,26,0.06));' if m.recommended else 'border-left:1px solid rgba(255,255,255,0.06);' }}">
         {% if m.recommended %}
-        <div style="font-size:11px; color:#E8231A; font-weight:700; margin-bottom:6px; letter-spacing:1px;">★ 推荐</div>
+        <div style="font-size:11px; color:var(--theme-primary, #E8231A); font-weight:700; margin-bottom:6px; letter-spacing:1px;">★ 推荐</div>
         {% endif %}
         {% if m.image %}
         <img src="{{ m.image }}" style="height:60px; max-width:100px; object-fit:contain; margin-bottom:8px;">
@@ -41,7 +41,7 @@
     <div style="display:flex; border-bottom:1px solid rgba(255,255,255,0.06); {{ 'background:rgba(255,255,255,0.02);' if loop.index is odd else '' }}">
       <div style="width:120px; flex-shrink:0; padding:12px; font-size:13px; color:rgba(255,255,255,0.5); font-weight:600;">{{ label }}</div>
       {% for m in models %}
-      <div style="flex:1; padding:12px 10px; text-align:center; font-size:13px; color:#fff; {{ 'border-left:2px solid rgba(232,35,26,0.3);' if m.recommended else 'border-left:1px solid rgba(255,255,255,0.04);' }}">
+      <div style="flex:1; padding:12px 10px; text-align:center; font-size:13px; color:#fff; {{ 'border-left:2px solid var(--theme-primary-border, rgba(232,35,26,0.3));' if m.recommended else 'border-left:1px solid rgba(255,255,255,0.04);' }}">
         {{ m.specs.get(label, '—') }}
       </div>
       {% endfor %}

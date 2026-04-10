@@ -19,7 +19,7 @@
     </div>
   </div>
 
-  <div style="margin-top:18px; height:2px; background:linear-gradient(90deg, #2E8B57 0%, rgba(46,139,87,0.15) 70%, rgba(46,139,87,0.0) 100%);"></div>
+  <div style="margin-top:18px; height:2px; background:linear-gradient(90deg, var(--theme-primary, #2E8B57) 0%, rgba(46,139,87,0.15) 70%, rgba(46,139,87,0.0) 100%);"></div>
 
   {% for c in comparisons %}
   <div style="margin-top:20px; border-radius:18px; overflow:hidden; border:1px solid #EAECF0;">
@@ -32,14 +32,14 @@
         {% endif %}
         <div style="position:absolute; left:12px; top:12px; padding:6px 12px; border-radius:999px; background:rgba(0,0,0,0.6); color:#fff; font-size:12px; font-weight:700;">{{ c.before_label|default('使用前') }}</div>
       </div>
-      <div style="flex:0 0 3px; background:linear-gradient(180deg, #2E8B57, #1a5e3a);"></div>
+      <div style="flex:0 0 3px; background:linear-gradient(180deg, var(--theme-primary, #2E8B57), var(--theme-primary-dark, #1a5e3a));"></div>
       <div style="flex:1; position:relative;">
         {% if c.after_image %}
         <img src="{{ c.after_image }}" alt="使用后" style="width:100%; height:200px; object-fit:cover; display:block;" />
         {% else %}
-        <div style="width:100%; height:200px; background:#e8f5e9; display:flex; align-items:center; justify-content:center; color:#2E8B57; font-size:14px;">使用后</div>
+        <div style="width:100%; height:200px; background:#e8f5e9; display:flex; align-items:center; justify-content:center; color:var(--theme-primary, #2E8B57); font-size:14px;">使用后</div>
         {% endif %}
-        <div style="position:absolute; right:12px; top:12px; padding:6px 12px; border-radius:999px; background:rgba(46,139,87,0.85); color:#fff; font-size:12px; font-weight:700;">{{ c.after_label|default('使用后') }}</div>
+        <div style="position:absolute; right:12px; top:12px; padding:6px 12px; border-radius:999px; background:var(--theme-primary, rgba(46,139,87,0.85)); color:#fff; font-size:12px; font-weight:700;">{{ c.after_label|default('使用后') }}</div>
       </div>
     </div>
     {% if c.desc %}

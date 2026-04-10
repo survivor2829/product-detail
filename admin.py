@@ -18,6 +18,11 @@ def admin_required():
         abort(403)
 
 
+@admin_bp.route("/")
+def admin_index():
+    return redirect(url_for("admin.users"))
+
+
 # ── 用户管理 ──
 @admin_bp.route("/users")
 def users():

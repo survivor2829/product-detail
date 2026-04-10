@@ -7,7 +7,7 @@
   - cases: [{client_name, scene, result_text, image}, ...] 案例卡片
   - client_count: 服务客户数量文字（如"5000+"）
 #}
-<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:linear-gradient(180deg,#0a0e1a 0%,#141828 100%); padding:50px 40px;">
+<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:var(--theme-gradient-dark, linear-gradient(180deg, #0a0e1a 0%, #141828 100%)); padding:50px 40px;">
 
   <div style="text-align:center; margin-bottom:10px;">
     <div style="font-size:28px; font-weight:800; color:#fff; letter-spacing:1px;">{{ section_title|default('他们都在用') }}</div>
@@ -15,7 +15,7 @@
     <div style="font-size:14px; color:rgba(255,255,255,0.45); margin-top:8px;">{{ section_subtitle }}</div>
     {% endif %}
     {% if client_count %}
-    <div style="margin-top:16px; font-size:42px; font-weight:900; color:#E8231A;">{{ client_count }}<span style="font-size:16px; color:rgba(255,255,255,0.5); font-weight:400; margin-left:6px;">家企业的选择</span></div>
+    <div style="margin-top:16px; font-size:42px; font-weight:900; color:var(--theme-primary, #E8231A);">{{ client_count }}<span style="font-size:16px; color:rgba(255,255,255,0.5); font-weight:400; margin-left:6px;">家企业的选择</span></div>
     {% endif %}
   </div>
 

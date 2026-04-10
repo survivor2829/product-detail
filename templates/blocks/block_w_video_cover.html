@@ -14,7 +14,7 @@
   {% if cover_image %}
   <img src="{{ cover_image }}" style="width:750px; display:block; opacity:0.75;">
   {% else %}
-  <div style="width:750px; height:420px; background:linear-gradient(135deg,#1a1a2e,#0a0a1a);"></div>
+  <div style="width:750px; height:420px; background:var(--theme-gradient-dark, linear-gradient(135deg, #1a1a2e, #0a0a1a));"></div>
   {% endif %}
 
   {# 播放按钮叠加层 #}

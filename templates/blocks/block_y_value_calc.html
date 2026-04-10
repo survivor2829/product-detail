@@ -23,19 +23,19 @@
     {% if cost_per_use %}
     <div style="flex:1; background:#fff; border-radius:14px; padding:24px 16px; text-align:center; box-shadow:0 2px 12px rgba(0,0,0,0.06);">
       <div style="font-size:13px; color:#888; margin-bottom:8px;">每次使用成本</div>
-      <div style="font-size:30px; font-weight:900; color:#2E8B57;">{{ cost_per_use }}</div>
+      <div style="font-size:30px; font-weight:900; color:var(--theme-primary, #2E8B57);">{{ cost_per_use }}</div>
     </div>
     {% endif %}
     {% if coverage_text %}
     <div style="flex:1; background:#fff; border-radius:14px; padding:24px 16px; text-align:center; box-shadow:0 2px 12px rgba(0,0,0,0.06);">
       <div style="font-size:13px; color:#888; margin-bottom:8px;">覆盖面积</div>
-      <div style="font-size:30px; font-weight:900; color:#2E8B57;">{{ coverage_text }}</div>
+      <div style="font-size:30px; font-weight:900; color:var(--theme-primary, #2E8B57);">{{ coverage_text }}</div>
     </div>
     {% endif %}
     {% if dilution_ratio %}
     <div style="flex:1; background:#fff; border-radius:14px; padding:24px 16px; text-align:center; box-shadow:0 2px 12px rgba(0,0,0,0.06);">
       <div style="font-size:13px; color:#888; margin-bottom:8px;">稀释比例</div>
-      <div style="font-size:30px; font-weight:900; color:#2E8B57;">{{ dilution_ratio }}</div>
+      <div style="font-size:30px; font-weight:900; color:var(--theme-primary, #2E8B57);">{{ dilution_ratio }}</div>
       {% if dilution_note %}
       <div style="font-size:11px; color:#aaa; margin-top:4px;">{{ dilution_note }}</div>
       {% endif %}
@@ -49,7 +49,7 @@
     {% for item in calc_items %}
     <div style="display:flex; justify-content:space-between; padding:14px 20px; {{ 'border-top:1px solid #f0f0f0;' if not loop.first else '' }} {{ 'background:#f0faf5;' if item.highlight else '' }}">
       <span style="font-size:14px; color:#555;">{{ item.label }}</span>
-      <span style="font-size:14px; font-weight:{{ '700' if item.highlight else '400' }}; color:{{ '#2E8B57' if item.highlight else '#333' }};">{{ item.value }}</span>
+      <span style="font-size:14px; font-weight:{{ '700' if item.highlight else '400' }}; color:{{ 'var(--theme-primary, #2E8B57)' if item.highlight else '#333' }};">{{ item.value }}</span>
     </div>
     {% endfor %}
   </div>

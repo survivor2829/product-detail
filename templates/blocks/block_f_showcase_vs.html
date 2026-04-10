@@ -2,82 +2,86 @@
   Block F — 产品展示+VS屏（product_showcase_vs）
   用途：场景背景 + 产品人物图 + 底部VS对比条
   宽度：750px
-  
+
   需要传入的变量：
   - title_line1: 标题第一行（如"1台顶"）
   - title_line1_red: 第一行红色部分（如"8-10"）
   - title_line1_end: 第一行结尾（如"人"）
   - title_line2: 标题第二行前半（如"机洗与人工"）
   - title_line2_red: 第二行红色部分（如"的区别。"）
-  - bg_image: 场景背景图路径（如商场、车库实拍照）
+  - bg_image: 场景背景图路径
   - product_image: 产品+人物合照路径（PNG）
-  - vs_left_title: 左侧标题（如"驾驶洗地车"）
-  - vs_left_sub: 左侧副标题（如"省时省钱省心"）
-  - vs_right_title: 右侧标题（如"传统人工"）
-  - vs_right_sub: 右侧副标题（如"费时费钱费心"）
-  - vs_left_bottom: 左下结论（如"1台可顶8-10人\n一年劲省26W+元"）
-  - vs_right_bottom: 右下结论（如"人工效率低\n成本高"）
+  - vs_left_title, vs_left_sub, vs_right_title, vs_right_sub
+  - vs_left_bottom, vs_right_bottom
 -->
-<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:#fff; overflow:hidden;">
-  
+{% if vs_left_title or title_line1_red %}<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:#fff; overflow:hidden;">
+
   <!-- 顶部标题 -->
-  <div style="padding:50px 36px 30px;">
-    <div style="font-size:52px; font-weight:800; color:#1a1a1a; line-height:1.35;">
-      {{ title_line1 }}<span style="color:#E8231A;">{{ title_line1_red }}</span>{{ title_line1_end }}
-    </div>
-    <div style="font-size:52px; font-weight:800; color:#1a1a1a; line-height:1.35;">
-      {{ title_line2 }}<span style="color:#E8231A;">{{ title_line2_red }}</span>
+  <div style="padding:48px 36px 28px; position:relative;">
+    <!-- 装饰：标题左侧竖线 -->
+    <div style="position:absolute; left:28px; top:48px; width:4px; height:80px; border-radius:2px; background:linear-gradient(180deg, var(--theme-primary, #E8231A) 0%, rgba(232,35,26,0.1) 100%);"></div>
+    <div style="padding-left:12px;">
+      <div style="font-size:48px; font-weight:900; color:#111; line-height:1.3; letter-spacing:1px;">
+        {{ title_line1 }}<span style="color:var(--theme-primary, #E8231A); text-shadow:0 0 30px rgba(232,35,26,0.15);">{{ title_line1_red }}</span>{{ title_line1_end }}
+      </div>
+      <div style="font-size:48px; font-weight:900; color:#111; line-height:1.3; letter-spacing:1px;">
+        {{ title_line2 }}<span style="color:var(--theme-primary, #E8231A); text-shadow:0 0 30px rgba(232,35,26,0.15);">{{ title_line2_red }}</span>
+      </div>
     </div>
   </div>
-  
+
   <!-- 场景区：背景图 + 产品人物 + VS叠加 -->
-  <div style="width:750px; height:760px; position:relative; overflow:hidden; background:#c8c8c8;">
-    
+  <div style="width:750px; height:760px; position:relative; overflow:hidden; background:#1a1e28;">
+
     <!-- 场景背景图 -->
     {% if bg_image %}
     <img src="{{ bg_image }}" style="width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0;" alt="">
+    <!-- 场景图底部渐变遮罩，让VS条过渡更自然 -->
+    <div style="position:absolute; bottom:0; left:0; right:0; height:300px; background:linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 100%); pointer-events:none;"></div>
     {% endif %}
-    
+
     <!-- 产品+人物图 -->
     <div style="position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; height:520px; z-index:1; display:flex; align-items:center; justify-content:center;">
-      <img src="{{ product_image }}" style="max-width:100%; max-height:100%; object-fit:contain;" alt="">
+      <img src="{{ product_image }}" style="max-width:100%; max-height:100%; object-fit:contain; filter:drop-shadow(0 8px 24px rgba(0,0,0,0.25));" alt="">
     </div>
-    
+
     <!-- VS对比条：叠加在场景底部 -->
     <div style="position:absolute; bottom:0; left:0; right:0; z-index:2;">
-      <div style="background:rgba(255,255,255,0.95); overflow:hidden;">
-        
+      <div style="background:rgba(255,255,255,0.97); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); overflow:hidden; box-shadow:0 -4px 20px rgba(0,0,0,0.1);">
+
         <!-- VS上半：左右对比标题 -->
         <div style="display:flex; align-items:stretch;">
           <!-- 左侧（推荐） -->
-          <div style="flex:1; padding:24px 16px; text-align:center;">
-            <div style="font-size:28px; font-weight:800; color:#E8231A; line-height:1.3;">{{ vs_left_title }}</div>
-            <div style="font-size:22px; font-weight:500; color:#666; margin-top:4px;">{{ vs_left_sub }}</div>
+          <div style="flex:1; padding:22px 16px; text-align:center; background:linear-gradient(180deg, rgba(232,35,26,0.04) 0%, rgba(232,35,26,0.01) 100%);">
+            <div style="font-size:26px; font-weight:900; color:var(--theme-primary, #E8231A); line-height:1.3;">{{ vs_left_title }}</div>
+            <div style="font-size:18px; font-weight:500; color:#888; margin-top:5px;">{{ vs_left_sub }}</div>
           </div>
           <!-- VS圆圈 -->
-          <div style="width:70px; display:flex; align-items:center; justify-content:center;">
-            <div style="width:56px; height:56px; background:#E8231A; color:#fff; font-size:20px; font-weight:700; border-radius:50%; display:flex; align-items:center; justify-content:center;">VS</div>
+          <div style="width:72px; display:flex; align-items:center; justify-content:center;">
+            <div style="width:54px; height:54px; background:linear-gradient(135deg, var(--theme-primary, #E8231A), #ff4d3a); color:#fff; font-size:19px; font-weight:800; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(232,35,26,0.3); letter-spacing:1px;">VS</div>
           </div>
           <!-- 右侧 -->
-          <div style="flex:1; padding:24px 16px; text-align:center;">
-            <div style="font-size:28px; font-weight:800; color:#333; line-height:1.3;">{{ vs_right_title }}</div>
-            <div style="font-size:22px; font-weight:500; color:#666; margin-top:4px;">{{ vs_right_sub }}</div>
+          <div style="flex:1; padding:22px 16px; text-align:center;">
+            <div style="font-size:26px; font-weight:900; color:#444; line-height:1.3;">{{ vs_right_title }}</div>
+            <div style="font-size:18px; font-weight:500; color:#aaa; margin-top:5px;">{{ vs_right_sub }}</div>
           </div>
         </div>
-        
+
         <!-- VS下半：结论条 -->
         <div style="display:flex;">
-          <div style="flex:1; background:#E8231A; color:#fff; text-align:center; padding:18px 12px; font-size:22px; font-weight:600; line-height:1.5;">
-            {{ vs_left_bottom | replace('\n', '<br>') | safe }}
+          <div style="flex:1; background:linear-gradient(135deg, var(--theme-primary, #E8231A) 0%, #d42a1e 100%); color:#fff; text-align:center; padding:18px 14px; font-size:21px; font-weight:700; line-height:1.5; position:relative; overflow:hidden;">
+            <!-- 左侧装饰光效 -->
+            <div style="position:absolute; top:0; left:0; width:80px; height:100%; background:linear-gradient(90deg, rgba(255,255,255,0.1), transparent); pointer-events:none;"></div>
+            <span style="position:relative; z-index:1;">{{ vs_left_bottom | replace('\n', '<br>') | safe }}</span>
           </div>
-          <div style="flex:1; background:#1e2228; color:rgba(255,255,255,0.85); text-align:center; padding:18px 12px; font-size:22px; font-weight:500; line-height:1.5; border-left:3px solid #333;">
+          <div style="flex:1; background:linear-gradient(135deg, #1e2228 0%, #2a2e38 100%); color:rgba(255,255,255,0.8); text-align:center; padding:18px 14px; font-size:21px; font-weight:500; line-height:1.5;">
             {{ vs_right_bottom | replace('\n', '<br>') | safe }}
           </div>
         </div>
-        
+
       </div>
     </div>
-    
+
   </div>
-  
-</div>
+
+</div>{% endif %}

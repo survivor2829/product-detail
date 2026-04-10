@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>小玺AI · 工作台</title>
+  <link rel="stylesheet" href="/static/css/design-system.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js"></script>
+  <style>
+    /* ── Reset ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; font-family: var(--font-sans); background: var(--color-bg-page); color: var(--color-text); }
+
+    /* ── Topbar ─────────────────────────────────────────────── */
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(255,255,255,0.72);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--color-border);
+      padding: 0 24px; height: 52px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .topbar-brand {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 15px; font-weight: 700; color: var(--color-text);
+      text-decoration: none;
+    }
+    .brand-dot {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: var(--color-primary); display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: #fff; font-weight: 800;
+    }
+    .topbar-right {
+      display: flex; align-items: center; gap: 16px;
+      font-size: 13px; color: var(--color-text-secondary);
+    }
+    .topbar-right a {
+      color: var(--color-text-muted); text-decoration: none;
+      transition: color var(--transition-fast);
+    }
+    .topbar-right a:hover { color: var(--color-text); }
+    .topbar-username { font-weight: 600; color: var(--color-text); }
+
+    /* ── Workspace Layout ───────────────────────────────────── */
+    .workspace {
+      display: flex; height: calc(100vh - 52px); margin-top: 52px;
+    }
+
+    .panel-left {
+      width: 320px; flex-shrink: 0; background: #fff;
+      border-right: 1px solid var(--color-border); overflow-y: auto;
+    }
+    .panel-center {
+      flex: 1; background: var(--color-bg-page); overflow-y: auto;
+      position: relative; display: flex; flex-direction: column;
+    }
+    .panel-right {
+      width: 260px; flex-shrink: 0; background: #fff;
+      border-left: 1px solid var(--color-border); overflow-y: auto;
+    }
+
+    /* ── Panel Section ──────────────────────────────────────── */
+    .panel-section { padding: 16px 20px; border-bottom: 1px solid var(--color-border); }
+    .panel-section:last-child { border-bottom: none; }
+    .section-title {
+      font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+      margin: 0 0 12px 0;
+    }
+
+    /* ── Category Pills ─────────────────────────────────────── */
+    .cat-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cat-pill {
+      display: flex; align-items: center; gap: 5px;
+      padding: 6px 12px; border-radius: var(--radius-full);
+      border: 1.5px solid var(--color-border);
+      background: var(--color-bg-subtle); cursor: pointer;
+      font-size: 13px; font-weight: 500; color: var(--color-text-muted);
+      transition: all var(--transition-fast); user-select: none;
+      white-space: nowrap;
+    }
+    .cat-pill:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+    .cat-pill.active {
+      background-color: var(--cat-color-bg, rgba(20,110,245,0.08));
+      border-color: var(--cat-color, var(--color-primary));
+      color: var(--cat-color, var(--color-primary));
+    }
+
+    /* ── Upload Grid ────────────────────────────────────────── */
+    .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .upload-box {
+      border: 1.5px dashed var(--color-border); border-radius: 10px;
+      background: var(--color-bg-subtle); cursor: pointer;
+      transition: all var(--transition-fast); position: relative; overflow: hidden;
+      height: 100px;
+    }
+    .upload-box:hover, .upload-box.drag-over {
+      border-color: var(--color-primary); background: rgba(20,110,245,0.03);
+    }
+    .upload-placeholder {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 4px; pointer-events: none;
+    }
+    .upload-placeholder .upload-icon { font-size: 22px; }
+    .upload-placeholder .upload-label { font-size: 12px; color: var(--color-text-muted); font-weight: 500; }
+    .upload-placeholder .upload-required { color: #ee1d36; font-size: 11px; }
+    .upload-preview { display: none; width: 100%; height: 100%; position: relative; }
+    .upload-preview img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
+    .upload-remove {
+      position: absolute; top: 4px; right: 4px; width: 20px; height: 20px;
+      background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%;
+      cursor: pointer; font-size: 14px; line-height: 1; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .upload-remove:hover { background: rgba(0,0,0,0.75); }
+
+    /* ── Text Input ─────────────────────────────────────────── */
+    .text-area {
+      width: 100%; height: 200px; padding: 10px 12px;
+      border: 1.5px solid var(--color-border); border-radius: var(--radius-md);
+      font-size: 13px; font-family: var(--font-sans); color: var(--color-text);
+      background: var(--color-bg); resize: vertical;
+      transition: border-color var(--transition-fast);
+      outline: none;
+    }
+    .text-area:focus { border-color: var(--color-primary); }
+    .text-area::placeholder { color: var(--color-text-muted); }
+    .text-hint {
+      font-size: 12px; color: var(--color-text-muted); margin-top: 8px;
+    }
+
+    /* ── Generate Button ────────────────────────────────────── */
+    .btn-generate {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; padding: 13px; border: none; border-radius: var(--radius-md);
+      background: var(--color-primary); color: #fff;
+      font-size: 15px; font-weight: 600; cursor: pointer;
+      box-shadow: var(--shadow-sm); transition: all var(--transition-fast);
+    }
+    .btn-generate:hover:not(:disabled) { background: var(--color-primary-hover); box-shadow: var(--shadow-md); }
+    .btn-generate:disabled { opacity: 0.65; cursor: not-allowed; }
+
+    /* ── Center Panel: Empty State ──────────────────────────── */
+    #empty_state {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 12px; padding: 40px;
+    }
+    .empty-icon { font-size: 48px; line-height: 1; }
+    .empty-title { font-size: 16px; font-weight: 600; color: var(--color-text-muted); text-align: center; }
+    .empty-subtitle { font-size: 13px; color: var(--color-text-muted); text-align: center; opacity: 0.7; }
+
+    /* ── Preview Wrapper ────────────────────────────────────── */
+    #preview_wrapper {
+      display: none; padding: 24px; flex: 1;
+    }
+    #preview_container {
+      width: 750px; margin: 0 auto;
+      background: #fff; box-shadow: var(--shadow-lg);
+      border-radius: var(--radius-lg); overflow: hidden;
+    }
+
+    /* ── Module Wrappers ────────────────────────────────────── */
+    .module-wrapper { position: relative; transition: all 0.2s; }
+    .module-wrapper:hover { outline: 2px dashed var(--color-primary); outline-offset: 2px; }
+    .module-toolbar {
+      position: absolute; top: -36px; left: 0; right: 0;
+      display: none; align-items: center; justify-content: space-between;
+      background: #fff; border: 1px solid var(--color-border);
+      border-radius: 8px; padding: 4px 12px; z-index: 10;
+      box-shadow: var(--shadow-sm);
+    }
+    .module-wrapper:hover .module-toolbar { display: flex; }
+    .module-name { font-size: 12px; color: var(--color-text-muted); font-weight: 600; }
+    .module-actions { display: flex; gap: 4px; align-items: center; }
+    .mod-btn {
+      background: none; border: 1px solid var(--color-border); border-radius: 6px;
+      padding: 3px 8px; font-size: 13px; cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .mod-btn:hover { border-color: var(--color-primary); background: var(--color-bg-subtle); }
+    .mod-drag-handle { cursor: grab; font-size: 18px; color: var(--color-text-muted); padding: 2px 6px; user-select: none; }
+    .mod-drag-handle:active { cursor: grabbing; }
+    .module-ghost { opacity: 0.4; outline: 2px dashed var(--color-primary); }
+
+    .module-wrapper.module-hidden .module-content { display: none; }
+    .module-wrapper.module-hidden .module-toolbar { display: flex; }
+    .module-hidden-placeholder {
+      display: none; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px; background: var(--color-bg-subtle); border-radius: 8px;
+      color: var(--color-text-muted); font-size: 13px;
+    }
+    .module-wrapper.module-hidden .module-hidden-placeholder { display: flex; }
+
+    /* ── Export Bar ─────────────────────────────────────────── */
+    #export_bar {
+      display: none; align-items: center; justify-content: center;
+      padding: 12px 24px;
+      background: rgba(255,255,255,0.88);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--color-border);
+      position: sticky; bottom: 0; z-index: 50;
+    }
+    .btn-export {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 28px; border: none; border-radius: var(--radius-md);
+      background: var(--color-text); color: #fff;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      box-shadow: var(--shadow-sm); transition: all var(--transition-fast);
+    }
+    .btn-export:hover:not(:disabled) { background: #333; box-shadow: var(--shadow-md); }
+    .btn-export:disabled { opacity: 0.65; cursor: not-allowed; }
+
+    /* ── Theme Grid ─────────────────────────────────────────── */
+    .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 16px; }
+    .theme-card {
+      border: 2px solid var(--color-border); border-radius: 10px;
+      padding: 8px; cursor: pointer; transition: all var(--transition-fast);
+      text-align: center; position: relative;
+    }
+    .theme-card:hover { border-color: var(--color-border-hover); }
+    .theme-card.selected { border-color: var(--color-primary); }
+    .theme-card.selected::after {
+      content: '✓'; position: absolute; top: 4px; right: 4px;
+      width: 20px; height: 20px; background: var(--color-primary);
+      color: #fff; border-radius: 50%; font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .theme-card img { width: 100%; border-radius: 6px; }
+    .theme-card-name { font-size: 12px; color: var(--color-text-secondary); margin-top: 6px; font-weight: 500; }
+
+    /* ── Right Panel Title ──────────────────────────────────── */
+    .panel-right-title {
+      padding: 16px 16px 0 16px;
+      font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+    }
+
+    /* ── Spinner animation ──────────────────────────────────── */
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Center Tabs ────────────────────────────────────────── */
+    .center-tabs {
+      display: none; padding: 0 24px; background: #fff;
+      border-bottom: 1px solid var(--color-border);
+      position: sticky; top: 0; z-index: 40;
+    }
+    .center-tabs.visible { display: flex; }
+    .center-tab {
+      padding: 12px 20px; font-size: 14px; font-weight: 600;
+      color: var(--color-text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all var(--transition-fast);
+      background: none; border-top: none; border-left: none; border-right: none;
+    }
+    .center-tab:hover { color: var(--color-text); }
+    .center-tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+
+    /* ── Main Image Tab ────────────────────────────────────── */
+    #main_img_wrapper {
+      display: none; padding: 24px; flex: 1;
+    }
+    .main-img-viewer {
+      width: 800px; margin: 0 auto;
+    }
+    .main-img-large {
+      width: 800px; height: 800px; background: #fff;
+      box-shadow: var(--shadow-lg); border-radius: var(--radius-lg);
+      overflow: hidden; position: relative;
+    }
+    .main-img-large > div { width: 100%; height: 100%; }
+    .main-img-strip {
+      display: flex; gap: 10px; margin-top: 16px; justify-content: center;
+    }
+    .main-img-thumb {
+      width: 80px; height: 80px; border: 2px solid var(--color-border);
+      border-radius: 8px; overflow: hidden; cursor: pointer;
+      transition: all var(--transition-fast); flex-shrink: 0;
+      background: #fff;
+    }
+    .main-img-thumb:hover { border-color: var(--color-border-hover); }
+    .main-img-thumb.active { border-color: var(--color-primary); }
+    .main-img-thumb-inner {
+      width: 100%; height: 100%; transform: scale(0.1); transform-origin: top left;
+      pointer-events: none;
+    }
+
+    /* ── E-commerce Copy Panel ─────────────────────────────── */
+    .ecom-panel { padding: 16px 20px; border-bottom: 1px solid var(--color-border); }
+    .ecom-panel:last-child { border-bottom: none; }
+    .ecom-section-title {
+      font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+      margin: 0 0 10px 0; display: flex; align-items: center; justify-content: space-between;
+    }
+    .ecom-copy-btn {
+      font-size: 12px; color: var(--color-primary); background: none;
+      border: 1px solid var(--color-primary); border-radius: 6px;
+      padding: 2px 10px; cursor: pointer; font-weight: 500;
+      transition: all var(--transition-fast);
+    }
+    .ecom-copy-btn:hover { background: var(--color-primary); color: #fff; }
+    .ecom-copy-btn.copied { background: #059669; border-color: #059669; color: #fff; }
+    .ecom-field {
+      font-size: 13px; color: var(--color-text); line-height: 1.6;
+      background: var(--color-bg-subtle); border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 8px; word-break: break-all;
+    }
+    .ecom-field:last-child { margin-bottom: 0; }
+    .ecom-field-label {
+      font-size: 11px; color: var(--color-text-muted); font-weight: 600;
+      margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .ecom-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ecom-tag {
+      font-size: 12px; padding: 3px 10px; border-radius: 999px;
+      background: rgba(20,110,245,0.06); color: var(--color-primary);
+      font-weight: 500;
+    }
+    .ecom-points { list-style: none; padding: 0; margin: 0; }
+    .ecom-points li {
+      font-size: 13px; color: var(--color-text); padding: 4px 0;
+      display: flex; align-items: baseline; gap: 6px;
+    }
+    .ecom-points li::before { content: '✓'; color: #059669; font-weight: 700; font-size: 12px; }
+    .ecom-expand-toggle {
+      width: 100%; padding: 8px; background: none; border: 1px solid var(--color-border);
+      border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--color-text-muted);
+      font-weight: 500; transition: all var(--transition-fast); margin-top: 8px;
+    }
+    .ecom-expand-toggle:hover { border-color: var(--color-primary); color: var(--color-primary); }
+    #ecom_content { display: none; }
+
+    /* ── Main Image Export Bar ─────────────────────────────── */
+    #main_img_export_bar {
+      display: none; align-items: center; justify-content: center; gap: 12px;
+      padding: 12px 24px;
+      background: rgba(255,255,255,0.88);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--color-border);
+      position: sticky; bottom: 0; z-index: 50;
+    }
+
+    /* ── Scrollbar ──────────────────────────────────────────── */
+    .panel-left::-webkit-scrollbar,
+    .panel-center::-webkit-scrollbar,
+    .panel-right::-webkit-scrollbar { width: 5px; }
+    .panel-left::-webkit-scrollbar-track,
+    .panel-center::-webkit-scrollbar-track,
+    .panel-right::-webkit-scrollbar-track { background: transparent; }
+    .panel-left::-webkit-scrollbar-thumb,
+    .panel-center::-webkit-scrollbar-thumb,
+    .panel-right::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- ─── Topbar ──────────────────────────────────────────────────── -->
+<header class="topbar">
+  <a class="topbar-brand" href="/">
+    <div class="brand-dot">玺</div>
+    小玺AI · 工作台
+  </a>
+  <div class="topbar-right">
+    <span class="topbar-username">{{ current_user.username }}</span>
+    {% if current_user.is_admin %}<a href="/admin">管理后台</a>{% endif %}
+    <a href="/settings">设置</a>
+    <form method="POST" action="/auth/logout" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" style="background:none;border:none;color:inherit;cursor:pointer;font:inherit;padding:0">退出</button>
+    </form>
+  </div>
+</header>
+
+<!-- ─── Workspace ────────────────────────────────────────────────── -->
+<div class="workspace">
+
+  <!-- ── LEFT PANEL ──────────────────────────────────────────── -->
+  <aside class="panel-left">
+
+    <!-- Category Tabs -->
+    <div class="panel-section">
+      <p class="section-title">选择品类</p>
+      <div class="cat-pills">
+        <button class="cat-pill" data-type="设备类"
+          style="--cat-color:#E8231A; --cat-color-bg:rgba(232,35,26,0.08)"
+          onclick="selectCategory('设备类')">🤖 设备类</button>
+        <button class="cat-pill" data-type="配耗类"
+          style="--cat-color:#1E6FBF; --cat-color-bg:rgba(30,111,191,0.08)"
+          onclick="selectCategory('配耗类')">🔧 配耗类</button>
+        <button class="cat-pill" data-type="耗材类"
+          style="--cat-color:#2E8B57; --cat-color-bg:rgba(46,139,87,0.08)"
+          onclick="selectCategory('耗材类')">🧪 耗材类</button>
+        <button class="cat-pill" data-type="工具类"
+          style="--cat-color:#E87C1A; --cat-color-bg:rgba(232,124,26,0.08)"
+          onclick="selectCategory('工具类')">🧹 工具类</button>
+      </div>
+    </div>
+
+    <!-- Image Upload -->
+    <div class="panel-section">
+      <p class="section-title">上传图片</p>
+      <div class="upload-grid">
+
+        <!-- 产品主图 -->
+        <div class="upload-box" id="upload_product">
+          <input type="file" accept="image/*" style="display:none">
+          <div class="upload-placeholder">
+            <span class="upload-icon">🖼️</span>
+            <span class="upload-label">产品主图</span>
+            <span class="upload-required">* 必填</span>
+          </div>
+          <div class="upload-preview"></div>
+        </div>
+
+        <!-- 场景底图 -->
+        <div class="upload-box" id="upload_scene">
+          <input type="file" accept="image/*" style="display:none">
+          <div class="upload-placeholder">
+            <span class="upload-icon">🏭</span>
+            <span class="upload-label">场景底图</span>
+            <span class="upload-required">可选</span>
+          </div>
+          <div class="upload-preview"></div>
+        </div>
+
+        <!-- Logo -->
+        <div class="upload-box" id="upload_logo">
+          <input type="file" accept="image/*" style="display:none">
+          <div class="upload-placeholder">
+            <span class="upload-icon">🏷️</span>
+            <span class="upload-label">Logo</span>
+            <span class="upload-required">可选</span>
+          </div>
+          <div class="upload-preview"></div>
+        </div>
+
+        <!-- 二维码 -->
+        <div class="upload-box" id="upload_qr">
+          <input type="file" accept="image/*" style="display:none">
+          <div class="upload-placeholder">
+            <span class="upload-icon">📲</span>
+            <span class="upload-label">二维码</span>
+            <span class="upload-required">可选</span>
+          </div>
+          <div class="upload-preview"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Product Title -->
+    <div class="panel-section">
+      <p class="section-title">产品标题</p>
+      <input
+        id="product_title_input"
+        type="text"
+        class="text-area"
+        style="height:auto; padding:10px 12px;"
+        placeholder="输入产品标题，如：德威莱克DZ50X驾驶式洗地机">
+      <p class="text-hint">用于首屏大标题和电商标题生成</p>
+    </div>
+
+    <!-- Text Paste -->
+    <div class="panel-section">
+      <p class="section-title">产品文案</p>
+      <textarea
+        id="text_input"
+        class="text-area"
+        placeholder="粘贴产品资料、参数表、电商文案..."></textarea>
+      <p class="text-hint">支持任意格式文本，AI自动识别产品参数</p>
+    </div>
+
+    <!-- Generate Button -->
+    <div class="panel-section">
+      <button class="btn-generate" id="btn_generate" onclick="generatePreview()">
+        ✨ 一键生成详情页
+      </button>
+      <button class="btn-generate" id="btn_ai_image" onclick="generateAiImages()" style="margin-top:8px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none;">
+        🎨 AI生图（高质量）
+      </button>
+      <p class="text-hint" style="margin-top:4px;">AI生成精美背景 + 产品合成，需阿里云百炼API Key</p>
+    </div>
+
+  </aside>
+
+  <!-- ── CENTER PANEL ─────────────────────────────────────────── -->
+  <main class="panel-center">
+
+    <!-- Tabs -->
+    <div class="center-tabs" id="center_tabs">
+      <button class="center-tab active" data-tab="detail" onclick="switchCenterTab('detail')">详情图</button>
+      <button class="center-tab" data-tab="main_img" onclick="switchCenterTab('main_img')">主图 (800x800)</button>
+      <button class="center-tab" data-tab="ai_img" onclick="switchCenterTab('ai_img')">AI生图</button>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty_state">
+      <div class="empty-icon">📋</div>
+      <div class="empty-title">上传产品图 → 粘贴文案 → 一键生成</div>
+      <div class="empty-subtitle">生成后可在「详情图」「主图」「AI生图」之间切换</div>
+    </div>
+
+    <!-- Detail Tab: Preview Wrapper -->
+    <div id="preview_wrapper">
+      <div id="preview_container"></div>
+    </div>
+
+    <!-- AI Image Tab -->
+    <div id="ai_img_wrapper" style="display:none;">
+      <div id="ai_img_loading" style="display:none; text-align:center; padding:60px 20px;">
+        <div style="font-size:48px; margin-bottom:20px;">🎨</div>
+        <div style="font-size:18px; font-weight:600; color:#6366f1;">AI 正在生成高质量详情图...</div>
+        <div style="font-size:14px; color:#888; margin-top:8px;">通义万相生成背景 → Pillow合成产品+文字，预计30-60秒</div>
+        <div style="margin-top:20px; width:200px; height:4px; background:#e5e7eb; border-radius:2px; margin-left:auto; margin-right:auto; overflow:hidden;">
+          <div id="ai_progress_bar" style="width:0%; height:100%; background:linear-gradient(90deg,#6366f1,#8b5cf6); border-radius:2px; transition:width 0.5s;"></div>
+        </div>
+      </div>
+      <div id="ai_img_results" style="display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px;"></div>
+    </div>
+
+    <!-- Main Image Tab -->
+    <div id="main_img_wrapper">
+      <div class="main-img-viewer">
+        <div class="main-img-large" id="main_img_large"></div>
+        <div class="main-img-strip" id="main_img_strip"></div>
+      </div>
+    </div>
+
+    <!-- Export Bar (detail) -->
+    <div id="export_bar">
+      <button class="btn-export" id="btn_export" onclick="doExport()">
+        📥 导出详情页 PNG
+      </button>
+    </div>
+
+    <!-- Export Bar (main images) -->
+    <div id="main_img_export_bar">
+      <button class="btn-export" onclick="exportMainImagesZip()">
+        📦 导出全部主图 ZIP
+      </button>
+    </div>
+
+  </main>
+
+  <!-- ── RIGHT PANEL ──────────────────────────────────────────── -->
+  <aside class="panel-right">
+    <p class="panel-right-title">选择模板</p>
+    <div class="theme-grid" id="theme_grid">
+      <!-- populated by loadThemes() -->
+    </div>
+
+    <!-- E-commerce Copy Section -->
+    <div id="ecom_content">
+      <div class="ecom-panel">
+        <div class="ecom-section-title">
+          电商标题
+          <button class="ecom-copy-btn" onclick="copyField('ecom_title')">复制</button>
+        </div>
+        <div class="ecom-field" id="ecom_title"></div>
+      </div>
+
+      <div class="ecom-panel">
+        <div class="ecom-section-title">
+          搜索关键词
+          <button class="ecom-copy-btn" onclick="copyField('ecom_keywords')">复制</button>
+        </div>
+        <div class="ecom-tags" id="ecom_keywords"></div>
+      </div>
+
+      <div class="ecom-panel">
+        <div class="ecom-section-title">
+          核心卖点
+          <button class="ecom-copy-btn" onclick="copyAllPoints()">全部复制</button>
+        </div>
+        <ul class="ecom-points" id="ecom_points"></ul>
+      </div>
+
+      <div class="ecom-panel" id="ecom_desc_panel" style="display:none;">
+        <button class="ecom-expand-toggle" onclick="toggleEcomDesc()" id="ecom_desc_toggle">展开商品描述 ▾</button>
+        <div id="ecom_desc_content" style="display:none;margin-top:10px;">
+          <div class="ecom-section-title">
+            商品描述
+            <button class="ecom-copy-btn" onclick="copyField('ecom_desc')">复制</button>
+          </div>
+          <div class="ecom-field" id="ecom_desc"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+</div><!-- .workspace -->
+
+<!-- ─── Edit Modal ──────────────────────────────────────────────── -->
+<div id="edit_modal" style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(0,0,0,0.4); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);">
+  <div style="position:absolute; right:0; top:0; bottom:0; width:420px; background:#fff; box-shadow:-8px 0 30px rgba(0,0,0,0.12); display:flex; flex-direction:column;">
+    <div style="padding:20px 24px; border-bottom:1px solid var(--color-border); display:flex; align-items:center; justify-content:space-between;">
+      <div>
+        <div style="font-size:16px; font-weight:700; color:var(--color-text);" id="edit_modal_title">编辑模块</div>
+        <div style="font-size:12px; color:var(--color-text-muted); margin-top:2px;" id="edit_modal_subtitle"></div>
+      </div>
+      <button onclick="closeEditModal()" style="background:none; border:none; font-size:20px; cursor:pointer; color:var(--color-text-muted); padding:4px;">✕</button>
+    </div>
+    <div id="edit_modal_fields" style="flex:1; overflow-y:auto; padding:20px 24px;"></div>
+    <div style="padding:16px 24px; border-top:1px solid var(--color-border); display:flex; gap:10px;">
+      <button onclick="closeEditModal()" style="flex:1; padding:10px; border:1px solid var(--color-border); border-radius:8px; background:#fff; cursor:pointer; font-size:14px; font-weight:500;">取消</button>
+      <button onclick="saveEditModal()" style="flex:1; padding:10px; border:none; border-radius:8px; background:var(--color-primary); color:#fff; cursor:pointer; font-size:14px; font-weight:600;">保存并刷新</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Progress Overlay ─────────────────────────────────────────── -->
+<div id="progress_overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(255,255,255,0.85); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); flex-direction:column; align-items:center; justify-content:center;">
+  <div style="background:#fff; border:1px solid var(--color-border); border-radius:16px; padding:44px 56px; text-align:center; box-shadow:var(--shadow-lg);">
+    <div style="width:40px; height:40px; border:3px solid var(--color-border); border-top-color:var(--color-primary); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 20px;"></div>
+    <div id="progress_text" style="color:var(--color-text); font-size:16px; font-weight:600;">正在生成...</div>
+    <div style="color:var(--color-text-muted); font-size:13px; margin-top:6px;">请稍候，AI正在分析产品信息</div>
+  </div>
+</div>
+
+<!-- ─── Scripts ──────────────────────────────────────────────────── -->
+<script>
+  /* ── State ─────────────────────────────────────────────────── */
+  let productImageUrl = '';
+  let sceneImageUrl = '';
+  let logoImageUrl = '';
+  let qrImageUrl = '';
+  let currentProductType = '{{ initial_product_type|default("设备类") }}';
+  let currentThemeId = 'classic-red';
+  let allThemes = [];
+  let currentBuildData = null;
+  let originalRawText = '';
+  let mainImageHtmls = [];       // [{id, name, html}, ...]
+  let currentMainImgIndex = 0;
+  let currentEcomData = null;    // {listing_title, listing_keywords, ...}
+  let moduleDataMap = {};        // block_id → block_data (for editing)
+  let editingModuleId = null;    // currently editing block_id
+
+  /* ── Helpers ────────────────────────────────────────────────── */
+  const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+
+  async function postJson(url, data) {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: JSON.stringify(data)
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: '请求失败' }));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    return resp.json();
+  }
+
+  function showError(msg) {
+    alert(msg);
+  }
+
+  /* ── Category Selection ─────────────────────────────────────── */
+  function selectCategory(type) {
+    currentProductType = type;
+    document.querySelectorAll('.cat-pill').forEach(p => {
+      const isActive = p.dataset.type === type;
+      p.classList.toggle('active', isActive);
+    });
+    // Auto-select default theme for this category
+    const defaultTheme = allThemes.find(t => t.default_for && t.default_for.includes(type));
+    if (defaultTheme) applyTheme(defaultTheme.id);
+  }
+
+  /* ── Image Upload ───────────────────────────────────────────── */
+  function initUploadBox(boxId, onSuccess) {
+    const box = document.getElementById(boxId);
+    const input = box.querySelector('input[type="file"]');
+    const preview = box.querySelector('.upload-preview');
+    const placeholder = box.querySelector('.upload-placeholder');
+
+    box.addEventListener('click', () => input.click());
+    box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('drag-over'); });
+    box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
+    box.addEventListener('drop', e => {
+      e.preventDefault(); box.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0], box, preview, placeholder, onSuccess);
+    });
+    input.addEventListener('change', () => {
+      if (input.files.length) uploadFile(input.files[0], box, preview, placeholder, onSuccess);
+    });
+  }
+
+  async function uploadFile(file, box, preview, placeholder, onSuccess) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const resp = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+        body: formData
+      });
+      const data = await resp.json();
+      if (data.url) {
+        preview.innerHTML = `<img src="${data.url}" alt=""><button class="upload-remove" onclick="removeUpload(event, '${box.id}')">&times;</button>`;
+        preview.style.display = 'block';
+        placeholder.style.display = 'none';
+        onSuccess(data.url);
+      } else {
+        showError(data.error || '上传失败');
+      }
+    } catch (e) {
+      showError('上传失败: ' + e.message);
+    }
+  }
+
+  function removeUpload(event, boxId) {
+    event.stopPropagation();
+    const box = document.getElementById(boxId);
+    const preview = box.querySelector('.upload-preview');
+    const placeholder = box.querySelector('.upload-placeholder');
+    preview.innerHTML = '';
+    preview.style.display = 'none';
+    placeholder.style.display = 'flex';
+    if (boxId === 'upload_product') productImageUrl = '';
+    else if (boxId === 'upload_scene') sceneImageUrl = '';
+    else if (boxId === 'upload_logo') logoImageUrl = '';
+    else if (boxId === 'upload_qr') qrImageUrl = '';
+  }
+
+  /* ── Theme Loading & Application ────────────────────────────── */
+  async function loadThemes() {
+    try {
+      const resp = await fetch('/api/themes', { headers: { 'X-CSRFToken': csrfToken } });
+      const data = await resp.json();
+      allThemes = data.themes;
+      renderThemeGrid();
+      const defaultTheme = allThemes.find(t => t.default_for && t.default_for.includes(currentProductType));
+      if (defaultTheme) applyTheme(defaultTheme.id);
+      else if (allThemes.length) applyTheme(allThemes[0].id);
+    } catch (e) { console.error('Failed to load themes', e); }
+  }
+
+  function renderThemeGrid() {
+    const grid = document.getElementById('theme_grid');
+    grid.innerHTML = allThemes.map(t => `
+      <div class="theme-card ${t.id === currentThemeId ? 'selected' : ''}" data-theme-id="${t.id}" onclick="applyTheme('${t.id}')">
+        <img src="/static/themes/${t.thumbnail}" alt="${t.name}">
+        <div class="theme-card-name">${t.name}</div>
+      </div>
+    `).join('');
+  }
+
+  function applyTheme(themeId) {
+    const theme = allThemes.find(t => t.id === themeId);
+    if (!theme) return;
+    currentThemeId = themeId;
+    const container = document.getElementById('preview_container');
+    if (container && theme.vars) {
+      Object.entries(theme.vars).forEach(([key, value]) => {
+        container.style.setProperty(key, value);
+      });
+    }
+    document.querySelectorAll('.theme-card').forEach(card => {
+      card.classList.toggle('selected', card.dataset.themeId === themeId);
+    });
+    // Also apply to main image viewer
+    const mainLarge = document.getElementById('main_img_large');
+    if (mainLarge && theme && theme.vars) {
+      Object.entries(theme.vars).forEach(([key, value]) => {
+        mainLarge.style.setProperty(key, value);
+      });
+    }
+  }
+
+  /* ── Generate Preview ───────────────────────────────────────── */
+  async function generatePreview() {
+    if (!productImageUrl) { showError('请先上传产品主图'); return; }
+    const rawText = document.getElementById('text_input').value.trim();
+    if (!rawText) { showError('请粘贴产品资料文案'); return; }
+    originalRawText = rawText;
+    const productTitle = (document.getElementById('product_title_input').value || '').trim();
+    if (!productTitle) {
+      const hint = document.getElementById('product_title_input');
+      hint.style.borderColor = '#f59e0b';
+      hint.setAttribute('placeholder', '⚠️ 建议填写产品标题（品牌+型号），首屏效果更好');
+      setTimeout(() => { hint.style.borderColor = ''; hint.setAttribute('placeholder', '输入产品标题，如：德威莱克DZ50X驾驶式洗地机'); }, 5000);
+    }
+
+    const btn = document.getElementById('btn_generate');
+    const progress = document.getElementById('progress_overlay');
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px;"></span>AI 正在生成...';
+    progress.style.display = 'flex';
+
+    try {
+      updateProgress('AI 正在分析产品参数...');
+      const parsed = await postJson(`/api/build/${encodeURIComponent(currentProductType)}/parse-text`, { text: rawText, product_title: productTitle });
+
+      updateProgress('正在组装详情页模块...');
+      const preview = await postJson(`/api/build/${encodeURIComponent(currentProductType)}/render-preview`, {
+        parsed_data: parsed,
+        product_image: productImageUrl,
+        scene_image: sceneImageUrl || '',
+        logo_image: logoImageUrl || '',
+        qr_image: qrImageUrl || '',
+        theme_id: currentThemeId
+      });
+
+      renderModules(preview.modules);
+      currentBuildData = { parsed, productType: currentProductType, themeId: currentThemeId, modules: preview.modules };
+
+      document.getElementById('empty_state').style.display = 'none';
+      document.getElementById('preview_wrapper').style.display = 'block';
+      document.getElementById('export_bar').style.display = 'flex';
+      document.getElementById('center_tabs').classList.add('visible');
+
+      applyTheme(currentThemeId);
+
+      // Populate e-commerce copy from parsed data
+      populateEcomData(parsed);
+
+      // Fetch main images in parallel (non-blocking)
+      updateProgress('正在生成主图...');
+      postJson(`/api/build/${encodeURIComponent(currentProductType)}/render-main-images`, {
+        parsed_data: parsed,
+        product_image: productImageUrl,
+        scene_image: sceneImageUrl || '',
+        logo_image: logoImageUrl || '',
+        theme_id: currentThemeId
+      }).then(result => {
+        renderMainImages(result.main_images || []);
+      }).catch(err => {
+        console.error('主图生成失败:', err);
+      });
+
+    } catch (err) {
+      showError('生成失败：' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '✨ 一键生成详情页';
+      progress.style.display = 'none';
+    }
+  }
+
+  function updateProgress(text) {
+    document.getElementById('progress_text').textContent = text;
+  }
+
+  /* ── Module Rendering ───────────────────────────────────────── */
+  function renderModules(modules) {
+    const container = document.getElementById('preview_container');
+    container.innerHTML = '';
+    moduleDataMap = {};
+    modules.forEach((mod, index) => {
+      if (mod.data) moduleDataMap[mod.id] = mod.data;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'module-wrapper';
+      wrapper.setAttribute('data-module-id', mod.id);
+      wrapper.setAttribute('data-module-index', index);
+      wrapper.innerHTML = `
+        <div class="module-toolbar">
+          <span class="module-name">${mod.name}</span>
+          <div class="module-actions">
+            <button class="mod-btn" onclick="editModule('${mod.id}')" title="编辑">✏️</button>
+            <button class="mod-btn" onclick="regenerateModule('${mod.id}')" title="AI重新生成">🔄</button>
+            <button class="mod-btn mod-toggle" onclick="toggleModule(this, '${mod.id}')" title="显示/隐藏">👁</button>
+            <span class="mod-drag-handle" title="拖拽排序">⠿</span>
+          </div>
+        </div>
+        <div class="module-content">${mod.html}</div>
+        <div class="module-hidden-placeholder">
+          <span>📦 ${mod.name}</span><span style="opacity:0.6">已隐藏</span>
+        </div>
+      `;
+      container.appendChild(wrapper);
+    });
+    initSortable();
+  }
+
+  /* ── Sortable ───────────────────────────────────────────────── */
+  function initSortable() {
+    const container = document.getElementById('preview_container');
+    if (typeof Sortable !== 'undefined') {
+      Sortable.create(container, {
+        handle: '.mod-drag-handle',
+        animation: 200,
+        ghostClass: 'module-ghost',
+        onEnd: () => updateModuleOrder()
+      });
+    }
+  }
+
+  function updateModuleOrder() {
+    if (!currentBuildData) return;
+    const ids = [...document.querySelectorAll('.module-wrapper')].map(w => w.dataset.moduleId);
+    currentBuildData.moduleOrder = ids;
+  }
+
+  /* ── Module Actions ─────────────────────────────────────────── */
+  function toggleModule(btn, moduleId) {
+    const wrapper = document.querySelector(`[data-module-id="${moduleId}"]`);
+    wrapper.classList.toggle('module-hidden');
+    btn.style.opacity = wrapper.classList.contains('module-hidden') ? '0.3' : '1';
+  }
+
+  // Fields to show in edit panel per block type
+  const _EDIT_FIELDS = {
+    block_a: [
+      {key:'brand_text',label:'品牌名',type:'text'},
+      {key:'model_name',label:'型号',type:'text'},
+      {key:'category_line',label:'品类短语',type:'text'},
+      {key:'main_title',label:'主标题',type:'text'},
+      {key:'hero_subtitle_pre',label:'副标题前缀',type:'text'},
+      {key:'hero_subtitle_em',label:'副标题强调',type:'text'},
+      {key:'hero_subtitle_post',label:'副标题后缀',type:'text'},
+      {key:'tagline_sub',label:'底部标语',type:'text'},
+    ],
+    block_b2: [
+      {key:'title_num',label:'数字标题',type:'text'},
+      {key:'title_text',label:'文字标题',type:'text'},
+      {key:'subtitle',label:'副标题',type:'text'},
+    ],
+    block_b3: [
+      {key:'header_line1',label:'大标题行1',type:'text'},
+      {key:'header_line2',label:'大标题行2',type:'text'},
+      {key:'caption_line1',label:'说明行1',type:'text'},
+      {key:'caption_line2',label:'说明行2',type:'text'},
+      {key:'footer_line1',label:'底部行1',type:'text'},
+      {key:'footer_line2',label:'底部行2',type:'text'},
+    ],
+    block_e: [
+      {key:'title',label:'标题',type:'text'},
+      {key:'subtitle',label:'副标题',type:'text'},
+      {key:'red_bar_text',label:'红条文案',type:'text'},
+      {key:'dim_height',label:'高度(mm)',type:'text'},
+      {key:'dim_width',label:'宽度(mm)',type:'text'},
+      {key:'dim_length',label:'长度(mm)',type:'text'},
+    ],
+    block_f: [
+      {key:'title_line1',label:'标题行1',type:'text'},
+      {key:'title_line1_red',label:'标题红字',type:'text'},
+      {key:'title_line2',label:'标题行2',type:'text'},
+      {key:'vs_left_title',label:'左侧标题',type:'text'},
+      {key:'vs_left_sub',label:'左侧副标题',type:'text'},
+      {key:'vs_right_sub',label:'右侧副标题',type:'text'},
+      {key:'vs_left_bottom',label:'左侧结论',type:'textarea'},
+      {key:'vs_right_bottom',label:'右侧结论',type:'textarea'},
+    ],
+    block_n: [
+      {key:'cta_title',label:'CTA标题',type:'text'},
+      {key:'cta_subtitle',label:'CTA副标题',type:'text'},
+      {key:'qr_caption',label:'二维码说明',type:'text'},
+    ],
+    block_o: [
+      {key:'disclaimer_title',label:'标题',type:'text'},
+      {key:'disclaimer_text',label:'免责声明',type:'textarea'},
+    ],
+  };
+
+  function editModule(moduleId) {
+    const data = moduleDataMap[moduleId];
+    if (!data) { showError('没有可编辑的数据'); return; }
+    editingModuleId = moduleId;
+    const blockName = _get_block_display_name_js(moduleId);
+
+    document.getElementById('edit_modal_title').textContent = `编辑 · ${blockName}`;
+    document.getElementById('edit_modal_subtitle').textContent = moduleId;
+
+    const fieldsContainer = document.getElementById('edit_modal_fields');
+    const fields = _EDIT_FIELDS[moduleId];
+
+    if (fields) {
+      fieldsContainer.innerHTML = fields.map(f => {
+        const val = data[f.key] || '';
+        const escaped = String(val).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        if (f.type === 'textarea') {
+          return `<div style="margin-bottom:14px;">
+            <label style="font-size:12px;font-weight:600;color:var(--color-text-secondary);display:block;margin-bottom:4px;">${f.label}</label>
+            <textarea data-field="${f.key}" style="width:100%;height:80px;padding:8px 10px;border:1.5px solid var(--color-border);border-radius:8px;font-size:13px;font-family:var(--font-sans);resize:vertical;">${escaped}</textarea>
+          </div>`;
+        }
+        return `<div style="margin-bottom:14px;">
+          <label style="font-size:12px;font-weight:600;color:var(--color-text-secondary);display:block;margin-bottom:4px;">${f.label}</label>
+          <input data-field="${f.key}" type="text" value="${escaped}" style="width:100%;padding:8px 10px;border:1.5px solid var(--color-border);border-radius:8px;font-size:13px;">
+        </div>`;
+      }).join('');
+    } else {
+      // Generic: show all string fields
+      const entries = Object.entries(data).filter(([k,v]) => typeof v === 'string' && v.length < 500 && !k.endsWith('_image'));
+      fieldsContainer.innerHTML = entries.map(([k, v]) => {
+        const escaped = String(v).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        return `<div style="margin-bottom:14px;">
+          <label style="font-size:12px;font-weight:600;color:var(--color-text-secondary);display:block;margin-bottom:4px;">${k}</label>
+          <input data-field="${k}" type="text" value="${escaped}" style="width:100%;padding:8px 10px;border:1.5px solid var(--color-border);border-radius:8px;font-size:13px;">
+        </div>`;
+      }).join('');
+    }
+
+    document.getElementById('edit_modal').style.display = 'block';
+  }
+
+  function _get_block_display_name_js(moduleId) {
+    const wrapper = document.querySelector(`[data-module-id="${moduleId}"] .module-name`);
+    return wrapper ? wrapper.textContent : moduleId;
+  }
+
+  function closeEditModal() {
+    document.getElementById('edit_modal').style.display = 'none';
+    editingModuleId = null;
+  }
+
+  async function saveEditModal() {
+    if (!editingModuleId) return;
+    const data = { ...moduleDataMap[editingModuleId] };
+    // Collect field values
+    document.querySelectorAll('#edit_modal_fields [data-field]').forEach(el => {
+      data[el.dataset.field] = el.value;
+    });
+
+    try {
+      const result = await postJson(`/api/build/${encodeURIComponent(currentProductType)}/render-block`, {
+        block_id: editingModuleId,
+        block_data: data,
+      });
+      // Update module HTML in preview
+      const wrapper = document.querySelector(`[data-module-id="${editingModuleId}"]`);
+      if (wrapper) {
+        wrapper.querySelector('.module-content').innerHTML = result.html;
+      }
+      moduleDataMap[editingModuleId] = data;
+      closeEditModal();
+    } catch (err) {
+      showError('保存失败：' + err.message);
+    }
+  }
+
+  async function regenerateModule(moduleId) {
+    if (!currentBuildData || !currentBuildData.parsed) { showError('没有产品数据'); return; }
+    const wrapper = document.querySelector(`[data-module-id="${moduleId}"]`);
+    const btn = wrapper.querySelector('[title="AI重新生成"]');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+    try {
+      const result = await postJson(`/api/build/${encodeURIComponent(currentProductType)}/regenerate-block`, {
+        block_id: moduleId,
+        parsed_data: currentBuildData.parsed,
+        product_image: productImageUrl,
+        scene_image: sceneImageUrl || '',
+        logo_image: logoImageUrl || '',
+        qr_image: qrImageUrl || '',
+      });
+      if (wrapper) {
+        wrapper.querySelector('.module-content').innerHTML = result.html;
+      }
+      if (result.data) moduleDataMap[moduleId] = result.data;
+    } catch (err) {
+      showError('AI重新生成失败：' + err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔄'; }
+    }
+  }
+
+  function getCurrentModuleOrder() {
+    return [...document.querySelectorAll('.module-wrapper')].map(w => w.dataset.moduleId);
+  }
+
+  function getHiddenModuleIds() {
+    return [...document.querySelectorAll('.module-wrapper.module-hidden')].map(w => w.dataset.moduleId);
+  }
+
+  /* ── Export ─────────────────────────────────────────────────── */
+  async function doExport() {
+    const btn = document.getElementById('btn_export');
+    btn.disabled = true;
+    btn.textContent = '导出中...';
+    try {
+      const resp = await fetch(`/export/${encodeURIComponent(currentProductType)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({
+          module_order: getCurrentModuleOrder(),
+          hidden_modules: getHiddenModuleIds(),
+          theme_id: currentThemeId,
+          build_data: currentBuildData
+        })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: '导出失败' }));
+        throw new Error(err.error || '导出失败');
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentProductType}_详情页.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showError('导出失败：' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📥 导出高清 PNG';
+    }
+  }
+
+  /* ── Center Tab Switching ────────────────────────────────────── */
+  function switchCenterTab(tab) {
+    document.querySelectorAll('.center-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.getElementById('preview_wrapper').style.display = tab === 'detail' ? 'block' : 'none';
+    document.getElementById('export_bar').style.display = tab === 'detail' ? 'flex' : 'none';
+    document.getElementById('main_img_wrapper').style.display = tab === 'main_img' ? 'block' : 'none';
+    document.getElementById('main_img_export_bar').style.display = tab === 'main_img' ? 'flex' : 'none';
+    document.getElementById('ai_img_wrapper').style.display = tab === 'ai_img' ? 'block' : 'none';
+  }
+
+  /* ── AI 生图 ───────────────────────────────────────────────── */
+  let aiImageUrls = [];
+
+  async function generateAiImages() {
+    if (!currentBuildData || !currentBuildData.parsed) {
+      showError('请先粘贴产品文案并点击「一键生成详情页」');
+      return;
+    }
+    const currentParsedData = currentBuildData.parsed;
+
+    // 切到AI生图tab
+    switchCenterTab('ai_img');
+    document.getElementById('empty_state').style.display = 'none';
+
+    // 显示loading
+    const loading = document.getElementById('ai_img_loading');
+    const results = document.getElementById('ai_img_results');
+    loading.style.display = 'block';
+    results.innerHTML = '';
+
+    // 进度条动画
+    const bar = document.getElementById('ai_progress_bar');
+    bar.style.width = '0%';
+    let progress = 0;
+    const progressTimer = setInterval(() => {
+      progress = Math.min(progress + 2, 90);
+      bar.style.width = progress + '%';
+    }, 1000);
+
+    // 获取产品图URL
+    const prodImg = document.getElementById('product_image_preview');
+    const productImageUrl = prodImg ? (prodImg.dataset.url || '') : '';
+
+    // 弹窗获取百炼key（简单方案）
+    let dashscopeKey = localStorage.getItem('dashscope_api_key') || '';
+    if (!dashscopeKey) {
+      dashscopeKey = prompt('请输入阿里云百炼 API Key（通义万相生图）：\n\n获取地址：https://bailian.console.aliyun.com/');
+      if (!dashscopeKey) {
+        clearInterval(progressTimer);
+        loading.style.display = 'none';
+        return;
+      }
+      localStorage.setItem('dashscope_api_key', dashscopeKey);
+    }
+
+    try {
+      const resp = await postJson('/api/generate-ai-images', {
+        parsed_data: currentParsedData,
+        product_image: productImageUrl,
+        dashscope_api_key: dashscopeKey,
+      });
+
+      clearInterval(progressTimer);
+      bar.style.width = '100%';
+
+      if (resp.error) {
+        throw new Error(resp.error);
+      }
+
+      aiImageUrls = resp.images || [];
+      loading.style.display = 'none';
+
+      if (!aiImageUrls.length) {
+        results.innerHTML = '<div style="text-align:center; color:#888; padding:40px;">未生成任何图片</div>';
+        return;
+      }
+
+      // 渲染结果
+      let html = '<div style="text-align:center; margin-bottom:16px;">' +
+        '<span style="font-size:16px; font-weight:600; color:#6366f1;">生成完成！共 ' + aiImageUrls.length + ' 张</span>' +
+        '&nbsp;&nbsp;<button onclick="downloadAllAiImages()" style="padding:6px 16px; background:#6366f1; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px;">下载全部</button>' +
+        '</div>';
+
+      aiImageUrls.forEach((url, i) => {
+        html += '<div style="position:relative; width:375px; border-radius:8px; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,0.1);">' +
+          '<img src="' + url + '?t=' + Date.now() + '" style="width:100%; display:block;" />' +
+          '<a href="' + url + '" download style="position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.5); color:#fff; padding:4px 10px; border-radius:4px; font-size:12px; text-decoration:none;">下载</a>' +
+          '</div>';
+      });
+
+      results.innerHTML = html;
+
+    } catch (e) {
+      clearInterval(progressTimer);
+      loading.style.display = 'none';
+      results.innerHTML = '<div style="text-align:center; color:#ef4444; padding:40px;">生成失败: ' + e.message + '</div>';
+      // 如果key无效，清除缓存
+      if (e.message.includes('API Key') || e.message.includes('401') || e.message.includes('403')) {
+        localStorage.removeItem('dashscope_api_key');
+      }
+    }
+  }
+
+  function downloadAllAiImages() {
+    aiImageUrls.forEach((url, i) => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'detail_' + (i + 1) + '.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+  }
+
+  /* ── Main Image Display ────────────────────────────────────── */
+  function renderMainImages(images) {
+    mainImageHtmls = images;
+    if (!images.length) return;
+    currentMainImgIndex = 0;
+    showMainImage(0);
+    renderMainImgStrip();
+  }
+
+  function showMainImage(index) {
+    currentMainImgIndex = index;
+    const container = document.getElementById('main_img_large');
+    if (mainImageHtmls[index]) {
+      container.innerHTML = mainImageHtmls[index].html;
+      // Apply theme vars to main image
+      const theme = allThemes.find(t => t.id === currentThemeId);
+      if (theme && theme.vars) {
+        Object.entries(theme.vars).forEach(([key, value]) => {
+          container.style.setProperty(key, value);
+        });
+      }
+    }
+    document.querySelectorAll('.main-img-thumb').forEach((t, i) => t.classList.toggle('active', i === index));
+  }
+
+  function renderMainImgStrip() {
+    const strip = document.getElementById('main_img_strip');
+    strip.innerHTML = mainImageHtmls.map((img, i) => `
+      <div class="main-img-thumb ${i === 0 ? 'active' : ''}" onclick="showMainImage(${i})" title="${img.name}">
+        <div style="width:800px;height:800px;transform:scale(${80/800});transform-origin:top left;pointer-events:none;overflow:hidden;">${img.html}</div>
+      </div>
+    `).join('');
+  }
+
+  /* ── E-commerce Copy ───────────────────────────────────────── */
+  function populateEcomData(parsed) {
+    currentEcomData = {
+      listing_title: parsed.listing_title || '',
+      listing_keywords: parsed.listing_keywords || '',
+      listing_selling_points: parsed.listing_selling_points || [],
+      listing_description: parsed.listing_description || '',
+    };
+
+    const panel = document.getElementById('ecom_content');
+    if (!currentEcomData.listing_title && !currentEcomData.listing_keywords) {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = 'block';
+
+    // Title
+    document.getElementById('ecom_title').textContent = currentEcomData.listing_title;
+
+    // Keywords
+    const kwContainer = document.getElementById('ecom_keywords');
+    const keywords = currentEcomData.listing_keywords.split(/[,，]/).map(k => k.trim()).filter(Boolean);
+    kwContainer.innerHTML = keywords.map(k => `<span class="ecom-tag">${k}</span>`).join('');
+
+    // Selling points
+    const pointsList = document.getElementById('ecom_points');
+    pointsList.innerHTML = currentEcomData.listing_selling_points.map(p => `<li>${p}</li>`).join('');
+
+    // Description
+    if (currentEcomData.listing_description) {
+      document.getElementById('ecom_desc_panel').style.display = 'block';
+      document.getElementById('ecom_desc').textContent = currentEcomData.listing_description;
+    } else {
+      document.getElementById('ecom_desc_panel').style.display = 'none';
+    }
+  }
+
+  function toggleEcomDesc() {
+    const content = document.getElementById('ecom_desc_content');
+    const toggle = document.getElementById('ecom_desc_toggle');
+    const isHidden = content.style.display === 'none';
+    content.style.display = isHidden ? 'block' : 'none';
+    toggle.textContent = isHidden ? '收起商品描述 ▴' : '展开商品描述 ▾';
+  }
+
+  /* ── Clipboard ─────────────────────────────────────────────── */
+  async function copyField(elemId) {
+    const el = document.getElementById(elemId);
+    if (!el) return;
+    const text = el.innerText || el.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      const btn = el.closest('.ecom-panel').querySelector('.ecom-copy-btn');
+      if (btn) { btn.classList.add('copied'); btn.textContent = '已复制'; setTimeout(() => { btn.classList.remove('copied'); btn.textContent = '复制'; }, 1500); }
+    } catch(e) { showError('复制失败'); }
+  }
+
+  async function copyAllPoints() {
+    if (!currentEcomData || !currentEcomData.listing_selling_points) return;
+    const text = currentEcomData.listing_selling_points.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      const btn = document.querySelector('#ecom_points').closest('.ecom-panel').querySelector('.ecom-copy-btn');
+      if (btn) { btn.classList.add('copied'); btn.textContent = '已复制'; setTimeout(() => { btn.classList.remove('copied'); btn.textContent = '全部复制'; }, 1500); }
+    } catch(e) { showError('复制失败'); }
+  }
+
+  /* ── Main Image ZIP Export ─────────────────────────────────── */
+  async function exportMainImagesZip() {
+    if (!currentBuildData) { showError('请先生成预览'); return; }
+    const btn = event.target;
+    btn.disabled = true; btn.textContent = '导出中...';
+    try {
+      const resp = await fetch(`/export/${encodeURIComponent(currentProductType)}/main-images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({
+          parsed_data: currentBuildData.parsed,
+          product_image: productImageUrl,
+          scene_image: sceneImageUrl || '',
+          logo_image: logoImageUrl || '',
+          theme_id: currentThemeId,
+        })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: '导出失败' }));
+        throw new Error(err.error || '导出失败');
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${currentProductType}_主图.zip`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { showError('主图导出失败：' + err.message); }
+    finally { btn.disabled = false; btn.textContent = '📦 导出全部主图 ZIP'; }
+  }
+
+  /* ── Init ───────────────────────────────────────────────────── */
+  document.addEventListener('DOMContentLoaded', () => {
+    loadThemes();
+    initUploadBox('upload_product', url => { productImageUrl = url; });
+    initUploadBox('upload_scene', url => { sceneImageUrl = url; });
+    initUploadBox('upload_logo', url => { logoImageUrl = url; });
+    initUploadBox('upload_qr', url => { qrImageUrl = url; });
+    selectCategory(currentProductType);
+  });
+</script>
+</body>
+</html>

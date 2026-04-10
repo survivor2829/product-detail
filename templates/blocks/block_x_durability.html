@@ -19,10 +19,10 @@
   <div style="margin-bottom:24px;">
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
       <span style="font-size:14px; font-weight:600; color:#333;">{{ m.label }}</span>
-      <span style="font-size:22px; font-weight:900; color:#E8231A;">{{ m.value }}<span style="font-size:13px; font-weight:400; color:#999; margin-left:3px;">{{ m.unit }}</span></span>
+      <span style="font-size:22px; font-weight:900; color:var(--theme-primary, #E8231A);">{{ m.value }}<span style="font-size:13px; font-weight:400; color:#999; margin-left:3px;">{{ m.unit }}</span></span>
     </div>
     <div style="width:100%; height:10px; background:#f0f0f0; border-radius:5px; overflow:hidden;">
-      <div style="width:{{ m.bar_percent|default(80) }}%; height:100%; background:linear-gradient(90deg,#E8231A,#ff6b5e); border-radius:5px;"></div>
+      <div style="width:{{ m.bar_percent|default(80) }}%; height:100%; background:linear-gradient(90deg, var(--theme-primary, #E8231A), var(--theme-accent, #ff6b5e)); border-radius:5px;"></div>
     </div>
     {% if m.note %}
     <div style="font-size:11px; color:#bbb; margin-top:4px;">{{ m.note }}</div>

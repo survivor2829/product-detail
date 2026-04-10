@@ -43,7 +43,7 @@ ALLOWED_IMG = {"jpg", "jpeg", "png", "webp"}
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL   = "deepseek-chat"
-_proxy_url = os.environ.get("HTTP_PROXY", "")
+_proxy_url = os.environ.get("HTTP_PROXY", "").strip()
 PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else {}
 
 app = Flask(__name__)
@@ -408,10 +408,24 @@ def _build_spec_rows(detail_params: dict) -> list:
         if not k or not v or k in used:
             continue
         rows.append({"name": k, "value": v})
-        if len(rows) >= 20:
-            break
 
-    return rows[:20]
+    return rows
+
+
+def _append_unit(val: str, unit: str = "mm") -> str:
+    """给纯数字维度值追加单位后缀"""
+    if val and val.replace(".", "").isdigit():
+        return val + unit
+    return val
+
+
+def _strip_extreme_in_list(items, fields):
+    """批量过滤列表中每个 dict 指定字段的极限词"""
+    for item in items:
+        if isinstance(item, dict):
+            for f in fields:
+                if f in item:
+                    item[f] = _strip_extreme_words(_to_str(item[f]))
 
 
 def _map_parsed_to_form_fields(parsed: dict) -> dict:
@@ -469,12 +483,25 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         dim_height = dim_height or h
 
     _pn = _to_str(parsed.get("product_name", ""))
-    _main = _first_nonempty(_to_str(parsed.get("main_title", "")), _pn)
+    _main = _first_nonempty(
+        _to_str(parsed.get("main_title", "")),
+        _pn,
+        f"{brand} {model}".strip() if (brand or model) else "",
+    )
     _cat = _first_nonempty(
         _to_str(parsed.get("category_line", "")),
         _to_str(parsed.get("product_type", "")),
     )
     _hero_sub = _to_str(parsed.get("hero_subtitle", ""))
+    # 如果 AI 没返回标语，尝试用品类补位
+    if not slogan and _cat:
+        slogan = f"高效{_cat}"
+        tagline_line1, tagline_line2 = _split_slogan(slogan)
+    # 最终兜底：确保首屏至少有产品名
+    if not _main and not _cat:
+        _cat = product_type_str or "商用清洁设备"
+    if not _main:
+        _main = _cat
 
     result = {
         "brand_text": brand_text,
@@ -492,26 +519,26 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         "param_3_label": "清水箱", "param_3_value": param_capacity,
         "param_4_label": "续航时间", "param_4_value": param_runtime,
         "e_specs": specs,
-        "e_dim_length": dim_length,
-        "e_dim_width": dim_width,
-        "e_dim_height": dim_height,
+        "e_dim_length": _append_unit(dim_length),
+        "e_dim_width": _append_unit(dim_width),
+        "e_dim_height": _append_unit(dim_height),
     }
 
-    # ── 产品优势（AI生成 或 兜底推导）──
+    # ── 产品优势（仅用AI返回的，不兜底推导）──
     advantages = parsed.get("advantages", [])
-    if not advantages:
-        advantages = _derive_advantages_from_specs(detail_params)
-    for i, item in enumerate(advantages[:9]):
-        if isinstance(item, dict):
-            result[f"b2_icon_{i+1}"] = _to_str(item.get("emoji", "✅"))
-            result[f"b2_label_{i+1}"] = _to_str(item.get("text", ""))
-        elif isinstance(item, str):
-            result[f"b2_icon_{i+1}"] = "✅"
-            result[f"b2_label_{i+1}"] = item
-    n = len(advantages[:9])
-    result["b2_title_num"] = str(n)
-    result["b2_title_text"] = "大核心优势"
-    result["b2_subtitle"] = _to_str(parsed.get("product_type", "")) + "创新升级"
+    if advantages:
+        for i, item in enumerate(advantages[:9]):
+            if isinstance(item, dict):
+                result[f"b2_icon_{i+1}"] = _to_str(item.get("emoji", "✅"))
+                result[f"b2_label_{i+1}"] = _to_str(item.get("text", ""))
+            elif isinstance(item, str):
+                result[f"b2_icon_{i+1}"] = "✅"
+                result[f"b2_label_{i+1}"] = item
+        n = len(advantages[:9])
+        result["b2_title_num"] = str(n)
+        result["b2_title_text"] = "大核心优势"
+        result["b2_subtitle"] = ""
+    # 如果AI没返回advantages，不设置b2字段，模块将不显示
 
     # ── 清洁故事文案（AI生成）──
     result["b3_header_line1"] = _to_str(parsed.get("story_title_1", ""))
@@ -521,22 +548,25 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
     result["b3_footer_line1"] = _to_str(parsed.get("story_bottom_1", ""))
     result["b3_footer_line2"] = _to_str(parsed.get("story_bottom_2", ""))
 
-    # ── VS对比文案（AI生成）──
+    # ── VS对比文案（仅当AI有实际数据时才填充）──
     vs = parsed.get("vs_comparison", {})
-    if isinstance(vs, dict):
+    if isinstance(vs, dict) and vs:
         count_num = _to_str(vs.get("replace_count", ""))
         left_title = _to_str(vs.get("left_title", ""))
-        result["f_title_line1"] = "1台顶"
-        result["f_title_line1_red"] = count_num or "多"
-        result["f_title_line1_end"] = "人"
-        result["f_title_line2"] = left_title + "与人工" if left_title else ""
-        result["f_title_line2_red"] = "的区别。"
-        result["f_vs_left_title"] = left_title
-        result["f_vs_left_sub"] = _to_str(vs.get("left_sub", ""))
-        result["f_vs_right_title"] = "传统人工"
-        result["f_vs_right_sub"] = _to_str(vs.get("right_sub", ""))
-        result["f_vs_left_bottom"] = _to_str(vs.get("left_bottom", ""))
-        result["f_vs_right_bottom"] = _to_str(vs.get("right_bottom", ""))
+        left_bottom = _to_str(vs.get("left_bottom", ""))
+        # 只有AI返回了实质数据才生成VS模块
+        if count_num or left_title or left_bottom:
+            result["f_title_line1"] = "1台顶" if count_num else ""
+            result["f_title_line1_red"] = count_num
+            result["f_title_line1_end"] = "人" if count_num else ""
+            result["f_title_line2"] = left_title + "与人工" if left_title else ""
+            result["f_title_line2_red"] = "的区别。" if left_title else ""
+            result["f_vs_left_title"] = left_title
+            result["f_vs_left_sub"] = _to_str(vs.get("left_sub", ""))
+            result["f_vs_right_title"] = _to_str(vs.get("right_title", "")) or ("传统人工" if left_title else "")
+            result["f_vs_right_sub"] = _to_str(vs.get("right_sub", ""))
+            result["f_vs_left_bottom"] = left_bottom
+            result["f_vs_right_bottom"] = _to_str(vs.get("right_bottom", ""))
 
     # ── 适用地面材质（AI生成）──
     floor_items = parsed.get("floor_items", [])
@@ -550,6 +580,9 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         "kpis":          "block_i_json",
         "scenes":        "block_h_json",
         "before_after":  "block_q_json",
+        "tech_items":    "block_j_json",
+        "faqs":          "block_s_json",
+        "cert_badges":   "block_k_json",
     }
     for src_key, dest_key in _list_field_map.items():
         val = parsed.get(src_key)
@@ -559,6 +592,19 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
     steps = parsed.get("install_steps") or parsed.get("usage_steps")
     if isinstance(steps, list) and steps:
         result["block_m_json"] = json.dumps(steps, ensure_ascii=False)
+
+    # ── 品牌数据（brand_stats / brand_story_lines → block_g）──
+    _brand_stats = parsed.get("brand_stats", [])
+    if isinstance(_brand_stats, list) and _brand_stats:
+        result["block_g_stats_json"] = json.dumps(_brand_stats, ensure_ascii=False)
+    _brand_lines = parsed.get("brand_story_lines", [])
+    if isinstance(_brand_lines, list) and _brand_lines:
+        result["block_g_lines_json"] = json.dumps(_brand_lines, ensure_ascii=False)
+
+    # ── 服务对比（service_compare → block_l）──
+    _svc = parsed.get("service_compare", {})
+    if isinstance(_svc, dict) and _svc.get("compare_rows"):
+        result["block_l_json"] = json.dumps(_svc["compare_rows"], ensure_ascii=False)
 
     print(f"[映射] b2_label_1={result.get('b2_label_1','(空)')}, b3_header_line1={result.get('b3_header_line1','(空)')}")
 
@@ -684,10 +730,27 @@ _CATEGORIES = [
     {"type": "工具类", "desc": "拖把、刮水器、清洁桶等手动工具", "color": "#E87C1A", "icon": "🧹"},
 ]
 
+@app.route('/api/themes', methods=['GET'])
+@login_required
+def get_themes():
+    """返回所有可用模板的配置（含CSS变量）"""
+    themes_path = BASE_DIR / "static" / "themes" / "themes.json"
+    with open(themes_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return jsonify(data)
+
+
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html", categories=_CATEGORIES)
+    return render_template("workspace.html")
+
+
+@app.route("/workspace/<product_type>")
+@login_required
+def build_redirect(product_type):
+    _validate_product_type(product_type)
+    return render_template("workspace.html", initial_product_type=product_type)
 
 
 # ── 用户设置页 ──
@@ -743,6 +806,21 @@ def upload():
     file.save(str(save_path))
     return jsonify({"path": str(save_path), "filename": filename, "url": f"/static/uploads/{current_user.id}/{filename}"})
 # ── 文本解析（DeepSeek API）──────────────────────────────────────────
+_NO_FABRICATION_RULE = (
+    "【数据准确性要求】\n"
+    "1. advantages 中的每一条必须能在用户提供的文案中找到依据，没有依据不要写。\n"
+    "2. 如果文案中没有明确提到APP/云平台/智能导航等功能，不要在advantages中包含这些。\n"
+    "3. 【最重要】detail_params 必须完整提取文案中的每一个参数，一个都不能遗漏！\n"
+    "   包括但不限于：效率、宽度、容量、功率、电机、电池、重量、尺寸、噪音、转速、\n"
+    "   吸力、压力、速度、材质、充电时间、续航时间等所有出现的技术数据。\n"
+    "   用户给了多少参数就提取多少，不要截断、不要省略、不要合并。\n"
+    "4. floor_items（适用地面）：只根据产品实际用途判断，如果无法确定就返回空数组。\n"
+    "5. vs_comparison 中的数字（替代人数、节省金额）必须有文案依据，没有依据就留空。\n"
+    "6. story_title/story_desc：必须用文案中的真实参数数据，不能编造数字。\n"
+    "7. 售后承诺、质保年限等：只有文案中明确写了才能填，没写的一律不填。\n"
+    "8. 不要编造用户文案中没有提到的服务承诺（如送货上门、上门培训等）。\n\n"
+)
+
 _EXTREME_WORDS_RULE = (
     "【合规要求】文案中严禁出现以下极限词（电商平台违禁词）：\n"
     "最强、最大、最好、最高、最低、最快、最优、最先进、最专业、最安全、最耐用、最便捷、最智能、\n"
@@ -759,6 +837,7 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "你是一个清洁配件营销文案专家。请根据以下产品参数，完成两件事：\n\n"
             "第一，提取所有技术参数（型号、规格、材质等）填入对应字段。\n"
             "第二，根据这些参数生成营销文案（严格基于真实数据，不得编造产品没有的功能）。\n\n"
+            + _NO_FABRICATION_RULE
             + _EXTREME_WORDS_RULE +
             "返回以下JSON格式（所有字段必须返回，不要遗漏）：\n"
             "```json\n"
@@ -788,14 +867,21 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '  "package_items": [\n'
             '    {"name":"主刷","qty":"1","note":""},\n'
             '    ...\n'
-            '  ]\n'
+            '  ],\n'
+            '  "listing_title": "电商标题（60字以内，含品牌+型号+核心卖点+品类词）",\n'
+            '  "listing_keywords": "搜索关键词（10-15个，逗号分隔）",\n'
+            '  "listing_selling_points": ["卖点1（15字以内）","卖点2","卖点3","卖点4","卖点5"],\n'
+            '  "listing_description": "商品描述（200字以内，适合电商详情页顶部）",\n'
+            '  "spec_callouts": [{"label":"参数名","value":"参数值"},...]\n'
             "}\n"
             "```\n\n"
             "【重要提示】\n"
             "- 识别文案中提到的所有兼容机型，填入 compat_models（多列出，不要遗漏）\n"
             "- install_steps 提供清晰的安装步骤（3-6步）\n"
             "- package_items 列出包装内所有配件清单\n"
-            "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n\n"
+            "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n"
+            "- listing_title 要包含核心搜索词，便于电商平台搜索\n"
+            "- spec_callouts 从参数中提取3-6个最吸引眼球的数据，用于主图标注\n\n"
             "只返回JSON，不要其他解释文字：\n\n" + raw_text
         )
 
@@ -804,6 +890,7 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "你是一个清洁耗材营销文案专家。请根据以下产品参数，完成两件事：\n\n"
             "第一，提取所有技术参数（型号、规格、成分、稀释比等）填入对应字段。\n"
             "第二，根据这些参数生成营销文案（严格基于真实数据，不得编造产品没有的功能）。\n\n"
+            + _NO_FABRICATION_RULE
             + _EXTREME_WORDS_RULE +
             "返回以下JSON格式（所有字段必须返回，不要遗漏）：\n"
             "```json\n"
@@ -832,7 +919,12 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '  ],\n'
             '  "before_after": [\n'
             '    {"before_label":"使用前","after_label":"使用后","desc":"顽固油污一喷即净"}\n'
-            '  ]\n'
+            '  ],\n'
+            '  "listing_title": "电商标题（60字以内，含品牌+型号+核心卖点+品类词）",\n'
+            '  "listing_keywords": "搜索关键词（10-15个，逗号分隔）",\n'
+            '  "listing_selling_points": ["卖点1（15字以内）","卖点2","卖点3","卖点4","卖点5"],\n'
+            '  "listing_description": "商品描述（200字以内，适合电商详情页顶部）",\n'
+            '  "spec_callouts": [{"label":"参数名","value":"参数值"},...]\n'
             "}\n"
             "```\n\n"
             "【重要提示】\n"
@@ -840,7 +932,9 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "- kpis 列出稀释比、覆盖面积、每升成本等关键指标\n"
             "- usage_steps 提供清晰的使用步骤（3-5步）\n"
             "- before_after 描述使用前后的清洁效果对比\n"
-            "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n\n"
+            "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n"
+            "- listing_title 要包含核心搜索词，便于电商平台搜索\n"
+            "- spec_callouts 从参数中提取3-6个最吸引眼球的数据，用于主图标注\n\n"
             "只返回JSON，不要其他解释文字：\n\n" + raw_text
         )
 
@@ -849,6 +943,7 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "你是一个清洁工具营销文案专家。请根据以下产品参数，完成两件事：\n\n"
             "第一，提取所有技术参数（型号、材质、规格等）填入对应字段。\n"
             "第二，根据这些参数生成营销文案（严格基于真实数据，不得编造产品没有的功能）。\n\n"
+            + _NO_FABRICATION_RULE
             + _EXTREME_WORDS_RULE +
             "返回以下JSON格式（所有字段必须返回，不要遗漏）：\n"
             "```json\n"
@@ -877,7 +972,12 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '  ],\n'
             '  "before_after": [\n'
             '    {"before_label":"使用前","after_label":"使用后","desc":"效果说明"}\n'
-            '  ]\n'
+            '  ],\n'
+            '  "listing_title": "电商标题（60字以内，含品牌+型号+核心卖点+品类词）",\n'
+            '  "listing_keywords": "搜索关键词（10-15个，逗号分隔）",\n'
+            '  "listing_selling_points": ["卖点1（15字以内）","卖点2","卖点3","卖点4","卖点5"],\n'
+            '  "listing_description": "商品描述（200字以内，适合电商详情页顶部）",\n'
+            '  "spec_callouts": [{"label":"参数名","value":"参数值"},...]\n'
             "}\n"
             "```\n\n"
             "【重要提示】\n"
@@ -885,7 +985,9 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "- scenes 列出适用场景（3-6个），如商场、医院、学校、工厂等\n"
             "- package_items 列出包装内所有配件清单\n"
             "- before_after 描述使用前后的清洁效果对比\n"
-            "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n\n"
+            "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n"
+            "- listing_title 要包含核心搜索词，便于电商平台搜索\n"
+            "- spec_callouts 从参数中提取3-6个最吸引眼球的数据，用于主图标注\n\n"
             "只返回JSON，不要其他解释文字：\n\n" + raw_text
         )
 
@@ -895,6 +997,7 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "你是一个清洁设备营销文案专家。请根据以下产品参数，完成两件事：\n\n"
             "第一，提取所有技术参数（型号、尺寸、功率等）填入对应字段。\n"
             "第二，根据这些参数生成营销文案（严格基于真实数据，不得编造产品没有的功能）。\n\n"
+            + _NO_FABRICATION_RULE
             + _EXTREME_WORDS_RULE +
             "返回以下JSON格式（所有字段必须返回，不要遗漏）：\n"
             "```json\n"
@@ -904,7 +1007,8 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '  "product_name": "产品全称",\n'
             '  "model": "型号",\n'
             '  "product_type": "设备中文类型（如驾驶式扫地车）",\n'
-            '  "detail_params": {"参数名":"参数值（完整展示，商用产品参数要详细全面）", ...},\n'
+            '  "detail_params": {"参数名":"参数值", ...},\n'
+            '  // ⚠️ detail_params 必须提取文案中出现的【每一个】技术参数，不限数量，不能遗漏任何一个！\n'
             '  "dimensions": {"length":"mm值","width":"mm值","height":"mm值"},\n'
             '  "category_line": "产品品类短语（如 驾驶式洗地机 / 商用清洁机器人，不超过10字）",\n'
             '  "hero_subtitle": "首屏副标题（描述适用场景+核心能力，如 大型商场高效清洁专家，不超过15字）",\n'
@@ -930,14 +1034,68 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '    "right_sub": "人工劣势3-6字（如 费时费钱费心）",\n'
             '    "left_bottom": "机械结论两行用<br>隔开（如 1台可顶8-10人<br>一年劲省26W+元）",\n'
             '    "right_bottom": "人工结论两行用<br>隔开（如 人工效率低<br>成本高）"\n'
-            '  }\n'
+            '  },\n'
+            '  "tech_items": [\n'
+            '    {"title":"技术/部件名称（如 感应电机）","desc":"一句话技术说明（如 高效稳定，适配长时间作业）"}\n'
+            '  ],\n'
+            '  // ⚠️ tech_items: 从文案提取4-8项核心技术特征/部件/卖点详解，每项必须有原文依据。没有则返回空数组\n'
+            '  "brand_stats": [\n'
+            '    {"value":"数值（如 200+）","label":"指标名（如 服务城市）"}\n'
+            '  ],\n'
+            '  // brand_stats: 提取品牌数字指标（如城市数、客户数、行业年限），没有则返回空数组\n'
+            '  "brand_story_lines": [\n'
+            '    {"year":"年份","text":"里程碑事件"}\n'
+            '  ],\n'
+            '  // brand_story_lines: 提取品牌历史里程碑，没有则返回空数组\n'
+            '  "scenes": [{"title":"场景名","desc":"一句话描述"}],\n'
+            '  // scenes: 从文案提取适用场景（如商场、医院、工厂），没有则返回空数组\n'
+            '  "kpis": [{"number":"数字+单位","label":"指标说明"}],\n'
+            '  // kpis: 从文案提取关键效率数据（如1368㎡/h、3.5h续航），没有则返回空数组\n'
+            '  "faqs": [\n'
+            '    {"question":"买家常见问题","answer":"基于文案数据的简洁回答（30字以内）"}\n'
+            '  ],\n'
+            '  // faqs: 根据已提取参数生成3-5个常见问题，answer必须引用文案真实数据，不可编造。无依据则返回空数组\n'
+            '  "service_compare": {\n'
+            '    "compare_rows": [\n'
+            '      {"label":"对比维度（如 质保时长）","left":"官方优势（如 整机2年）","right":"普通商家（如 无保障）"}\n'
+            '    ]\n'
+            '  },\n'
+            '  // service_compare: 生成3-5行官方vs普通商家服务对比，没有售后信息则返回空对象{}\n'
+            '  "cert_badges": [\n'
+            '    {"title":"认证名称（如 CE认证）","desc":"简短说明"}\n'
+            '  ],\n'
+            '  // cert_badges: 从文案提取资质认证（如CE/FCC/IEC/ISO），没有则返回空数组\n'
+            '  "listing_title": "电商标题（60字以内，含品牌+型号+核心卖点+品类词，如：XX品牌DZ50X商用驾驶式洗地机 大型商场工厂用全自动清洗机器人）",\n'
+            '  "listing_keywords": "搜索关键词（10-15个，逗号分隔，如：洗地机,驾驶式洗地机,商用清洁机器人,...）",\n'
+            '  "listing_selling_points": ["卖点1（15字以内）","卖点2","卖点3","卖点4","卖点5"],\n'
+            '  "listing_description": "商品描述（200字以内，适合电商详情页顶部，突出核心参数和应用场景）",\n'
+            '  "spec_callouts": [{"label":"清扫宽度","value":"1800mm"},{"label":"续航","value":"6小时"},...]  \n'
             "}\n"
             "```\n\n"
             "【advantages规则】\n"
-            "- 6-9项，根据产品实际功能特点决定数量，不强制凑满9个，每项2-6个字（如 超强续航、一机多用、电泳防锈）\n"
-            "- 每项附带一个贴切的emoji\n"
-            "- 从产品参数推导，覆盖效率/容量/工艺/安全/动力/续航等维度\n"
-            "- 严禁出现产品没有的功能（没有AI导航就不能写智能避障）\n\n"
+            "- 严格从用户提供的产品文案中提取，每一条必须有原文依据\n"
+            "- 如果文案只提到了3个卖点，就只返回3个，不要凑数\n"
+            "- 绝对不要添加文案中没有的功能（如：文案没提APP就不能写智慧管理）\n"
+            "- 每项2-6个字，附带一个贴切的emoji\n\n"
+            "【tech_items 与 advantages 的区别】\n"
+            "- advantages 是用户感知的卖点短语（如\"超宽清扫\"），2-6字，附emoji\n"
+            "- tech_items 是技术实现细节（如\"感应电机\"），含标题+一句话技术说明\n"
+            "- 两者可能描述同一特性的不同角度，这是正常的\n\n"
+            "【扩展字段规则】\n"
+            "- tech_items/scenes/kpis/cert_badges: 严格从文案提取，文案没提到就返回空数组\n"
+            "- faqs: 可基于已提取的参数和卖点合理推导，但answer只能引用文案中的真实参数\n"
+            "- brand_stats/brand_story_lines: 仅当文案包含品牌信息时提取，否则返回空数组\n"
+            "- service_compare: 可基于产品特性合理推导官方优势，没有售后信息则返回空对象{}\n"
+            "- 以上Tier 1字段（tech_items/brand_stats/brand_story_lines/scenes/kpis/cert_badges）必须返回，即使为空数组\n"
+            "- Tier 2字段（faqs/service_compare）为补充字段，token不足时可省略\n\n"
+            "【detail_params规则 — 最高优先级】\n"
+            "- 用户文案中出现的每一个技术参数都必须提取到detail_params中\n"
+            "- 不要截断、不要省略、不要合并，有多少写多少\n"
+            "- 参数名使用文案中的原始名称，不要改写\n\n"
+            "【电商文案规则】\n"
+            "- listing_title 要包含核心搜索词，便于电商平台搜索\n"
+            "- listing_selling_points 每条15字以内，突出差异化\n"
+            "- spec_callouts 从参数中提取3-6个最吸引眼球的数据，用于主图标注\n\n"
             "只返回JSON，不要其他解释文字：\n\n" + raw_text
         )
 
@@ -960,9 +1118,10 @@ def _call_deepseek_parse(raw_text: str, product_type: str = "设备类", api_key
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
+            "max_tokens": 8192,
         },
-        proxies=PROXY,
-        timeout=120,
+        proxies={"http": None, "https": None},  # DeepSeek 国内API，不走代理
+        timeout=180,
     )
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
@@ -1004,28 +1163,48 @@ def _call_deepseek_parse(raw_text: str, product_type: str = "设备类", api_key
             if _vf in vs:
                 vs[_vf] = _strip_extreme_words(_to_str(vs[_vf]))
 
+    # ── 新增字段极限词过滤 ──
+    _strip_extreme_in_list(parsed.get("tech_items", []), ["title", "desc"])
+    _strip_extreme_in_list(parsed.get("brand_stats", []), ["label"])
+    _strip_extreme_in_list(parsed.get("brand_story_lines", []), ["text"])
+    _strip_extreme_in_list(parsed.get("faqs", []), ["answer"])
+    _svc = parsed.get("service_compare", {})
+    if isinstance(_svc, dict):
+        _strip_extreme_in_list(_svc.get("compare_rows", []), ["left", "right"])
+
+    # ── 退化检测：Tier 1 must-extract 字段完整性 ──
+    _dp = parsed.get("detail_params", {})
+    _adv = parsed.get("advantages", [])
+    _warnings = []
+    if isinstance(_dp, dict) and len(_dp) < 3:
+        _warnings.append(f"detail_params={len(_dp)}项（期望>=3）")
+    if isinstance(_adv, list) and len(_adv) < 2:
+        _warnings.append(f"advantages={len(_adv)}项（期望>=2）")
+    if not parsed.get("slogan", "").strip():
+        _warnings.append("slogan为空")
+    if not parsed.get("story_title_1", "").strip():
+        _warnings.append("story_title_1为空")
+    if _warnings:
+        print(f"[DeepSeek] ⚠️ Tier 1 退化警告: {'; '.join(_warnings)}")
+
     return parsed
 
 
 def _derive_advantages_from_specs(detail_params: dict) -> list:
-    """兜底：当 AI 不返回 advantages 时，从参数规格自动推导"""
-    if not isinstance(detail_params, dict):
+    """兜底：当 AI 不返回 advantages 时，从参数规格用中性词推导。
+    注意：主流程已改为只用AI返回的advantages，此函数仅作极端降级。"""
+    if not isinstance(detail_params, dict) or not detail_params:
         return []
     mapping = [
-        (["清扫宽度", "清扫作业宽度"], "🧹", "超宽清扫"),
-        (["工作效率", "清洁效率", "最大清洁效率"], "⚡", "高效清扫"),
-        (["垃圾箱容量"], "🗑️", "超大垃圾箱"),
-        (["水箱容量", "清水容量"], "💧", "大容量水箱"),
-        (["爬坡能力"], "⛰️", "强力爬坡"),
-        (["制动方式"], "🛑", "安全制动"),
-        (["电池容量", "电瓶容量", "锂电容量"], "🔋", "持久续航"),
-        (["连续工作时间", "工作时间", "续航时间"], "⏱️", "持续作业"),
-        (["最大行驶速度", "最大工作速度"], "🏎️", "高速作业"),
-        (["外壳材质"], "🛡️", "防腐耐用"),
-        (["驱动功率"], "💪", "强劲动力"),
-        (["主刷"], "🔄", "大直径主刷"),
-        (["边刷"], "🌀", "多组边刷"),
-        (["清洗宽度", "吸水宽度"], "🧽", "高效洗地"),
+        (["清扫宽度", "清扫作业宽度"], "🧹", "清扫功能"),
+        (["工作效率", "清洁效率", "最大清洁效率"], "⚡", "清洁效率"),
+        (["垃圾箱容量"], "🗑️", "垃圾收集"),
+        (["水箱容量", "清水容量"], "💧", "水箱配备"),
+        (["爬坡能力"], "⛰️", "爬坡能力"),
+        (["制动方式"], "🛑", "制动系统"),
+        (["电池容量", "电瓶容量", "锂电容量"], "🔋", "电池续航"),
+        (["连续工作时间", "工作时间", "续航时间"], "⏱️", "续航能力"),
+        (["清洗宽度", "吸水宽度"], "🧽", "洗地功能"),
     ]
     items = []
     used = set()
@@ -1035,11 +1214,12 @@ def _derive_advantages_from_specs(detail_params: dict) -> list:
                 items.append({"emoji": emoji, "text": text})
                 used.add(k)
                 break
-        if len(items) >= 9:
+        if len(items) >= 6:
             break
     return items
 @app.route("/api/build/<product_type>/parse-text", methods=["POST"])
 @login_required
+@csrf.exempt
 def parse_text_for_build(product_type):
     _validate_product_type(product_type)
     data = request.get_json(silent=True)
@@ -1050,6 +1230,11 @@ def parse_text_for_build(product_type):
     if not raw_text:
         return jsonify({"error": "文本内容为空"}), 400
 
+    # 如果用户提供了产品标题，拼入文案顶部增强 AI 识别
+    product_title = _to_str(data.get("product_title", ""))
+    if product_title:
+        raw_text = f"【产品标题】{product_title}\n\n{raw_text}"
+
     # 检查用户是否有 API Key 可用
     api_key, key_source = _get_user_api_key()
     if not api_key:
@@ -1059,12 +1244,16 @@ def parse_text_for_build(product_type):
     try:
         parsed = _call_deepseek_parse(raw_text, product_type, api_key=api_key)
     except Exception as e:
+        import traceback
+        print(f"[DeepSeek] ❌ API调用失败: {e}")
+        traceback.print_exc()
         # DeepSeek 失败时降级到模板解析（不含卖点生成）
         parsed = _extract_json_object(raw_text)
         if not isinstance(parsed, dict):
             parsed = _parse_text_by_template(raw_text)
         if not isinstance(parsed, dict) or not parsed:
             return jsonify({"error": f"AI 解析失败: {e}"}), 500
+        print(f"[DeepSeek] ⚠️ 降级到模板解析，字段: {list(parsed.keys())[:10]}")
 
     # 记录生成日志
     log = GenerationLog(
@@ -1077,22 +1266,483 @@ def parse_text_for_build(product_type):
     db.session.add(log)
     db.session.commit()
 
+    # 完整 AI 返回调试
+    import pprint
+    _debug_keys = ["brand","brand_en","model","product_name","product_type","slogan","sub_slogan",
+                   "category_line","hero_subtitle","main_title","advantages","vs_comparison",
+                   "story_title_1","tech_items","scenes","kpis","faqs","cert_badges"]
+    _debug_out = {k: parsed.get(k, '(缺失)') for k in _debug_keys}
+    _dp = parsed.get("detail_params", {})
+    _debug_out["detail_params_count"] = len(_dp)
+    print(f"[AI完整返回] {_debug_out}")
+    print(f"[AI参数明细] {dict(list(_dp.items())[:30]) if isinstance(_dp, dict) else _dp}")
+
+    # 如果 AI 没返回 brand/model/product_name，用产品标题兜底
+    if product_title:
+        if not parsed.get("product_name"):
+            parsed["product_name"] = product_title
+        if not parsed.get("main_title"):
+            parsed["main_title"] = product_title
     mapped = _map_parsed_to_form_fields(parsed)
     return jsonify(mapped)
+
+
+# ── AI 生图（通义万相）─────────────────────────────────────────────
+
+@app.route("/api/generate-ai-images", methods=["POST"])
+@login_required
+@csrf.exempt
+def generate_ai_images():
+    """
+    AI 生图 API：根据产品数据生成完整详情图集
+    输入：parsed_data（DeepSeek解析结果）、product_image（产品图URL）
+    输出：生成的图片URL列表
+    """
+    import ai_image
+    import image_composer
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "缺少请求数据"}), 400
+
+    parsed_data = data.get("parsed_data", {})
+    product_image_url = data.get("product_image", "")
+
+    # 阿里云百炼 API Key（优先用户配置，否则用环境变量）
+    dashscope_key = data.get("dashscope_api_key", "")
+    if not dashscope_key:
+        dashscope_key = os.environ.get("DASHSCOPE_API_KEY", "")
+    if not dashscope_key and hasattr(current_user, 'dashscope_api_key_enc') and current_user.dashscope_api_key_enc:
+        from crypto_utils import decrypt_api_key
+        dashscope_key = decrypt_api_key(current_user.dashscope_api_key_enc)
+    if not dashscope_key:
+        return jsonify({"error": "请提供阿里云百炼 API Key（DASHSCOPE_API_KEY）"}), 403
+
+    # 准备输出目录
+    user_out = _user_output_dir()
+    ai_dir = user_out / "ai_images"
+    ai_dir.mkdir(parents=True, exist_ok=True)
+
+    # 解析产品图本地路径
+    product_image_local = ""
+    if product_image_url:
+        # /static/uploads/1/xxx.png → static/uploads/1/xxx.png
+        rel = product_image_url.lstrip("/")
+        local_path = BASE_DIR / rel
+        if local_path.exists():
+            product_image_local = str(local_path)
+
+    # 构建合成所需的产品数据
+    product_data = {}
+    if parsed_data:
+        mapped = _map_parsed_to_form_fields(parsed_data)
+        product_data = {
+            "brand": _to_str(parsed_data.get("brand", "")),
+            "brand_text": mapped.get("brand_text", ""),
+            "model_name": mapped.get("model_name", ""),
+            "model": _to_str(parsed_data.get("model", "")),
+            "product_name": _to_str(parsed_data.get("product_name", "")),
+            "product_type": _to_str(parsed_data.get("product_type", "")),
+            "category_line": mapped.get("category_line", ""),
+            "tagline_line1": mapped.get("tagline_line1", ""),
+            "tagline_line2": mapped.get("tagline_line2", ""),
+            "sub_slogan": mapped.get("tagline_sub", ""),
+            "slogan": _to_str(parsed_data.get("slogan", "")),
+            "param_1_label": mapped.get("param_1_label", ""),
+            "param_1_value": mapped.get("param_1_value", ""),
+            "param_2_label": mapped.get("param_2_label", ""),
+            "param_2_value": mapped.get("param_2_value", ""),
+            "param_3_label": mapped.get("param_3_label", ""),
+            "param_3_value": mapped.get("param_3_value", ""),
+            "param_4_label": mapped.get("param_4_label", ""),
+            "param_4_value": mapped.get("param_4_value", ""),
+            "detail_params": parsed_data.get("detail_params", {}),
+            "dimensions": parsed_data.get("dimensions", {}),
+            "specs": mapped.get("e_specs", []),
+            "advantages": parsed_data.get("advantages", []),
+            # VS对比数据
+            "vs_comparison": parsed_data.get("vs_comparison", {}),
+            # 清洁故事数据
+            "story_title_1": _to_str(parsed_data.get("story_title_1", "")),
+            "story_title_2": _to_str(parsed_data.get("story_title_2", "")),
+            "story_desc_1": _to_str(parsed_data.get("story_desc_1", "")),
+            "story_desc_2": _to_str(parsed_data.get("story_desc_2", "")),
+            "story_bottom_1": _to_str(parsed_data.get("story_bottom_1", "")),
+            "story_bottom_2": _to_str(parsed_data.get("story_bottom_2", "")),
+            "footer_note": "*产品参数以实物为准，图片仅供参考",
+        }
+
+    print(f"[AI生图] 开始为 {product_data.get('model_name', '未知')} 生成详情图...")
+
+    # Step 1: 生成AI背景图
+    try:
+        backgrounds = ai_image.generate_detail_backgrounds(
+            product_data, dashscope_key, ai_dir
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[AI生图] 背景生成失败: {e}，使用纯色背景继续")
+        backgrounds = {}
+
+    # Step 2: Pillow 合成最终图片
+    try:
+        output_dir = ai_dir / "final"
+        result_paths = image_composer.compose_all(
+            product_data, product_image_local, backgrounds, output_dir
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"图片合成失败: {e}"}), 500
+
+    # 转换为URL
+    result_urls = []
+    for p in result_paths:
+        rel_path = Path(p).relative_to(BASE_DIR)
+        result_urls.append(f"/{rel_path.as_posix()}")
+
+    print(f"[AI生图] 完成！共 {len(result_urls)} 张图")
+    return jsonify({
+        "images": result_urls,
+        "count": len(result_urls),
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════
 # ── 构建系统（设备类，blocks 引擎）──────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
+def _assemble_all_blocks(product_type, mapped_fields, images, cfg):
+    """
+    Assemble all block data from mapped fields and images.
+    Returns dict with all block data ready for template rendering.
+
+    mapped_fields: dict from _map_parsed_to_form_fields()
+    images: {"product_image": "...", "scene_image": "...", "logo_image": "...", "qr_image": "...", "product_side_image": "", "effect_image": ""}
+    cfg: build_config.json contents
+    """
+    def field(name, default=""):
+        v = mapped_fields.get(name, "")
+        return v.strip() if v else default
+
+    product_image = images.get("product_image", "")
+    scene_image = images.get("scene_image", "")
+    logo_image = images.get("logo_image", "")
+    qr_image = images.get("qr_image", "")
+    product_side_image = images.get("product_side_image", "")
+    effect_image = images.get("effect_image", "")
+
+    # Hero params
+    hero_params = []
+    for i in range(1, 5):
+        v = field(f'param_{i}_value', '').strip()
+        l = field(f'param_{i}_label', '').strip()
+        if v and v not in ('--', '-', '无', 'N/A') and len(v) <= 16:
+            hero_params.append({"value": v, "label": l})
+    if not hero_params:
+        hero_params = [
+            {"value": hp.get("default_value", ""), "label": hp.get("label", "")}
+            for hp in cfg.get("hero_params", [])
+            if hp.get("default_value", "").strip()
+        ]
+
+    _hcov = cfg.get("hero_cover_defaults") or {}
+    _def = cfg.get("defaults") or {}
+
+    block_a = {
+        "brand_text": field('brand_text', _def.get("brand_text", "")),
+        "model_name": field('model_name', _def.get("model_name", "")),
+        "tagline_line1": field('tagline_line1', _def.get("tagline_line1", "")),
+        "tagline_line2": field('tagline_line2', _def.get("tagline_line2", "")),
+        "tagline_sub": field('tagline_sub', _def.get("tagline_sub", "")),
+        "bg_image": scene_image,
+        "product_image": product_image,
+        "logo_image": logo_image,
+        "category_line": field('category_line', _hcov.get("category_line", "")),
+        "main_title": field('main_title', _hcov.get("main_title", "")),
+        "hero_subtitle_pre": field('hero_subtitle_pre', _hcov.get("hero_subtitle_pre", "")),
+        "hero_subtitle_em": field('hero_subtitle_em', _hcov.get("hero_subtitle_em", "")),
+        "hero_subtitle_post": field('hero_subtitle_post', _hcov.get("hero_subtitle_post", "")),
+        "footer_note": field('footer_note', _hcov.get("footer_note", "")),
+        "cover_image": "",
+        "floor_bg_image": scene_image,
+        "bg_focal": field('bg_focal', _hcov.get("bg_focal", "center bottom")) or "center bottom",
+        "show_hero_params": True,
+        "params": hero_params,
+    }
+    print(f"[block_a调试] brand_text={block_a['brand_text']!r}, model_name={block_a['model_name']!r}, "
+          f"main_title={block_a['main_title']!r}, category_line={block_a['category_line']!r}, "
+          f"hero_subtitle_pre={block_a['hero_subtitle_pre']!r}, tagline_sub={block_a['tagline_sub']!r}, "
+          f"params={len(hero_params)}个")
+    print(f"[block_a调试] mapped_fields keys sample: {list(mapped_fields.keys())[:15]}")
+
+    # Block E
+    e_specs = []
+    # From mapped e_specs list
+    raw_specs = mapped_fields.get("e_specs", [])
+    if isinstance(raw_specs, list):
+        e_specs = [s for s in raw_specs if s.get("name") and s.get("value")]
+    # 兜底：AI 未返回参数时，使用配置中的 default_specs
+    if not e_specs:
+        default_specs = cfg.get("default_specs", [])
+        if isinstance(default_specs, list):
+            e_specs = [{"name": s.get("name", ""), "value": s.get("value", "")}
+                       for s in default_specs if s.get("name") and s.get("value")]
+
+    model_name = field('model_name', _def.get("model_name", ""))
+    _e_red = field("e_red_bar_text", "").strip()
+    _dims = cfg.get("default_dims", {})
+    block_e = {
+        "title": "产品参数",
+        "subtitle": field("e_table_subtitle", "规格一览"),
+        "red_bar_text": _e_red or f"{model_name}创新升级",
+        "product_image": product_side_image or product_image,
+        "dim_height": field('e_dim_height', _dims.get("height", "")),
+        "dim_width": field('e_dim_width', _dims.get("width", "")),
+        "dim_length": field('e_dim_length', _dims.get("length", "")),
+        "specs": e_specs,
+        "footnote": "*人工测量有误差",
+    }
+
+    blocks_hc = cfg.get("blocks_hardcoded", {})
+
+    # Block B2
+    block_b2_cfg = blocks_hc.get("block_b2", {})
+    b2_items = []
+    for i in range(1, 10):
+        label = field(f"b2_label_{i}", "")
+        icon = field(f"b2_icon_{i}", "")
+        if label:
+            b2_items.append({"icon_image": "", "icon_text": icon or "✅", "label": label})
+    if not b2_items:
+        b2_items = block_b2_cfg.get("items", [])
+    block_b2 = {
+        "title_num": field("b2_title_num", "") or block_b2_cfg.get("title_num", str(len(b2_items))),
+        "title_text": field("b2_title_text", "") or block_b2_cfg.get("title_text", "大核心优势"),
+        "subtitle": field("b2_subtitle", "") or block_b2_cfg.get("subtitle", ""),
+        "grid_columns": block_b2_cfg.get("grid_columns", 3),
+        "items": b2_items,
+    }
+
+    # Block B3
+    block_b3 = dict(blocks_hc.get("block_b3", {}))
+    for _f in ["header_line1", "header_line2", "caption_line1", "caption_line2", "footer_line1", "footer_line2"]:
+        _v = field(f"b3_{_f}", "")
+        if _v:
+            block_b3[_f] = _v
+    if not (block_b3.get("hero_image") or "").strip():
+        block_b3["hero_image"] = product_image
+    _floor_json = field("b3_floor_items_json", "")
+    if _floor_json:
+        try:
+            _floor_list = json.loads(_floor_json)
+            if isinstance(_floor_list, list) and _floor_list:
+                block_b3["floor_items"] = _floor_list
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Block F
+    block_f = dict(blocks_hc.get("block_f", {}))
+    for _f in ["title_line1", "title_line1_red", "title_line1_end",
+                "title_line2", "title_line2_red",
+                "vs_left_title", "vs_left_sub", "vs_right_title", "vs_right_sub",
+                "vs_left_bottom", "vs_right_bottom"]:
+        _v = field(f"f_{_f}", "")
+        if _v:
+            block_f[_f] = _v
+    block_f["product_image"] = product_image
+
+    fixed_selling_images = [
+        f"/static/{product_type}/{fname}"
+        for fname in cfg.get("fixed_selling_images", [])
+    ]
+
+    extra_blocks = {k: dict(cfg.get(k, {})) for k in _EXTRA_BLOCK_KEYS}
+
+    _g_title = field("g_brand_title", "")
+    _g_sub = field("g_brand_subtitle", "")
+    if _g_title:
+        extra_blocks["block_g"]["brand_title"] = _g_title
+    if _g_sub:
+        extra_blocks["block_g"]["brand_subtitle"] = _g_sub
+
+    if qr_image:
+        extra_blocks["block_n"]["qr_image"] = qr_image
+
+    # ── brand_stats / brand_story_lines → block_g ──
+    _g_stats_raw = field("block_g_stats_json", "")
+    if _g_stats_raw:
+        try:
+            _g_stats = json.loads(_g_stats_raw)
+            if isinstance(_g_stats, list) and _g_stats:
+                extra_blocks["block_g"]["brand_stats"] = _g_stats
+        except (json.JSONDecodeError, ValueError):
+            pass
+    _g_lines_raw = field("block_g_lines_json", "")
+    if _g_lines_raw:
+        try:
+            _g_lines = json.loads(_g_lines_raw)
+            if isinstance(_g_lines, list) and _g_lines:
+                extra_blocks["block_g"]["brand_story_lines"] = _g_lines
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    _json_field_map = {
+        "block_h_json": ("block_h", "scenes"),
+        "block_i_json": ("block_i", "kpis"),
+        "block_m_json": ("block_m", "steps"),
+        "block_p_json": ("block_p", "compat_models"),
+        "block_q_json": ("block_q", "comparisons"),
+        "block_r_json": ("block_r", "package_items"),
+        "block_j_json": ("block_j", "tech_items"),
+        "block_s_json": ("block_s", "faqs"),
+        "block_k_json": ("block_k", "badge_items"),
+        "block_l_json": ("block_l", "compare_rows"),
+    }
+    for form_field, (block_key, data_key) in _json_field_map.items():
+        _raw = field(form_field, "")
+        if _raw:
+            try:
+                _parsed_val = json.loads(_raw)
+                if isinstance(_parsed_val, list) and _parsed_val:
+                    extra_blocks[block_key][data_key] = _parsed_val
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    return {
+        "product_type": product_type,
+        "block_a": block_a,
+        "block_b2": block_b2,
+        "block_b3": block_b3,
+        "block_f": block_f,
+        "block_e": block_e,
+        **extra_blocks,
+        "fixed_selling_images": fixed_selling_images,
+        "effect_image": effect_image,
+        "hero_block_template": cfg.get("hero_block_template", "blocks/block_a_hero_robot_cover.html"),
+        "spec_block_template": cfg.get("spec_block_template", "blocks/block_e_glass_dimension.html"),
+    }
+
+
+# Block rendering metadata: block_id → (template_path, display_name)
+_BLOCK_REGISTRY = {
+    "block_a": ("blocks/block_a_hero_robot_cover.html", "英雄首屏"),
+    "block_b2": ("blocks/block_b2_icon_grid.html", "产品优势"),
+    "block_b3": ("blocks/block_b3_clean_story.html", "清洁故事"),
+    "block_e": ("blocks/block_e_glass_dimension.html", "产品参数"),
+    "block_f": ("blocks/block_f_showcase_vs.html", "VS对比"),
+    "block_g": ("blocks/block_g_brand_story.html", "品牌背书"),
+    "block_h": ("blocks/block_h_scene_grid.html", "适用场景"),
+    "block_i": ("blocks/block_i_kpi_strip.html", "效率数据"),
+    "block_j": ("blocks/block_j_core_tech.html", "核心技术"),
+    "block_k": ("blocks/block_k_cert_badges.html", "资质认证"),
+    "block_l": ("blocks/block_l_service_compare.html", "服务对比"),
+    "block_m": ("blocks/block_m_steps.html", "使用流程"),
+    "block_n": ("blocks/block_n_quote_cta.html", "询价CTA"),
+    "block_o": ("blocks/block_o_disclaimer.html", "免责声明"),
+    "block_p": ("blocks/block_p_compatibility.html", "适配型号"),
+    "block_q": ("blocks/block_q_before_after.html", "效果对比"),
+    "block_r": ("blocks/block_r_package_list.html", "包装清单"),
+    "block_s": ("blocks/block_s_faq.html", "常见问题"),
+    "block_t": ("blocks/block_t_customer_cases.html", "客户案例"),
+    "block_u": ("blocks/block_u_after_sales.html", "售后服务"),
+    "block_v": ("blocks/block_v_model_compare.html", "型号对比"),
+    "block_w": ("blocks/block_w_video_cover.html", "视频封面"),
+    "block_x": ("blocks/block_x_durability.html", "实测数据"),
+    "block_y": ("blocks/block_y_value_calc.html", "性价比"),
+}
+
+# Main image template registry: tpl_id → (template_path, display_name)
+_MAIN_IMG_REGISTRY = {
+    "main_img_1": ("blocks/main_img_1_white_bg.html", "纯白底"),
+    "main_img_2": ("blocks/main_img_2_gradient_hero.html", "渐变标语"),
+    "main_img_3": ("blocks/main_img_3_specs_callout.html", "参数标注"),
+    "main_img_4": ("blocks/main_img_4_scene_blend.html", "场景融合"),
+    "main_img_5": ("blocks/main_img_5_selling_points.html", "卖点矩阵"),
+}
+
+
+# 智能模块匹配：常量表
+_BLOCK_ALWAYS_SHOW = {"block_a", "block_e", "block_n", "block_o"}
+_BLOCK_LIST_KEYS = {
+    "block_b2": "items",
+    "block_h": "scenes",
+    "block_i": "kpis",
+    "block_j": "tech_items",
+    "block_k": "badge_items",
+    "block_l": "compare_rows",
+    "block_m": "steps",
+    "block_p": "compat_models",
+    "block_q": "comparisons",
+    "block_r": "package_items",
+    "block_s": "faqs",
+    "block_t": "cases",
+    "block_u": "promises",
+    "block_v": "models",
+    "block_x": "metrics",
+    "block_y": "items",
+}
+
+
+def _is_block_empty(block_id, block_data):
+    """判断模块是否缺少有效数据——没有数据的模块不渲染。"""
+    if not block_data or not isinstance(block_data, dict):
+        return True
+    if block_id in _BLOCK_ALWAYS_SHOW:
+        return False
+    if block_id in _BLOCK_LIST_KEYS:
+        items = block_data.get(_BLOCK_LIST_KEYS[block_id], [])
+        return not (isinstance(items, list) and len(items) > 0)
+
+    # 需要特殊判断的模块
+    if block_id == "block_b3":
+        return not (block_data.get("header_line1", "").strip() or
+                    block_data.get("header_line2", "").strip())
+    if block_id == "block_f":
+        return not (block_data.get("vs_left_bottom", "").strip() or
+                    block_data.get("title_line1_red", "").strip())
+    if block_id == "block_g":
+        return not (block_data.get("brand_title", "").strip() or
+                    (block_data.get("brand_stats") and len(block_data["brand_stats"]) > 0) or
+                    (block_data.get("brand_story_lines") and len(block_data["brand_story_lines"]) > 0))
+    if block_id == "block_w":
+        return not block_data.get("video_title", "").strip()
+
+    # 默认：任何非空字符串或非空列表即视为有数据
+    return not any(
+        (isinstance(v, str) and v.strip()) or (isinstance(v, list) and v)
+        for v in block_data.values()
+    )
+
+
+def _render_single_block(block_id, block_data):
+    """Render a single block template with its data, return HTML string."""
+    reg = _BLOCK_REGISTRY.get(block_id)
+    if not reg:
+        return ""
+    tpl_path, _ = reg
+    try:
+        return render_template(tpl_path, **block_data)
+    except Exception as e:
+        print(f"[渲染] {block_id} 失败: {e}")
+        return f'<div style="padding:20px;color:red;">模块 {block_id} 渲染失败: {e}</div>'
+
+
+def _get_block_display_name(block_id):
+    """Get display name for a block."""
+    reg = _BLOCK_REGISTRY.get(block_id)
+    return reg[1] if reg else block_id
+
+
+
+
 @app.route('/build/<product_type>', methods=['GET'])
 @login_required
 def build_form_generic(product_type):
+    """Legacy route — redirect to new workspace."""
     _validate_product_type(product_type)
-    cfg = _load_build_config(product_type)
-    if not cfg:
-        return f"未找到产品类型 [{product_type}] 的配置", 404
-    return render_template('build_form.html', config=cfg, product_type=product_type)
+    return redirect(url_for('index', _external=False))
 
 
 @app.route('/build/<product_type>', methods=['POST'])
@@ -1162,6 +1812,12 @@ def build_submit_generic(product_type):
         value = form_text(f'e_spec_value_{i}', '')
         if name and value:
             e_specs.append({"name": name, "value": value})
+    # 兜底：表单未填参数时，使用配置中的 default_specs
+    if not e_specs:
+        default_specs = cfg.get("default_specs", [])
+        if isinstance(default_specs, list):
+            e_specs = [{"name": s.get("name", ""), "value": s.get("value", "")}
+                       for s in default_specs if s.get("name") and s.get("value")]
 
     model_name = form_text('model_name', _def.get("model_name", ""))
     _e_red = form_text("e_red_bar_text", "").strip()
@@ -1250,6 +1906,24 @@ def build_submit_generic(product_type):
     if qr_image:
         extra_blocks["block_n"]["qr_image"] = qr_image
 
+    # ── brand_stats / brand_story_lines → block_g ──
+    _g_stats_raw = form_text("block_g_stats_json", "")
+    if _g_stats_raw:
+        try:
+            _g_stats = json.loads(_g_stats_raw)
+            if isinstance(_g_stats, list) and _g_stats:
+                extra_blocks["block_g"]["brand_stats"] = _g_stats
+        except (json.JSONDecodeError, ValueError):
+            pass
+    _g_lines_raw = form_text("block_g_lines_json", "")
+    if _g_lines_raw:
+        try:
+            _g_lines = json.loads(_g_lines_raw)
+            if isinstance(_g_lines, list) and _g_lines:
+                extra_blocks["block_g"]["brand_story_lines"] = _g_lines
+        except (json.JSONDecodeError, ValueError):
+            pass
+
     # 表单 JSON 字段覆盖（AI 识别填入 → 用户可编辑 → 提交覆盖配置默认）
     _json_field_map = {
         "block_h_json": ("block_h", "scenes"),
@@ -1258,6 +1932,10 @@ def build_submit_generic(product_type):
         "block_p_json": ("block_p", "compat_models"),
         "block_q_json": ("block_q", "comparisons"),
         "block_r_json": ("block_r", "package_items"),
+        "block_j_json": ("block_j", "tech_items"),
+        "block_s_json": ("block_s", "faqs"),
+        "block_k_json": ("block_k", "badge_items"),
+        "block_l_json": ("block_l", "compare_rows"),
     }
     for form_field, (block_key, data_key) in _json_field_map.items():
         _raw = form_text(form_field, "")
@@ -1293,6 +1971,319 @@ def build_submit_generic(product_type):
     return render_template(f"{product_type}/assembled.html", **data)
 
 
+@app.route('/api/build/<product_type>/render-preview', methods=['POST'])
+@login_required
+@csrf.exempt
+def render_preview(product_type):
+    """Render all modules as HTML fragments for the workspace preview."""
+    _validate_product_type(product_type)
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "缺少请求数据"}), 400
+
+    parsed = data.get("parsed_data", {})
+    # parsed_data is already mapped form-field keys (output of _map_parsed_to_form_fields
+    # from the parse-text endpoint). Do NOT re-map it or all AI data is discarded.
+    mapped = parsed if parsed else {}
+    cfg = _load_build_config(product_type)
+
+    images = {
+        "product_image": data.get("product_image", ""),
+        "scene_image": data.get("scene_image", ""),
+        "logo_image": data.get("logo_image", ""),
+        "qr_image": data.get("qr_image", ""),
+        "product_side_image": data.get("product_side_image", ""),
+        "effect_image": data.get("effect_image", ""),
+    }
+
+    all_data = _assemble_all_blocks(product_type, mapped, images, cfg)
+
+    # Save preview data for export
+    _user_out = _user_output_dir()
+    _last_preview = _user_out / f"_last_{product_type}_preview.json"
+    with open(_last_preview, "w", encoding="utf-8") as fp:
+        json.dump(all_data, fp, ensure_ascii=False)
+
+    # Define render order (matches assembled.html order)
+    render_order = [
+        "block_a", "block_b2", "block_b3", "block_g", "block_h", "block_i",
+        "block_j", "block_f", "block_x", "block_w", "block_v",
+        "block_e",
+        "block_k", "block_l", "block_m", "block_t", "block_u", "block_s",
+        "block_p", "block_q", "block_r",
+        "block_n", "block_o",
+    ]
+
+    modules = []
+    for bid in render_order:
+        block_data = all_data.get(bid, {})
+        # 智能模块匹配：跳过没有有效数据的模块
+        if _is_block_empty(bid, block_data):
+            continue
+        html = _render_single_block(bid, block_data)
+        if not html or not html.strip():
+            continue
+        modules.append({
+            "id": bid,
+            "name": _get_block_display_name(bid),
+            "html": html,
+            "data": block_data,
+        })
+
+    return jsonify({"modules": modules})
+
+
+@app.route('/api/build/<product_type>/render-block', methods=['POST'])
+@login_required
+@csrf.exempt
+def render_single_block_api(product_type):
+    """Re-render a single block's HTML (for edit-and-refresh)."""
+    _validate_product_type(product_type)
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "缺少请求数据"}), 400
+
+    block_id = data.get("block_id", "")
+    block_data = data.get("block_data", {})
+
+    if not block_id or block_id not in _BLOCK_REGISTRY:
+        return jsonify({"error": f"未知模块: {block_id}"}), 400
+
+    html = _render_single_block(block_id, block_data)
+    return jsonify({"html": html})
+
+
+@app.route('/api/build/<product_type>/regenerate-block', methods=['POST'])
+@login_required
+@csrf.exempt
+def regenerate_block_api(product_type):
+    """AI-regenerate a single block's content without affecting others."""
+    _validate_product_type(product_type)
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "缺少请求数据"}), 400
+
+    block_id = data.get("block_id", "")
+    if not block_id or block_id not in _BLOCK_REGISTRY:
+        return jsonify({"error": f"未知模块: {block_id}"}), 400
+
+    parsed_data = data.get("parsed_data", {})
+    images = {
+        "product_image": data.get("product_image", ""),
+        "scene_image": data.get("scene_image", ""),
+        "logo_image": data.get("logo_image", ""),
+        "qr_image": data.get("qr_image", ""),
+        "product_side_image": data.get("product_side_image", ""),
+        "effect_image": data.get("effect_image", ""),
+    }
+
+    # Get API key
+    api_key = ""
+    if hasattr(current_user, 'deepseek_api_key') and current_user.deepseek_api_key:
+        api_key = current_user.deepseek_api_key
+
+    # Build a focused prompt for regenerating just this block
+    block_name = _get_block_display_name(block_id)
+    raw_context = json.dumps(parsed_data, ensure_ascii=False, indent=2)
+
+    regen_prompt = (
+        f"你是清洁设备营销文案专家。请根据以下已有产品信息，重新生成「{block_name}」模块的文案。\n\n"
+        f"{_EXTREME_WORDS_RULE}"
+        f"已有产品信息：\n{raw_context}\n\n"
+        f"请用不同的角度和表达方式重新创作该模块的文案，保持信息准确但措辞新颖。\n"
+        f"返回JSON格式，只包含该模块需要的字段。\n"
+    )
+
+    import requests as req
+    use_key = api_key or DEEPSEEK_API_KEY
+    if not use_key:
+        return jsonify({"error": "未配置 API Key"}), 400
+
+    try:
+        resp = req.post(
+            DEEPSEEK_API_URL,
+            headers={"Authorization": f"Bearer {use_key}"},
+            json={
+                "model": DEEPSEEK_MODEL,
+                "messages": [
+                    {"role": "system", "content": "你是清洁设备营销文案专家。只返回JSON。"},
+                    {"role": "user", "content": regen_prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 2000,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        regen_data = _extract_json_object(content)
+        if not isinstance(regen_data, dict):
+            return jsonify({"error": "AI返回数据解析失败"}), 500
+    except Exception as e:
+        return jsonify({"error": f"AI重新生成失败: {e}"}), 500
+
+    # Merge regenerated fields into existing block data, then re-assemble
+    mapped = _map_parsed_to_form_fields(parsed_data)
+    cfg = _load_build_config(product_type)
+    all_data = _assemble_all_blocks(product_type, mapped, images, cfg)
+
+    existing_block = all_data.get(block_id, {})
+    # Merge regen_data into existing block data (regen takes priority for string values)
+    for k, v in regen_data.items():
+        if v and isinstance(v, str):
+            existing_block[k] = v
+        elif v and isinstance(v, list) and len(v) > 0:
+            existing_block[k] = v
+
+    html = _render_single_block(block_id, existing_block)
+    return jsonify({"html": html, "data": existing_block})
+
+
+# ── 主图渲染 API ───────────────────────────────────────────────────
+
+@app.route('/api/build/<product_type>/render-main-images', methods=['POST'])
+@login_required
+@csrf.exempt
+def render_main_images(product_type):
+    """Render all 5 main image templates as HTML fragments."""
+    _validate_product_type(product_type)
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "缺少请求数据"}), 400
+
+    parsed = data.get("parsed_data", {})
+    tpl_data = {
+        "product_image": data.get("product_image", ""),
+        "scene_image": data.get("scene_image", ""),
+        "logo_image": data.get("logo_image", ""),
+        "model_name": parsed.get("model", ""),
+        "brand_text": parsed.get("brand", ""),
+        "slogan": parsed.get("slogan", ""),
+        "sub_slogan": parsed.get("sub_slogan", ""),
+        "hero_subtitle": parsed.get("hero_subtitle", ""),
+        "category_line": parsed.get("category_line", ""),
+        "advantages": parsed.get("advantages", []),
+        "spec_callouts": parsed.get("spec_callouts", []),
+    }
+
+    results = []
+    for tpl_id, (tpl_path, display_name) in _MAIN_IMG_REGISTRY.items():
+        try:
+            html = render_template(tpl_path, **tpl_data)
+        except Exception as e:
+            print(f"[主图渲染] {tpl_id} 失败: {e}")
+            html = f'<div style="width:800px;height:800px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;color:red;">渲染失败: {e}</div>'
+        results.append({
+            "id": tpl_id,
+            "name": display_name,
+            "html": html,
+        })
+
+    return jsonify({"main_images": results})
+
+
+@app.route('/export/<product_type>/main-images', methods=['POST'])
+@login_required
+def export_main_images_zip(product_type):
+    """Export all 5 main images as 800x800 PNGs in a ZIP file."""
+    _validate_product_type(product_type)
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "缺少请求数据"}), 400
+
+    parsed = data.get("parsed_data", {})
+    tpl_data = {
+        "product_image": data.get("product_image", ""),
+        "scene_image": data.get("scene_image", ""),
+        "logo_image": data.get("logo_image", ""),
+        "model_name": parsed.get("model", ""),
+        "brand_text": parsed.get("brand", ""),
+        "slogan": parsed.get("slogan", ""),
+        "sub_slogan": parsed.get("sub_slogan", ""),
+        "hero_subtitle": parsed.get("hero_subtitle", ""),
+        "category_line": parsed.get("category_line", ""),
+        "advantages": parsed.get("advantages", []),
+        "spec_callouts": parsed.get("spec_callouts", []),
+    }
+
+    # Apply theme vars if provided
+    theme_id = data.get("theme_id", "classic-red")
+    theme_vars = {}
+    themes_path = BASE_DIR / "static" / "themes" / "themes.json"
+    if themes_path.exists():
+        with open(themes_path, "r", encoding="utf-8") as f:
+            themes_data = json.load(f)
+        for t in themes_data.get("themes", []):
+            if t["id"] == theme_id:
+                theme_vars = t.get("vars", {})
+                break
+
+    # Build CSS variable injection
+    css_vars = "; ".join(f"{k}:{v}" for k, v in theme_vars.items()) if theme_vars else ""
+
+    import zipfile, io
+    zip_buffer = io.BytesIO()
+    _user_out = _user_output_dir()
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                args=["--disable-web-security", "--allow-file-access-from-files"]
+            )
+            ctx = browser.new_context(
+                viewport={"width": 800, "height": 800},
+                device_scale_factor=2,
+            )
+
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for tpl_id, (tpl_path, display_name) in _MAIN_IMG_REGISTRY.items():
+                    try:
+                        html = render_template(tpl_path, **tpl_data)
+                    except Exception as e:
+                        print(f"[主图导出] {tpl_id} 渲染失败: {e}")
+                        continue
+
+                    # Wrap in full HTML with theme vars
+                    full_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8">
+                    <style>*{{margin:0;padding:0;box-sizing:border-box;}}</style></head>
+                    <body style="{css_vars}">{html}</body></html>'''
+
+                    base_url_str = str(BASE_DIR).replace("\\", "/")
+                    full_html = full_html.replace('src="/static/', f'src="file:///{base_url_str}/static/')
+                    full_html = full_html.replace("src='/static/", f"src='file:///{base_url_str}/static/")
+
+                    temp_html = _user_out / f"_mainimg_{tpl_id}_{uuid.uuid4().hex[:6]}.html"
+                    with open(temp_html, "w", encoding="utf-8") as f:
+                        f.write(full_html)
+
+                    page = ctx.new_page()
+                    page.goto(temp_html.as_uri(), wait_until="networkidle", timeout=15000)
+                    page.wait_for_timeout(500)
+                    png_bytes = page.screenshot(clip={"x": 0, "y": 0, "width": 800, "height": 800})
+                    page.close()
+
+                    zf.writestr(f"{display_name}_{tpl_id}.png", png_bytes)
+
+                    try:
+                        temp_html.unlink()
+                    except Exception:
+                        pass
+
+            browser.close()
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": f"主图导出失败: {exc}"}), 500
+
+    zip_buffer.seek(0)
+    model_name = parsed.get("model", product_type)
+    return send_file(
+        zip_buffer, mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"{product_type}_{model_name}_主图.zip"
+    )
+
+
 # ── 导出PNG（Playwright截图）────────────────────────────────────────
 
 @app.route('/export/<product_type>', methods=['POST'])
@@ -1307,10 +2298,52 @@ def export_generic(product_type):
     with open(preview_json, "r", encoding="utf-8") as fp:
         data = json.load(fp)
 
-    data["export_mode"] = True
+    # Get module order and hidden modules from request
+    req_data = request.get_json(silent=True) or {}
+    module_order = req_data.get("module_order", [])
+    hidden_modules = set(req_data.get("hidden_modules", []))
+    theme_id = req_data.get("theme_id", "classic-red")
 
-    tpl = f"{product_type}/assembled.html"
-    html_content = render_template(tpl, **data)
+    # Load theme CSS vars
+    theme_vars = {}
+    themes_path = BASE_DIR / "static" / "themes" / "themes.json"
+    if themes_path.exists():
+        with open(themes_path, "r", encoding="utf-8") as f:
+            themes_data = json.load(f)
+        for t in themes_data.get("themes", []):
+            if t["id"] == theme_id:
+                theme_vars = t.get("vars", {})
+                break
+    css_vars_str = "; ".join(f"{k}:{v}" for k, v in theme_vars.items()) if theme_vars else ""
+
+    if module_order:
+        # Render blocks individually in user-specified order, skipping hidden
+        block_htmls = []
+        for bid in module_order:
+            if bid in hidden_modules:
+                continue
+            block_data = data.get(bid, {})
+            html = _render_single_block(bid, block_data)
+            if html and html.strip():
+                block_htmls.append(html)
+
+        # Also render fixed selling images
+        fixed_imgs_html = ""
+        for img_url in data.get("fixed_selling_images", []):
+            if img_url:
+                fixed_imgs_html += f'<div class="screen"><img style="width:750px;display:block;" src="{img_url}" alt=""></div>'
+
+        html_content = f'''<!DOCTYPE html><html><head><meta charset="UTF-8">
+        <style>*{{margin:0;padding:0;box-sizing:border-box;}} body{{width:750px;background:#fff;}}</style>
+        </head><body style="{css_vars_str}">
+        {"".join(block_htmls)}
+        {fixed_imgs_html}
+        </body></html>'''
+    else:
+        # Fallback: use assembled template (legacy)
+        data["export_mode"] = True
+        tpl = f"{product_type}/assembled.html"
+        html_content = render_template(tpl, **data)
 
     base_url_str = str(BASE_DIR).replace("\\", "/")
     html_content = html_content.replace('src="/static/', f'src="file:///{base_url_str}/static/')
