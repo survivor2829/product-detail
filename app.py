@@ -1519,14 +1519,13 @@ def _match_scene_image(name):
     for fname, aliases in _SCENE_IMG_ALIASES.items():
         for a in aliases:
             if a.lower() in key:
-                return f"/static/scene_bank/{fname}"
+                return url_for('static', filename=f'scene_bank/{fname}')
     return ""
 
 
 def _enrich_scenes_with_images(scenes):
-    """遍历 scenes，给 image 为空的项按 name 从本地图库补图。"""
     if not isinstance(scenes, list):
-        return scenes
+        return
     for s in scenes:
         if not isinstance(s, dict):
             continue
@@ -1535,18 +1534,12 @@ def _enrich_scenes_with_images(scenes):
         img = _match_scene_image(s.get("name") or s.get("title") or "")
         if img:
             s["image"] = img
-    return scenes
 
 
 def _clean_kpis(kpis):
-    """清洗 block_i KPI 数据：
-    1. number → value 兼容旧 AI 返回
-    2. 剔除 value 为空的项（否则模板只显示 label 没数字，用户看不懂）
-    3. "3600㎡/h" 这种混写，若 unit 为空则拆出单位
-    返回被原地修改后的列表。
-    """
+    """清洗 block_i KPI：number→value 兼容、剔除无数字项、拆分"3600㎡/h"这种混写。"""
     if not isinstance(kpis, list):
-        return kpis
+        return
     cleaned = []
     for k in kpis:
         if not isinstance(k, dict):
@@ -1555,7 +1548,7 @@ def _clean_kpis(kpis):
             k["value"] = k.pop("number")
         val = str(k.get("value", "")).strip()
         if not val:
-            continue  # 没数字就跳过，不塞空壳
+            continue
         if not (k.get("unit") or "").strip():
             m = re.match(r'^\s*([\+\-]?[\d\.,]+)\s*(.*)$', val)
             if m and m.group(2).strip():
@@ -1564,7 +1557,12 @@ def _clean_kpis(kpis):
         cleaned.append(k)
     kpis.clear()
     kpis.extend(cleaned)
-    return kpis
+
+
+def _postprocess_extra_blocks(extra_blocks):
+    """对 extra_blocks 中的场景图/KPI 做一次后处理，两处提交路径复用。"""
+    _enrich_scenes_with_images(extra_blocks.get("block_h", {}).get("scenes", []))
+    _clean_kpis(extra_blocks.get("block_i", {}).get("kpis", []))
 
 
 def _assemble_all_blocks(product_type, mapped_fields, images, cfg):
@@ -1765,10 +1763,7 @@ def _assemble_all_blocks(product_type, mapped_fields, images, cfg):
             except (json.JSONDecodeError, ValueError):
                 pass
 
-    # 场景图补全：按 scene.name 从本地场景图库匹配
-    _enrich_scenes_with_images(extra_blocks.get("block_h", {}).get("scenes", []))
-    # KPI 清洗：number→value 兼容、剔除无数字的空壳、拆分"3600㎡/h"这种混写
-    _clean_kpis(extra_blocks.get("block_i", {}).get("kpis", []))
+    _postprocess_extra_blocks(extra_blocks)
 
     return {
         "product_type": product_type,
@@ -2113,10 +2108,7 @@ def build_submit_generic(product_type):
             except (json.JSONDecodeError, ValueError):
                 pass
 
-    # 场景图补全：按 scene.name 从本地场景图库匹配
-    _enrich_scenes_with_images(extra_blocks.get("block_h", {}).get("scenes", []))
-    # KPI 清洗：number→value 兼容、剔除无数字的空壳、拆分"3600㎡/h"这种混写
-    _clean_kpis(extra_blocks.get("block_i", {}).get("kpis", []))
+    _postprocess_extra_blocks(extra_blocks)
 
     data = {
         "product_type": product_type,
