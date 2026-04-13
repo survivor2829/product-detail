@@ -2189,32 +2189,34 @@ def render_main_images(product_type):
     return jsonify({"main_images": results})
 
 
+# 模块主图候选（从详情图里挑 5 个信息密度高的 block）
+_MAIN_BLOCK_CANDIDATES = [
+    ("block_a",  "英雄封面"),
+    ("block_b3", "清洁故事"),
+    ("block_f",  "VS对比"),
+    ("block_h",  "场景网格"),
+    ("block_c1", "数据对比"),
+]
+
+
 @app.route('/export/<product_type>/main-images', methods=['POST'])
 @login_required
 def export_main_images_zip(product_type):
-    """Export all 5 main images as 800x800 PNGs in a ZIP file."""
+    """Export the 5 module-main-images (block_a/b3/f/h/c1) as 750-wide PNGs in a ZIP."""
     _validate_product_type(product_type)
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "缺少请求数据"}), 400
+    req_data = request.get_json(silent=True) or {}
+    theme_id = req_data.get("theme_id", "classic-red")
 
-    parsed = data.get("parsed_data", {})
-    tpl_data = {
-        "product_image": data.get("product_image", ""),
-        "scene_image": data.get("scene_image", ""),
-        "logo_image": data.get("logo_image", ""),
-        "model_name": parsed.get("model", ""),
-        "brand_text": parsed.get("brand", ""),
-        "slogan": parsed.get("slogan", ""),
-        "sub_slogan": parsed.get("sub_slogan", ""),
-        "hero_subtitle": parsed.get("hero_subtitle", ""),
-        "category_line": parsed.get("category_line", ""),
-        "advantages": parsed.get("advantages", []),
-        "spec_callouts": parsed.get("spec_callouts", []),
-    }
+    # 读取详情预览缓存（包含所有 block 已组装好的数据）
+    _user_out = _user_output_dir()
+    preview_json = _user_out / f"_last_{product_type}_preview.json"
+    if not preview_json.exists():
+        return jsonify({"error": "请先生成详情图预览，再导出模块主图"}), 400
 
-    # Apply theme vars if provided
-    theme_id = data.get("theme_id", "classic-red")
+    with open(preview_json, "r", encoding="utf-8") as fp:
+        preview_data = json.load(fp)
+
+    # 主题 CSS 变量
     theme_vars = {}
     themes_path = BASE_DIR / "static" / "themes" / "themes.json"
     if themes_path.exists():
@@ -2224,13 +2226,11 @@ def export_main_images_zip(product_type):
             if t["id"] == theme_id:
                 theme_vars = t.get("vars", {})
                 break
-
-    # Build CSS variable injection
     css_vars = "; ".join(f"{k}:{v}" for k, v in theme_vars.items()) if theme_vars else ""
 
     import zipfile, io
     zip_buffer = io.BytesIO()
-    _user_out = _user_output_dir()
+    base_url_str = str(BASE_DIR).replace("\\", "/")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -2239,39 +2239,37 @@ def export_main_images_zip(product_type):
                 args=["--no-sandbox", "--disable-web-security", "--allow-file-access-from-files"]
             )
             ctx = browser.new_context(
-                viewport={"width": 800, "height": 800},
+                viewport={"width": 750, "height": 1200},  # 宽固定，高度由 full_page 自适应
                 device_scale_factor=2,
             )
 
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for tpl_id, (tpl_path, display_name) in _MAIN_IMG_REGISTRY.items():
-                    try:
-                        html = render_template(tpl_path, **tpl_data)
-                    except Exception as e:
-                        print(f"[主图导出] {tpl_id} 渲染失败: {e}")
+                for block_id, display_name in _MAIN_BLOCK_CANDIDATES:
+                    block_data = preview_data.get(block_id) or {}
+                    if not block_data:
+                        continue
+                    html = _render_single_block(block_id, block_data)
+                    if not html or not html.strip():
                         continue
 
-                    # Wrap in full HTML with theme vars
                     full_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8">
-                    <style>*{{margin:0;padding:0;box-sizing:border-box;}}</style></head>
-                    <body style="{css_vars}">{html}</body></html>'''
+                    <style>*{{margin:0;padding:0;box-sizing:border-box;}} body{{width:750px;background:#fff;}}</style>
+                    </head><body style="{css_vars}">{html}</body></html>'''
 
-                    base_url_str = str(BASE_DIR).replace("\\", "/")
                     full_html = full_html.replace('src="/static/', f'src="file:///{base_url_str}/static/')
                     full_html = full_html.replace("src='/static/", f"src='file:///{base_url_str}/static/")
 
-                    temp_html = _user_out / f"_mainimg_{tpl_id}_{uuid.uuid4().hex[:6]}.html"
+                    temp_html = _user_out / f"_mainimg_{block_id}_{uuid.uuid4().hex[:6]}.html"
                     with open(temp_html, "w", encoding="utf-8") as f:
                         f.write(full_html)
 
                     page = ctx.new_page()
                     page.goto(temp_html.as_uri(), wait_until="networkidle", timeout=15000)
                     page.wait_for_timeout(500)
-                    png_bytes = page.screenshot(clip={"x": 0, "y": 0, "width": 800, "height": 800})
+                    png_bytes = page.screenshot(full_page=True)
                     page.close()
 
-                    zf.writestr(f"{display_name}_{tpl_id}.png", png_bytes)
-
+                    zf.writestr(f"{display_name}_{block_id}.png", png_bytes)
                     try:
                         temp_html.unlink()
                     except Exception:
@@ -2280,14 +2278,14 @@ def export_main_images_zip(product_type):
             browser.close()
     except Exception as exc:
         import traceback; traceback.print_exc()
-        return jsonify({"error": f"主图导出失败: {exc}"}), 500
+        return jsonify({"error": f"模块主图导出失败: {exc}"}), 500
 
     zip_buffer.seek(0)
-    model_name = parsed.get("model", product_type)
+    model_name = preview_data.get("block_a", {}).get("model_name", product_type)
     return send_file(
         zip_buffer, mimetype="application/zip",
         as_attachment=True,
-        download_name=f"{product_type}_{model_name}_主图.zip"
+        download_name=f"{product_type}_{model_name}_模块主图.zip"
     )
 
 

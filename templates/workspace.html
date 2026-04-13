@@ -311,29 +311,30 @@
       font-weight: 600;
     }
 
-    /* ── Main Image Tab ────────────────────────────────────── */
+    /* ── Module Main Image Tab ─────────────────────────────── */
     #main_img_wrapper {
       display: none; padding: 24px; flex: 1;
       background: #f8f8fa;
     }
     .main-img-viewer {
-      width: 800px; margin: 0 auto;
+      width: 750px; margin: 0 auto;
     }
     .main-img-large {
-      width: 800px; height: 800px; background: #fff;
+      width: 750px; background: #fff;
       box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.08);
       border-radius: 10px;
       overflow: hidden; position: relative;
     }
-    .main-img-large > div { width: 100%; height: 100%; }
+    .main-img-large > div { width: 100%; }
     .main-img-strip {
       display: flex; gap: 10px; margin-top: 16px; justify-content: center;
     }
     .main-img-thumb {
-      width: 80px; height: 80px; border: 2px solid transparent;
+      width: 90px; height: 120px; border: 2px solid transparent;
       border-radius: 10px; overflow: hidden; cursor: pointer;
       transition: all var(--transition-fast); flex-shrink: 0;
       background: #fff; box-shadow: 0 0 0 1px var(--color-border);
+      position: relative;
     }
     .main-img-thumb:hover {
       transform: translateY(-1px);
@@ -343,9 +344,11 @@
       border-color: var(--color-primary);
       box-shadow: 0 0 0 1px var(--color-primary), 0 3px 8px var(--color-primary-shadow);
     }
-    .main-img-thumb-inner {
-      width: 100%; height: 100%; transform: scale(0.1); transform-origin: top left;
-      pointer-events: none;
+    .main-img-thumb-label {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+      padding: 3px 4px; font-size: 10px; font-weight: 600;
+      color: #fff; background: linear-gradient(180deg, transparent, rgba(0,0,0,0.6));
+      text-align: center; line-height: 1.2;
     }
 
     /* ── E-commerce Copy Panel ─────────────────────────────── */
@@ -552,7 +555,7 @@
     <!-- Tabs -->
     <div class="center-tabs" id="center_tabs">
       <button class="center-tab active" data-tab="detail" onclick="switchCenterTab('detail')">详情图</button>
-      <button class="center-tab" data-tab="main_img" onclick="switchCenterTab('main_img')">主图 (800x800)</button>
+      <button class="center-tab" data-tab="main_img" onclick="switchCenterTab('main_img')">模块主图</button>
       <button class="center-tab" data-tab="ai_img" onclick="switchCenterTab('ai_img')">AI生图</button>
     </div>
 
@@ -878,19 +881,8 @@
       // Populate e-commerce copy from parsed data
       populateEcomData(parsed);
 
-      // Fetch main images in parallel (non-blocking)
-      updateProgress('正在生成主图...');
-      postJson(`/api/build/${encodeURIComponent(currentProductType)}/render-main-images`, {
-        parsed_data: parsed,
-        product_image: productImageUrl,
-        scene_image: sceneImageUrl || '',
-        effect_image: effectImageUrl || '',
-        theme_id: currentThemeId
-      }).then(result => {
-        renderMainImages(result.main_images || []);
-      }).catch(err => {
-        console.error('主图生成失败:', err);
-      });
+      // 模块主图：直接从详情图 modules 里摘指定 5 个 block，不再单独渲染
+      renderMainImages(extractMainBlocksFromModules(preview.modules));
 
     } catch (err) {
       showError('生成失败：' + err.message);
@@ -1276,7 +1268,25 @@
     });
   }
 
-  /* ── Main Image Display ────────────────────────────────────── */
+  /* ── Module Main Image Display ─────────────────────────────── */
+  // 作为"模块主图"的 block 候选（从详情图里摘）
+  const MAIN_BLOCK_META = [
+    { id: 'block_a',  name: '英雄封面' },
+    { id: 'block_b3', name: '清洁故事' },
+    { id: 'block_f',  name: 'VS对比' },
+    { id: 'block_h',  name: '场景网格' },
+    { id: 'block_c1', name: '数据对比' },
+  ];
+
+  function extractMainBlocksFromModules(modules) {
+    const byId = {};
+    modules.forEach(m => { byId[m.id] = m; });
+    // 按 MAIN_BLOCK_META 顺序过滤：只保留存在且 HTML 非空的
+    return MAIN_BLOCK_META
+      .map(meta => byId[meta.id] ? { id: meta.id, name: meta.name, html: byId[meta.id].html } : null)
+      .filter(x => x && x.html && x.html.trim());
+  }
+
   function renderMainImages(images) {
     mainImageHtmls = images;
     if (!images.length) return;
@@ -1303,9 +1313,12 @@
 
   function renderMainImgStrip() {
     const strip = document.getElementById('main_img_strip');
+    // 缩略图：90×120，内部用 scale(90/750) 缩放 block，顶部截取
+    const scale = 90 / 750;
     strip.innerHTML = mainImageHtmls.map((img, i) => `
       <div class="main-img-thumb ${i === 0 ? 'active' : ''}" onclick="showMainImage(${i})" title="${img.name}">
-        <div style="width:800px;height:800px;transform:scale(${80/800});transform-origin:top left;pointer-events:none;overflow:hidden;">${img.html}</div>
+        <div style="width:750px;transform:scale(${scale});transform-origin:top left;pointer-events:none;">${img.html}</div>
+        <div class="main-img-thumb-label">${img.name}</div>
       </div>
     `).join('');
   }
