@@ -1533,6 +1533,7 @@ def _assemble_all_blocks(product_type, mapped_fields, images, cfg):
             block_b3[_f] = _v
     if not (block_b3.get("hero_image") or "").strip():
         block_b3["hero_image"] = product_image
+    block_b3["effect_image"] = effect_image  # 有效果图时整张顶替"背景+产品图"组合区
     _floor_json = field("b3_floor_items_json", "")
     if _floor_json:
         try:
@@ -1552,7 +1553,6 @@ def _assemble_all_blocks(product_type, mapped_fields, images, cfg):
         if _v:
             block_f[_f] = _v
     block_f["product_image"] = product_image
-    block_f["effect_image"] = effect_image  # 有效果图时整张顶替 bg+product 上半区
 
     fixed_selling_images = [
         f"/static/{product_type}/{fname}"
@@ -1870,6 +1870,7 @@ def build_submit_generic(product_type):
             block_b3[_field] = _v
     if not (block_b3.get("hero_image") or "").strip():
         block_b3["hero_image"] = product_image
+    block_b3["effect_image"] = effect_image  # 有效果图时整张顶替"背景+产品图"组合区
     # AI 生成的地面材质覆盖硬编码
     _floor_json = form_text("b3_floor_items_json", "")
     if _floor_json:
@@ -1890,7 +1891,6 @@ def build_submit_generic(product_type):
         if _v:
             block_f[_field] = _v
     block_f["product_image"] = product_image
-    block_f["effect_image"] = effect_image  # 有效果图时整张顶替 bg+product 上半区
 
     # ── 固定卖点图 ──
     fixed_selling_images = [

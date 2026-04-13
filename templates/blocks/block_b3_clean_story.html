@@ -14,7 +14,12 @@
   </div>
 
   <!-- 产品图区 -->
-  <div style="position:relative; {% if scene_image %}background:#1a2a3a{% else %}background:linear-gradient(180deg,#eceff4 0%,#f5f6f8 100%){% endif %}; min-height:420px; overflow:hidden;">
+  <div style="position:relative; {% if effect_image or scene_image %}background:#1a2a3a{% else %}background:linear-gradient(180deg,#eceff4 0%,#f5f6f8 100%){% endif %}; min-height:420px; overflow:hidden;">
+    {% if effect_image %}
+    <!-- 效果图整张顶替（自带背景+产品+人物，一张图搞定）-->
+    <img src="{{ effect_image }}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;">
+    <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 100%); pointer-events:none;"></div>
+    {% else %}
     {% if scene_image %}
     <img src="{{ scene_image }}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;">
     <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 100%); pointer-events:none;"></div>
@@ -25,6 +30,7 @@
     </div>
     {% else %}
     <div style="position:relative; z-index:2; padding:80px 24px; text-align:center; font-size:22px; color:{% if scene_image %}rgba(255,255,255,0.7){% else %}#999{% endif %};">请上传产品图</div>
+    {% endif %}
     {% endif %}
     {% if caption_line1 or caption_line2 %}
     <div style="position:absolute; left:0; right:0; bottom:0; z-index:3; padding:20px 24px 24px; background:linear-gradient(180deg, transparent, rgba(0,0,0,.6));">

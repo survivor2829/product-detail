@@ -30,18 +30,13 @@
     </div>
   </div>
 
-  <!-- 场景区：效果图整张顶替 或 背景图+产品人物分层 -->
+  <!-- 场景区：背景图 + 产品人物 + VS叠加 -->
   <div style="width:750px; height:760px; position:relative; overflow:hidden; background:#1a1e28;">
 
-    {% if effect_image %}
-    <!-- 效果图整张顶替（自带背景+人物+产品，一张图搞定）-->
-    <img src="{{ effect_image }}" style="width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0;" alt="">
-    <!-- 底部渐变遮罩，让 VS 条过渡更自然 -->
-    <div style="position:absolute; bottom:0; left:0; right:0; height:300px; background:linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 100%); pointer-events:none;"></div>
-    {% else %}
     <!-- 场景背景图 -->
     {% if bg_image %}
     <img src="{{ bg_image }}" style="width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0;" alt="">
+    <!-- 场景图底部渐变遮罩，让VS条过渡更自然 -->
     <div style="position:absolute; bottom:0; left:0; right:0; height:300px; background:linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 100%); pointer-events:none;"></div>
     {% endif %}
 
@@ -49,7 +44,6 @@
     <div style="position:absolute; top:20px; left:50%; transform:translateX(-50%); width:640px; height:520px; z-index:1; display:flex; align-items:center; justify-content:center;">
       <img src="{{ product_image }}" style="max-width:100%; max-height:100%; object-fit:contain; filter:drop-shadow(0 8px 24px rgba(0,0,0,0.25));" alt="">
     </div>
-    {% endif %}
 
     <!-- VS对比条：叠加在场景底部 -->
     <div style="position:absolute; bottom:0; left:0; right:0; z-index:2;">
