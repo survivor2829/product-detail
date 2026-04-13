@@ -14,10 +14,10 @@
   </div>
 
   <!-- 产品图区 -->
-  <div style="position:relative; {% if effect_image or scene_image %}background:#1a2a3a{% else %}background:linear-gradient(180deg,#eceff4 0%,#f5f6f8 100%){% endif %}; min-height:420px; overflow:hidden;">
+  <div style="position:relative; {% if effect_image or scene_image %}background:#1a2a3a{% else %}background:linear-gradient(180deg,#eceff4 0%,#f5f6f8 100%){% endif %}; {% if not effect_image %}min-height:420px;{% endif %} overflow:hidden;">
     {% if effect_image %}
-    <!-- 效果图整张顶替（自带背景+产品+人物，一张图搞定）-->
-    <img src="{{ effect_image }}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;">
+    <!-- 效果图按原比例显示，宽度750、高度自适应、不裁剪 -->
+    <img src="{{ effect_image }}" alt="" style="display:block; width:100%; height:auto;">
     <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 100%); pointer-events:none;"></div>
     {% else %}
     {% if scene_image %}
