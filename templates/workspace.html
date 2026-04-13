@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>小玺AI · 工作台</title>
-  <link rel="stylesheet" href="/static/css/design-system.css">
+  <link rel="stylesheet" href="/static/css/design-system.css?v=2">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.6/Sortable.min.js"></script>
   <style>
     /* ── Reset ─────────────────────────────────────────────── */
@@ -15,24 +15,25 @@
     /* ── Topbar ─────────────────────────────────────────────── */
     .topbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-      background: rgba(255,255,255,0.72);
+      background: rgba(255,255,255,0.78);
       backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--color-border);
-      padding: 0 24px; height: 52px;
+      padding: 0 24px; height: 54px;
       display: flex; align-items: center; justify-content: space-between;
     }
     .topbar-brand {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 15px; font-weight: 700; color: var(--color-text);
-      text-decoration: none;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 16px; font-weight: 700; color: var(--color-title);
+      text-decoration: none; letter-spacing: -0.01em;
     }
     .brand-dot {
-      width: 22px; height: 22px; border-radius: 6px;
+      width: 26px; height: 26px; border-radius: 7px;
       background: var(--color-primary); display: flex; align-items: center; justify-content: center;
-      font-size: 12px; color: #fff; font-weight: 800;
+      font-size: 13px; color: #fff; font-weight: 800;
+      box-shadow: 0 2px 6px var(--color-primary-shadow);
     }
     .topbar-right {
-      display: flex; align-items: center; gap: 16px;
+      display: flex; align-items: center; gap: 18px;
       font-size: 13px; color: var(--color-text-secondary);
     }
     .topbar-right a {
@@ -44,38 +45,47 @@
 
     /* ── Workspace Layout ───────────────────────────────────── */
     .workspace {
-      display: flex; height: calc(100vh - 52px); margin-top: 52px;
+      display: flex; gap: 14px;
+      height: calc(100vh - 54px); margin-top: 54px;
+      padding: 14px; background: var(--color-bg-page);
     }
 
-    .panel-left {
-      width: 320px; flex-shrink: 0; background: #fff;
-      border-right: 1px solid var(--color-border); overflow-y: auto;
-    }
-    .panel-center {
-      flex: 1; background: var(--color-bg-page); overflow-y: auto;
-      position: relative; display: flex; flex-direction: column;
-    }
+    .panel-left,
+    .panel-center,
     .panel-right {
-      width: 260px; flex-shrink: 0; background: #fff;
-      border-left: 1px solid var(--color-border); overflow-y: auto;
+      background: #fff; border-radius: 8px;
+      box-shadow: var(--shadow-panel); border: var(--border-panel);
+      overflow-y: auto; flex-shrink: 0;
+    }
+    .panel-left { width: 360px; }
+    .panel-right { width: 244px; }
+    .panel-center {
+      flex: 1; flex-shrink: 1;
+      position: relative; display: flex; flex-direction: column;
     }
 
     /* ── Panel Section ──────────────────────────────────────── */
-    .panel-section { padding: 16px 20px; border-bottom: 1px solid var(--color-border); }
+    .panel-section { padding: 16px 18px; border-bottom: 1px solid var(--color-divider); }
+    .panel-section:first-child { padding-top: 18px; }
     .panel-section:last-child { border-bottom: none; }
     .section-title {
-      font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
-      margin: 0 0 12px 0;
+      font-size: 13px; font-weight: 600; color: var(--color-title);
+      margin: 0 0 12px 0; letter-spacing: 0.01em;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .section-title::before {
+      content: ''; width: 3px; height: 13px; border-radius: 2px;
+      background: var(--color-primary); flex-shrink: 0;
     }
 
     /* ── Category Pills ─────────────────────────────────────── */
     .cat-pills { display: flex; flex-wrap: wrap; gap: 8px; }
     .cat-pill {
-      display: flex; align-items: center; gap: 5px;
-      padding: 6px 12px; border-radius: var(--radius-full);
-      border: 1.5px solid var(--color-border);
-      background: var(--color-bg-subtle); cursor: pointer;
-      font-size: 13px; font-weight: 500; color: var(--color-text-muted);
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 32px; padding: 0 14px; border-radius: var(--radius-pill);
+      border: 1px solid var(--color-border);
+      background: #fff; cursor: pointer;
+      font-size: 13px; font-weight: 500; color: var(--color-text-hint);
       transition: all var(--transition-fast); user-select: none;
       white-space: nowrap;
     }
@@ -84,26 +94,28 @@
       background-color: var(--cat-color-bg, rgba(20,110,245,0.08));
       border-color: var(--cat-color, var(--color-primary));
       color: var(--cat-color, var(--color-primary));
+      font-weight: 600;
     }
 
     /* ── Upload Grid ────────────────────────────────────────── */
     .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .upload-box {
-      border: 1.5px dashed var(--color-border); border-radius: 10px;
-      background: var(--color-bg-subtle); cursor: pointer;
+      border: 1px solid var(--color-border-2); border-radius: var(--radius-input);
+      background: #fff; cursor: pointer;
       transition: all var(--transition-fast); position: relative; overflow: hidden;
-      height: 100px;
+      height: 104px;
     }
     .upload-box:hover, .upload-box.drag-over {
-      border-color: var(--color-primary); background: rgba(20,110,245,0.03);
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-light);
     }
     .upload-placeholder {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       height: 100%; gap: 4px; pointer-events: none;
     }
-    .upload-placeholder .upload-icon { font-size: 22px; }
-    .upload-placeholder .upload-label { font-size: 12px; color: var(--color-text-muted); font-weight: 500; }
-    .upload-placeholder .upload-required { color: #ee1d36; font-size: 11px; }
+    .upload-placeholder .upload-icon { font-size: 22px; opacity: 0.75; }
+    .upload-placeholder .upload-label { font-size: 12px; color: var(--color-text-hint); font-weight: 500; }
+    .upload-placeholder .upload-required { color: #ee1d36; font-size: 11px; font-weight: 500; }
     .upload-preview { display: none; width: 100%; height: 100%; position: relative; }
     .upload-preview img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
     .upload-remove {
@@ -117,46 +129,64 @@
     /* ── Text Input ─────────────────────────────────────────── */
     .text-area {
       width: 100%; height: 200px; padding: 10px 12px;
-      border: 1.5px solid var(--color-border); border-radius: var(--radius-md);
+      border: 1px solid var(--color-border); border-radius: var(--radius-input);
       font-size: 13px; font-family: var(--font-sans); color: var(--color-text);
-      background: var(--color-bg); resize: vertical;
-      transition: border-color var(--transition-fast);
+      background: #fff; resize: vertical;
+      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
       outline: none;
     }
-    .text-area:focus { border-color: var(--color-primary); }
+    .text-area--single { height: 38px; padding: 0 12px; resize: none; }
+    .text-area:focus {
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-light);
+    }
     .text-area::placeholder { color: var(--color-text-muted); }
     .text-hint {
-      font-size: 12px; color: var(--color-text-muted); margin-top: 8px;
+      font-size: 12px; color: var(--color-text-muted); margin-top: 6px;
+      line-height: 1.5;
     }
 
     /* ── Generate Button ────────────────────────────────────── */
     .btn-generate {
       display: flex; align-items: center; justify-content: center; gap: 6px;
-      width: 100%; padding: 13px; border: none; border-radius: var(--radius-md);
+      width: 100%; height: 40px; border: none; border-radius: 6px;
       background: var(--color-primary); color: #fff;
-      font-size: 15px; font-weight: 600; cursor: pointer;
-      box-shadow: var(--shadow-sm); transition: all var(--transition-fast);
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04); transition: all var(--transition-fast);
+      letter-spacing: 0.01em;
     }
-    .btn-generate:hover:not(:disabled) { background: var(--color-primary-hover); box-shadow: var(--shadow-md); }
+    .btn-generate:hover:not(:disabled) {
+      background: var(--color-primary-hover);
+      box-shadow: 0 3px 8px var(--color-primary-shadow-strong);
+      transform: translateY(-1px);
+    }
     .btn-generate:disabled { opacity: 0.65; cursor: not-allowed; }
 
     /* ── Center Panel: Empty State ──────────────────────────── */
     #empty_state {
       flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 12px; padding: 40px;
+      gap: 14px; padding: 40px;
     }
-    .empty-icon { font-size: 48px; line-height: 1; }
-    .empty-title { font-size: 16px; font-weight: 600; color: var(--color-text-muted); text-align: center; }
-    .empty-subtitle { font-size: 13px; color: var(--color-text-muted); text-align: center; opacity: 0.7; }
+    .empty-icon { font-size: 54px; line-height: 1; opacity: 0.6; }
+    .empty-title {
+      font-size: 18px; font-weight: 600; color: var(--color-title);
+      text-align: center; letter-spacing: -0.01em;
+    }
+    .empty-subtitle {
+      font-size: 13px; color: var(--color-text-muted);
+      text-align: center; letter-spacing: 0.01em;
+    }
 
     /* ── Preview Wrapper ────────────────────────────────────── */
     #preview_wrapper {
       display: none; padding: 24px; flex: 1;
+      background: #f8f8fa;
     }
     #preview_container {
       width: 750px; margin: 0 auto;
-      background: #fff; box-shadow: var(--shadow-lg);
-      border-radius: var(--radius-lg); overflow: hidden;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.08);
+      border-radius: 8px; overflow: hidden;
     }
 
     /* ── Module Wrappers ────────────────────────────────────── */
@@ -195,43 +225,63 @@
     #export_bar {
       display: none; align-items: center; justify-content: center;
       padding: 12px 24px;
-      background: rgba(255,255,255,0.88);
+      background: rgba(255,255,255,0.92);
       backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
       position: sticky; bottom: 0; z-index: 50;
     }
     .btn-export {
       display: flex; align-items: center; gap: 8px;
-      padding: 10px 28px; border: none; border-radius: var(--radius-md);
-      background: var(--color-text); color: #fff;
+      height: 40px; padding: 0 24px; border: none; border-radius: 6px;
+      background: var(--color-title); color: #fff;
       font-size: 14px; font-weight: 600; cursor: pointer;
-      box-shadow: var(--shadow-sm); transition: all var(--transition-fast);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+      transition: all var(--transition-fast); letter-spacing: 0.01em;
     }
-    .btn-export:hover:not(:disabled) { background: #333; box-shadow: var(--shadow-md); }
+    .btn-export:hover:not(:disabled) {
+      background: #000;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.16);
+      transform: translateY(-1px);
+    }
     .btn-export:disabled { opacity: 0.65; cursor: not-allowed; }
 
     /* ── Theme Grid ─────────────────────────────────────────── */
-    .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 16px; }
+    .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 16px 16px; }
     .theme-card {
-      border: 2px solid var(--color-border); border-radius: 10px;
-      padding: 8px; cursor: pointer; transition: all var(--transition-fast);
-      text-align: center; position: relative;
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 6px; cursor: pointer; transition: all var(--transition-fast);
+      text-align: center; position: relative; background: #fff;
+      box-shadow: 0 0 0 1px var(--color-border);
     }
-    .theme-card:hover { border-color: var(--color-border-hover); }
-    .theme-card.selected { border-color: var(--color-primary); }
+    .theme-card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 0 1px var(--color-border), 0 3px 8px var(--color-primary-shadow);
+      border-color: var(--color-primary);
+    }
+    .theme-card.selected {
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 1px var(--color-primary), 0 3px 8px var(--color-primary-shadow);
+    }
     .theme-card.selected::after {
       content: '✓'; position: absolute; top: 4px; right: 4px;
       width: 20px; height: 20px; background: var(--color-primary);
       color: #fff; border-radius: 50%; font-size: 11px; font-weight: 700;
       display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 4px var(--color-primary-shadow-strong);
     }
-    .theme-card img { width: 100%; border-radius: 6px; }
-    .theme-card-name { font-size: 12px; color: var(--color-text-secondary); margin-top: 6px; font-weight: 500; }
+    .theme-card img { width: 100%; border-radius: 6px; display: block; }
+    .theme-card-name {
+      font-size: 12px; color: var(--color-text-secondary);
+      margin-top: 6px; font-weight: 500;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
 
     /* ── Right Panel Title ──────────────────────────────────── */
     .panel-right-title {
-      padding: 16px 16px 0 16px;
-      font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+      padding: 18px 18px 6px;
+      font-size: 18px; font-weight: 400; color: var(--color-title);
+      letter-spacing: -0.005em;
     }
 
     /* ── Spinner animation ──────────────────────────────────── */
@@ -242,30 +292,37 @@
 
     /* ── Center Tabs ────────────────────────────────────────── */
     .center-tabs {
-      display: none; padding: 0 24px; background: #fff;
-      border-bottom: 1px solid var(--color-border);
+      display: none; padding: 0 20px; background: #fff;
+      border-bottom: 1px solid var(--color-divider);
       position: sticky; top: 0; z-index: 40;
+      gap: 4px;
     }
     .center-tabs.visible { display: flex; }
     .center-tab {
-      padding: 12px 20px; font-size: 14px; font-weight: 600;
+      padding: 13px 16px 11px; font-size: 14px; font-weight: 500;
       color: var(--color-text-muted); cursor: pointer;
       border-bottom: 2px solid transparent; transition: all var(--transition-fast);
       background: none; border-top: none; border-left: none; border-right: none;
     }
-    .center-tab:hover { color: var(--color-text); }
-    .center-tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+    .center-tab:hover { color: var(--color-title); }
+    .center-tab.active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+      font-weight: 600;
+    }
 
     /* ── Main Image Tab ────────────────────────────────────── */
     #main_img_wrapper {
       display: none; padding: 24px; flex: 1;
+      background: #f8f8fa;
     }
     .main-img-viewer {
       width: 800px; margin: 0 auto;
     }
     .main-img-large {
       width: 800px; height: 800px; background: #fff;
-      box-shadow: var(--shadow-lg); border-radius: var(--radius-lg);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.08);
+      border-radius: 10px;
       overflow: hidden; position: relative;
     }
     .main-img-large > div { width: 100%; height: 100%; }
@@ -273,36 +330,43 @@
       display: flex; gap: 10px; margin-top: 16px; justify-content: center;
     }
     .main-img-thumb {
-      width: 80px; height: 80px; border: 2px solid var(--color-border);
-      border-radius: 8px; overflow: hidden; cursor: pointer;
+      width: 80px; height: 80px; border: 2px solid transparent;
+      border-radius: 10px; overflow: hidden; cursor: pointer;
       transition: all var(--transition-fast); flex-shrink: 0;
-      background: #fff;
+      background: #fff; box-shadow: 0 0 0 1px var(--color-border);
     }
-    .main-img-thumb:hover { border-color: var(--color-border-hover); }
-    .main-img-thumb.active { border-color: var(--color-primary); }
+    .main-img-thumb:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 0 1px var(--color-border), 0 3px 8px var(--color-primary-shadow);
+    }
+    .main-img-thumb.active {
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 1px var(--color-primary), 0 3px 8px var(--color-primary-shadow);
+    }
     .main-img-thumb-inner {
       width: 100%; height: 100%; transform: scale(0.1); transform-origin: top left;
       pointer-events: none;
     }
 
     /* ── E-commerce Copy Panel ─────────────────────────────── */
-    .ecom-panel { padding: 16px 20px; border-bottom: 1px solid var(--color-border); }
+    .ecom-panel { padding: 14px 18px; border-bottom: 1px solid var(--color-divider); }
     .ecom-panel:last-child { border-bottom: none; }
     .ecom-section-title {
-      font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+      font-size: 13px; font-weight: 600; color: var(--color-title);
       margin: 0 0 10px 0; display: flex; align-items: center; justify-content: space-between;
     }
     .ecom-copy-btn {
-      font-size: 12px; color: var(--color-primary); background: none;
-      border: 1px solid var(--color-primary); border-radius: 6px;
-      padding: 2px 10px; cursor: pointer; font-weight: 500;
-      transition: all var(--transition-fast);
+      font-size: 12px; color: var(--color-primary); background: #fff;
+      border: 1px solid var(--color-primary); border-radius: 100px;
+      padding: 2px 12px; cursor: pointer; font-weight: 500;
+      transition: all var(--transition-fast); height: 24px;
     }
     .ecom-copy-btn:hover { background: var(--color-primary); color: #fff; }
     .ecom-copy-btn.copied { background: #059669; border-color: #059669; color: #fff; }
     .ecom-field {
       font-size: 13px; color: var(--color-text); line-height: 1.6;
-      background: var(--color-bg-subtle); border-radius: 8px;
+      background: #f7f8fa; border: 1px solid var(--color-divider);
+      border-radius: 10px;
       padding: 10px 12px; margin-bottom: 8px; word-break: break-all;
     }
     .ecom-field:last-child { margin-bottom: 0; }
@@ -454,8 +518,7 @@
       <input
         id="product_title_input"
         type="text"
-        class="text-area"
-        style="height:auto; padding:10px 12px;"
+        class="text-area text-area--single"
         placeholder="输入产品标题，如：德威莱克DZ50X驾驶式洗地机">
       <p class="text-hint">用于首屏大标题和电商标题生成</p>
     </div>
@@ -475,10 +538,10 @@
       <button class="btn-generate" id="btn_generate" onclick="generatePreview()">
         ✨ 一键生成详情页
       </button>
-      <button class="btn-generate" id="btn_ai_image" onclick="generateAiImages()" style="margin-top:8px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none;">
+      <button class="btn-generate" id="btn_ai_image" onclick="generateAiImages()" style="margin-top:10px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; box-shadow:0 2px 6px rgba(139,92,246,0.28);">
         🎨 AI生图（高质量）
       </button>
-      <p class="text-hint" style="margin-top:4px;">AI生成精美背景 + 产品合成，需阿里云百炼API Key</p>
+      <p class="text-hint" style="margin-top:8px;">AI生成精美背景 + 产品合成，需阿里云百炼API Key</p>
     </div>
 
   </aside>
@@ -609,10 +672,10 @@
 </div>
 
 <!-- ─── Progress Overlay ─────────────────────────────────────────── -->
-<div id="progress_overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(255,255,255,0.85); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); flex-direction:column; align-items:center; justify-content:center;">
-  <div style="background:#fff; border:1px solid var(--color-border); border-radius:16px; padding:44px 56px; text-align:center; box-shadow:var(--shadow-lg);">
-    <div style="width:40px; height:40px; border:3px solid var(--color-border); border-top-color:var(--color-primary); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 20px;"></div>
-    <div id="progress_text" style="color:var(--color-text); font-size:16px; font-weight:600;">正在生成...</div>
+<div id="progress_overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(255,255,255,0.75); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); flex-direction:column; align-items:center; justify-content:center;">
+  <div style="background:#fff; border:1px solid rgba(0,0,0,0.04); border-radius:16px; padding:44px 56px; text-align:center; box-shadow:0 24px 60px rgba(0,0,0,0.12), 0 8px 20px rgba(0,0,0,0.06);">
+    <div style="width:42px; height:42px; border:3px solid var(--color-border); border-top-color:var(--color-primary); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 22px;"></div>
+    <div id="progress_text" style="color:var(--color-title); font-size:16px; font-weight:600; letter-spacing:-0.01em;">正在生成...</div>
     <div style="color:var(--color-text-muted); font-size:13px; margin-top:6px;">请稍候，AI正在分析产品信息</div>
   </div>
 </div>
