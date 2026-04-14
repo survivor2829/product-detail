@@ -379,6 +379,53 @@ def _parse_text_by_template(raw_text: str) -> dict:
     return result
 
 
+_STAT_NUM_RE = re.compile(
+    r'(\d+(?:\.\d+)?)\s*'
+    # 长单位必须在前,避免 L/min 被 L 先吃掉 ;
+    # 汉字单位 (名/人/倍/小时等) 没有 word boundary 问题
+    r'(㎡/h|m²/h|㎡|m²|L/min|kWh|km/h|m/s|mm|kg|dB|Hz|%|°|分钟|小时|W|V|A|L|min|h|名|人|倍|年|项|台|层|重|m)'
+)
+
+# 整串末尾单位拆分(用于 specs):'90L' → ('90','L'),'≤68dB' → ('≤68','dB')
+# 与 _STAT_NUM_RE 不同 — 这里匹配整串结尾的单位,不限定前面是纯数字(允许 ≤/~ 等前缀)
+_VALUE_UNIT_TAIL_RE = re.compile(
+    r'^(.*?)\s*'
+    r'(㎡/h|m²/h|L/min|kWh|km/h|m/s|mm|㎡|m²|kg|dB|Hz|%|°|分钟|小时|W|V|A|L|min|h|m)$'
+)
+
+
+def _split_value_unit(val: str) -> tuple[str, str]:
+    """把 '90L' / '3600㎡/h' / '≤68dB' 拆成 (数值部分, 单位)。
+
+    用于 specs 表格的 value/unit 双列展示:
+      .spec-value 大号白粗体 + .spec-unit 小号灰色,baseline 对齐。
+    匹配不到单位 → 返回 (原串, "") — 模板 {% if s.unit %} 自动隐藏空单位。
+    """
+    v = _to_str(val or "").strip()
+    if not v:
+        return "", ""
+    m = _VALUE_UNIT_TAIL_RE.match(v)
+    if m:
+        return m.group(1).strip(), m.group(2)
+    return v, ""
+
+
+def _extract_stat_from_desc(*texts: str) -> tuple[str, str]:
+    """从一段描述里抓第一个 '<数字><单位>' 组合,用于 advantages 卡的红色大数字。
+
+    找不到返回 ('', '') → 卡片自动隐藏 .card-stat 块,只显示 title+desc。
+    例: '90L/100L 双箱设计' → ('90', 'L'); '相当于8名保洁' → ('8', '人')
+    """
+    for t in texts:
+        t = _to_str(t or "")
+        if not t:
+            continue
+        m = _STAT_NUM_RE.search(t)
+        if m:
+            return m.group(1), m.group(2)
+    return "", ""
+
+
 def _build_spec_rows(detail_params: dict) -> list:
     """将 detail_params 转为参数行列表，优先列显示重要参数，其余全量追加。不限行数。"""
     if not isinstance(detail_params, dict):
@@ -652,73 +699,102 @@ def _user_output_dir():
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+def _remove_bg_if_needed(save_path: Path, user_dir: Path, uid: str) -> str | None:
+    """对已落盘的图片执行 AI 抠图。
+    成功:返回去背景后的 `<uid>_nobg.png` 文件名。
+    跳过/失败:返回 None(由调用方回退到原图文件名)。
+
+    被 _save_upload(auto_rembg=True) 和 /api/upload?auto_rembg=1 共享。
+    抽出是为了让 v2 workspace 上传路径也能走抠图,不再两处分叉。
+    """
+    if not _ensure_rembg():
+        print(f"[抠图] rembg 不可用,跳过 {save_path.name}。"
+              f"运行: pip install rembg onnxruntime", flush=True)
+        return None
+    try:
+        from PIL import Image as _Img
+        import numpy as np
+        import rembg
+
+        im = _Img.open(save_path)
+        # 已有真实透明区域就别重抠
+        if im.mode == "RGBA":
+            alpha = np.array(im)[:, :, 3]
+            if alpha.min() < 250:
+                print(f"[抠图] {save_path.name} 已有透明底,跳过", flush=True)
+                return None
+
+        import io as _io
+        print(f"[抠图] 开始处理 {save_path.name}(AI+色值混合)…", flush=True)
+
+        orig = im.convert("RGB")
+        arr = np.array(orig)
+
+        # 1) AI 抠图
+        with open(save_path, "rb") as inp:
+            ai_bytes = rembg.remove(inp.read(), session=REMBG_SESSION)
+        ai_img = _Img.open(_io.BytesIO(ai_bytes)).convert("RGBA")
+        ai_alpha = np.array(ai_img)[:, :, 3]
+
+        # 2) 色值清理纯白残留 — 取四角 15×15 采样,低于该亮度 & AI 半透明的视作背景
+        corners = [arr[:15, :15], arr[:15, -15:], arr[-15:, :15], arr[-15:, -15:]]
+        bg_min = np.concatenate([c.reshape(-1, 3) for c in corners]).min(axis=0)
+        threshold = max(int(bg_min.min()) - 2, 248)
+        pure_bg = np.all(arr >= threshold, axis=2)
+        ai_alpha[pure_bg & (ai_alpha < 200)] = 0
+
+        # 3) 合成 + 落盘
+        result_arr = np.dstack([arr, ai_alpha])
+        result_img = _Img.fromarray(result_arr.astype(np.uint8), "RGBA")
+        nobg_filename = f"{uid}_nobg.png"
+        nobg_path = user_dir / nobg_filename
+        result_img.save(str(nobg_path))
+        print(f"[抠图] 完成 → {nobg_filename}", flush=True)
+        return nobg_filename
+    except Exception as e:
+        import traceback
+        print(f"[抠图] 失败,使用原图: {e}", flush=True)
+        traceback.print_exc()
+        return None
+
+
+def _persist_upload(file_storage, *, auto_rembg: bool = False) -> dict:
+    """落盘一个 FileStorage + 可选 rembg,返回统一描述 dict。
+
+    `/api/upload` 和 `_save_upload` 共享,避免 uid/filename/save 逻辑漂移。
+    调用方保证 file_storage.filename 已校验非空且格式合法。
+    """
+    ext = file_storage.filename.rsplit(".", 1)[-1].lower() if "." in file_storage.filename else "png"
+    uid = uuid.uuid4().hex
+    filename = f"{uid}.{ext}"
+    user_dir = _user_upload_dir()
+    save_path = user_dir / filename
+    file_storage.save(str(save_path))
+
+    final_filename = filename
+    if auto_rembg:
+        nobg = _remove_bg_if_needed(save_path, user_dir, uid)
+        if nobg:
+            final_filename = nobg
+
+    return {
+        "filename": final_filename,
+        "path":     str(user_dir / final_filename),
+        "url":      f"/static/uploads/{current_user.id}/{final_filename}",
+        "rembg":    final_filename != filename,
+    }
+
+
 def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
-    """保存上传图片到 static/uploads/{user_id}/，返回 URL
-    auto_rembg=True 时对白底产品图自动抠图（只处理 product_image）
+    """保存上传图片到 static/uploads/{user_id}/,返回 URL。
+
+    auto_rembg=True 时对产品图自动抠图。表单路径专用;
+    v2 `/api/upload` 直接调 `_persist_upload` 拿完整 dict。
     """
     f = request.files.get(file_field_name)
     if not f or not f.filename:
         return ""
-    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "png"
-    uid = uuid.uuid4().hex
-    user_dir = _user_upload_dir()
-    filename = f"{uid}.{ext}"
-    save_path = user_dir / filename
-    f.save(str(save_path))
-
-    if auto_rembg and _ensure_rembg():
-        try:
-            from PIL import Image as _Img
-            import numpy as np
-            import rembg
-            # 如果已有真实透明区域则跳过
-            needs_rembg = True
-            im = _Img.open(save_path)
-            if im.mode == "RGBA":
-                alpha = np.array(im)[:, :, 3]
-                if alpha.min() < 250:
-                    needs_rembg = False
-                    print(f"[抠图] {filename} 已有透明底，跳过", flush=True)
-            if needs_rembg:
-                from PIL import ImageFilter
-                import io as _io
-                print(f"[抠图] 开始处理 {filename}（AI+色值混合）…", flush=True)
-
-                # 复用已打开的图片，转 RGB
-                orig = im.convert("RGB")
-                arr = np.array(orig)
-                h, w = arr.shape[:2]
-
-                # 1) AI 抠图
-                with open(save_path, "rb") as inp:
-                    ai_bytes = rembg.remove(inp.read(), session=REMBG_SESSION)
-                ai_img = _Img.open(_io.BytesIO(ai_bytes)).convert("RGBA")
-                ai_alpha = np.array(ai_img)[:, :, 3]
-
-                # 2) 用色值清理 AI 遗漏的纯白背景残留
-                corners = [arr[:15, :15], arr[:15, -15:], arr[-15:, :15], arr[-15:, -15:]]
-                bg_min = np.concatenate([c.reshape(-1, 3) for c in corners]).min(axis=0)
-                threshold = max(int(bg_min.min()) - 2, 248)
-                pure_bg = np.all(arr >= threshold, axis=2)
-                # AI 认为半透明 + 色值是纯白 → 设为全透明
-                ai_alpha[pure_bg & (ai_alpha < 200)] = 0
-
-                # 3) 保存
-                result_arr = np.dstack([arr, ai_alpha])
-                result_img = _Img.fromarray(result_arr.astype(np.uint8), "RGBA")
-                nobg_filename = f"{uid}_nobg.png"
-                nobg_path = user_dir / nobg_filename
-                result_img.save(str(nobg_path))
-                print(f"[抠图] 完成 → {nobg_filename}", flush=True)
-                return f"/static/uploads/{current_user.id}/{nobg_filename}"
-        except Exception as e:
-            import traceback
-            print(f"[抠图] 失败，使用原图: {e}", flush=True)
-            traceback.print_exc()
-    elif auto_rembg and not REMBG_AVAILABLE:
-        print(f"[抠图] rembg 未安装，跳过 {filename}。运行: pip install rembg onnxruntime", flush=True)
-
-    return f"/static/uploads/{current_user.id}/{filename}"
+    return _persist_upload(f, auto_rembg=auto_rembg)["url"]
 
 
 # ── 基础路由 ─────────────────────────────────────────────────────────
@@ -799,12 +875,9 @@ def upload():
         return jsonify({"error": "文件名为空"}), 400
     if not allowed_img(file.filename):
         return jsonify({"error": f"不支持的格式，请上传 {', '.join(ALLOWED_IMG)}"}), 400
-    ext = file.filename.rsplit(".", 1)[1].lower()
-    filename = f"{uuid.uuid4().hex}.{ext}"
-    user_dir = _user_upload_dir()
-    save_path = user_dir / filename
-    file.save(str(save_path))
-    return jsonify({"path": str(save_path), "filename": filename, "url": f"/static/uploads/{current_user.id}/{filename}"})
+
+    auto_rembg = str(request.form.get("auto_rembg", "")).lower() in ("1", "true", "yes")
+    return jsonify(_persist_upload(file, auto_rembg=auto_rembg))
 # ── 文本解析（DeepSeek API）──────────────────────────────────────────
 _NO_FABRICATION_RULE = (
     "【数据准确性要求】\n"
@@ -1417,6 +1490,724 @@ def generate_ai_images():
         "images": result_urls,
         "count": len(result_urls),
     })
+
+
+# ── AI 生图：双引擎元数据 + 无缝长图 ─────────────────────────────────
+
+@app.route("/api/ai-engines", methods=["GET"])
+def list_ai_engines():
+    """前端引擎下拉框数据源：返回可用引擎列表（id/label/vendor/model/cost_hint）"""
+    import ai_image_router
+    return jsonify({"engines": ai_image_router.list_engines(),
+                    "default": ai_image_router.DEFAULT_ENGINE})
+
+
+@app.route("/api/generate-ai-detail", methods=["POST"])
+@login_required
+@csrf.exempt
+def generate_ai_detail():
+    """
+    无缝长图 AI 精修：双引擎 + 色调流分段 + 渐变融合 + 中文字体合成。
+
+    请求体：
+    {
+      "parsed_data": { ... DeepSeek 解析结果 ... },
+      "product_image": "/static/uploads/...",
+      "theme_id": "classic-red",
+      "engine": "wanxiang" | "seedream",
+      "zones": ["hero","advantages","story","specs","vs","scene","brand"],   # 可选
+      "dashscope_api_key": "...",  # 可选，否则用环境变量/用户配置
+      "ark_api_key": "..."         # 可选
+    }
+
+    返回：
+    {
+      "image_url": "/output/<uid>/ai_detail/seamless_<engine>.png",
+      "engine": "wanxiang",
+      "segments": 7,
+      "elapsed_sec": 42.3
+    }
+    """
+    import time as _t
+    import traceback
+    import ai_image_router
+    import theme_color_flows
+    import image_composer
+
+    data = request.get_json(silent=True) or {}
+    engine = (data.get("engine") or ai_image_router.DEFAULT_ENGINE).strip()
+    if engine not in ai_image_router.ENGINES:
+        return jsonify({"error": f"未知引擎: {engine}"}), 400
+
+    parsed_data = data.get("parsed_data") or {}
+    if not parsed_data:
+        return jsonify({"error": "缺少 parsed_data"}), 400
+
+    theme_id = (data.get("theme_id") or "classic-red").strip()
+    zones = data.get("zones") or theme_color_flows.ZONE_ORDER_DEFAULT
+
+    # 收集双引擎 key（优先请求体，再环境变量，再用户加密配置）
+    api_keys = {
+        "dashscope_api_key": data.get("dashscope_api_key", "") or os.environ.get("DASHSCOPE_API_KEY", ""),
+        "ark_api_key": data.get("ark_api_key", "") or os.environ.get("ARK_API_KEY", ""),
+    }
+    # fallback: 用户配置加密的 dashscope_api_key（旧逻辑）
+    if not api_keys["dashscope_api_key"] and hasattr(current_user, "dashscope_api_key_enc") and current_user.dashscope_api_key_enc:
+        from crypto_utils import decrypt_api_key
+        api_keys["dashscope_api_key"] = decrypt_api_key(current_user.dashscope_api_key_enc) or ""
+
+    meta = ai_image_router.ENGINES[engine]
+    if engine == "wanxiang" and not api_keys["dashscope_api_key"]:
+        return jsonify({"error": f"请提供 {meta['label']} 的 API Key（DASHSCOPE_API_KEY）"}), 403
+    if engine == "seedream" and not api_keys["ark_api_key"]:
+        return jsonify({"error": f"请提供 {meta['label']} 的 API Key（ARK_API_KEY）"}), 403
+
+    # 准备产品数据（复用现有映射）
+    mapped = _map_parsed_to_form_fields(parsed_data)
+    product_data = {
+        "brand": _to_str(parsed_data.get("brand", "")),
+        "brand_text": mapped.get("brand_text", ""),
+        "model_name": mapped.get("model_name", ""),
+        "model": _to_str(parsed_data.get("model", "")),
+        "product_name": _to_str(parsed_data.get("product_name", "")),
+        "product_type": _to_str(parsed_data.get("product_type", "")),
+        "category_line": mapped.get("category_line", ""),
+        "main_title": mapped.get("main_title", "") or _to_str(parsed_data.get("main_title", "")),
+        "tagline_line1": mapped.get("tagline_line1", ""),
+        "tagline_line2": mapped.get("tagline_line2", ""),
+        "sub_slogan": mapped.get("tagline_sub", ""),
+        "slogan": _to_str(parsed_data.get("slogan", "")),
+        "advantages": parsed_data.get("advantages") or [],
+        "specs": mapped.get("e_specs", []),
+        "detail_params": parsed_data.get("detail_params", {}),
+        "vs_comparison": parsed_data.get("vs_comparison", {}),
+        "story_title_1": _to_str(parsed_data.get("story_title_1", "")),
+        "story_title_2": _to_str(parsed_data.get("story_title_2", "")),
+        "story_desc_1": _to_str(parsed_data.get("story_desc_1", "")),
+        "story_desc_2": _to_str(parsed_data.get("story_desc_2", "")),
+        "scenes": parsed_data.get("scenes") or [],
+        "footer_note": "*产品参数以实物为准，图片仅供参考",
+    }
+    # 主参数条（4 项）
+    for i in (1, 2, 3, 4):
+        product_data[f"param_{i}_label"] = mapped.get(f"param_{i}_label", "")
+        product_data[f"param_{i}_value"] = mapped.get(f"param_{i}_value", "")
+
+    # 解析产品图本地路径
+    product_image_local = ""
+    pimg_url = data.get("product_image", "")
+    if pimg_url:
+        local = BASE_DIR / pimg_url.lstrip("/")
+        if local.exists():
+            product_image_local = str(local)
+
+    # 准备输出目录
+    user_out = _user_output_dir()
+    detail_dir = user_out / "ai_detail"
+    seg_dir = detail_dir / f"segments_{engine}"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: 规划 prompt 序列（使用 prompt_templates 六维专业模板）
+    product_hint = product_data.get("product_type") or product_data.get("product_name") or ""
+    plan = ai_image_router.plan_page(theme_id, zones=zones, product_hint=product_hint)
+    print(f"[AI精修] 引擎={engine} 主题={theme_id} 段数={len(plan)} (prompt_templates)")
+
+    # Step 2: 逐段生成背景（失败的段降级为空，由合成器忽略）
+    t0 = _t.time()
+    segment_paths = []
+    for seg in plan:
+        zone = seg["zone"]
+        try:
+            local = ai_image_router.generate_segment_to_local(
+                engine, zone, seg["prompt"], api_keys, seg_dir,
+                width=750, height=seg["height"],
+                filename=f"{zone}.png",
+            )
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[AI精修] 段 {zone} 生成异常: {e}")
+            local = ""
+        segment_paths.append(local)
+        print(f"[AI精修]   ✓ {zone} → {local or '失败'}")
+
+    valid_paths = [p for p in segment_paths if p]
+    if not valid_paths:
+        return jsonify({"error": "所有段背景生成失败，请检查 API Key 与额度"}), 502
+
+    # Step 3: 融合 + 叠加内容
+    out_path = detail_dir / f"seamless_{engine}.png"
+    try:
+        # 把段路径中失败的占位（空串）保留位置，让合成器跳过
+        # compose_full_page 会跳过不存在的路径，只融合有效段
+        # 但 plan 与段路径要对齐，所以传一个过滤后的子计划
+        plan_filtered = [p for p, s in zip(plan, segment_paths) if s]
+        theme_primary = theme_color_flows.get_flow(theme_id).get("primary", "#E8231A")
+        image_composer.compose_seamless_detail_page(
+            product_data=product_data,
+            plan=plan_filtered,
+            segment_paths=valid_paths,
+            product_image=product_image_local,
+            output_path=str(out_path),
+            theme_primary=theme_primary,
+        )
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"长图合成失败: {e}"}), 500
+
+    elapsed = round(_t.time() - t0, 1)
+    rel = out_path.relative_to(BASE_DIR).as_posix()
+    print(f"[AI精修] 完成 → /{rel}（{elapsed}s）")
+    return jsonify({
+        "image_url": "/" + rel,
+        "engine": engine,
+        "segments": len(valid_paths),
+        "elapsed_sec": elapsed,
+    })
+
+
+# ── AI 合成 v2:HTML/CSS + Playwright 截图长图 ────────────────────────
+# 同一条管线也在 CLI `build_long_image.py` 里用,共享 `ai_compose_pipeline`。
+
+_HTML_V2_THEME_ACCENT = "#FFD166"  # 金色点缀(品牌无关 — 所有主题共用)
+
+# 这些 ctx 键如果存在,值里的 /static/... 路径会被转成 file:// 绝对 URI
+# (Playwright 走 file:// 协议加载临时 HTML,无法解析相对 HTTP 路径)
+_ASSET_KEYS_IN_CTX = ("bg_url", "product_url", "brand_logo_url", "qr_url")
+
+
+def _build_ctxs_from_parsed(parsed: dict,
+                            product_image_url: str,
+                            theme_id: str,
+                            backgrounds: dict | None = None) -> dict:
+    """
+    将 AI 解析的 parsed_data 映射成 HTML 合成管线的 7 屏 ctxs。
+
+    ───── 字段映射表(这是这个函数的单一真相) ─────────────────
+    parsed 字段            → 哪些屏用它
+    ─────────────────────────────────────────────────────
+    main_title             → hero.main_title / cta.cta_main
+    sub_slogan             → 所有屏 subtitle 的主来源
+    category_line          → hero/advantages/specs/scene 的 subtitle 兜底
+    hero_subtitle          → hero.subtitle 拼接串
+    slogan                 → hero.taglines
+    detail_params(字典)    → specs.specs[] + hero.kpi_list[]
+    advantages[]           → advantages.advantages[]
+    vs_comparison          → vs.{left_label/right_label/compare_items/summary_points}
+    scenes[]               → scene.scene_items[]
+    brand                  → brand.brand_name
+    brand_story            → brand.brand_story
+    brand_stats[]          → brand.credentials[]
+    model / product_name   → brand.brand_name_sub + cta.contacts 兜底值
+    contacts[](可选)       → cta.contacts[]
+    cta_sub(可选)          → cta.cta_sub;没有时用 sub_slogan 兜底
+
+    product_image_url      → hero/specs/cta 的 product_url(上传失败时走占位,见模板)
+    backgrounds[screen]    → 对应屏的 bg_url(Seedream 缓存层产物)
+
+    ───── 原则(feedback_no_hardcoded_data) ─────────────
+    - 不编造产品数据(规格/优势文字都来自 parsed)
+    - 但排版性字段(subtitle/副标签/iconemoji)可以做"基于 parsed 的派生兜底"
+    - 每屏必填字段缺则跳过该屏,不生成空屏
+    """
+    import theme_color_flows
+
+    parsed = parsed if isinstance(parsed, dict) else {}
+    mapped = _map_parsed_to_form_fields(parsed)
+    backgrounds = backgrounds or {}
+
+    primary = theme_color_flows.get_flow(theme_id).get("primary", "#E8231A")
+    theme = {
+        "theme_primary":      primary,
+        "theme_primary_dark": primary,
+        "theme_accent":       _HTML_V2_THEME_ACCENT,
+    }
+    product_url = product_image_url or ""
+    ctxs: dict = {}
+
+    # ── 公共派生值(跨屏复用)────────────────────────────
+    main_title     = mapped.get("main_title") or _to_str(parsed.get("main_title", ""))
+    brand_name     = _to_str(parsed.get("brand", ""))
+    model          = _to_str(parsed.get("model", "")) or _to_str(parsed.get("product_name", ""))
+    category_line  = _to_str(parsed.get("category_line", "")) or _to_str(parsed.get("product_type", ""))
+    sub_slogan     = _to_str(parsed.get("sub_slogan", ""))
+    hero_subtitle  = _to_str(parsed.get("hero_subtitle", ""))
+
+    # 跨屏 subtitle 通用兜底:sub_slogan > category_line
+    common_subtitle = sub_slogan or category_line
+
+    def _inject_bg(ctx: dict, screen: str) -> dict:
+        """背景图存在时注入 bg_url;缺失时由模板走 CSS 兜底"""
+        bg = (backgrounds.get(screen) or "").strip()
+        if bg:
+            ctx["bg_url"] = bg
+        return ctx
+
+    # ══════════════════════════════════════════════════════
+    # HERO
+    # ══════════════════════════════════════════════════════
+    if main_title:
+        hero: dict = {**theme, "main_title": main_title}
+        # product_url 缺失时模板会显示占位(下面改 hero.html 加 else 分支)
+        hero["product_url"] = product_url  # 空串也显式传,让模板走 else 分支
+        sub_parts = [category_line, hero_subtitle]
+        subtitle = " · ".join(p for p in sub_parts if p)
+        if subtitle:
+            hero["subtitle"] = subtitle
+        taglines = [p for p in (mapped.get("tagline_line1"),
+                                mapped.get("tagline_line2")) if p]
+        if taglines:
+            hero["taglines"] = taglines
+        kpi_list = []
+        for i in (1, 2, 3, 4):
+            v = (mapped.get(f"param_{i}_value") or "").strip()
+            l = (mapped.get(f"param_{i}_label") or "").strip()
+            if v and l:
+                kpi_list.append({"value": v, "label": l})
+        if kpi_list:
+            hero["kpi_list"] = kpi_list
+        ctxs["hero"] = _inject_bg(hero, "hero")
+
+    # ══════════════════════════════════════════════════════
+    # ADVANTAGES
+    # ══════════════════════════════════════════════════════
+    advs_raw = parsed.get("advantages") or []
+    advs = []
+    for it in advs_raw[:6]:
+        if isinstance(it, dict):
+            title = _to_str(it.get("text", "")) or _to_str(it.get("title", ""))
+            if not title:
+                continue
+            stat_num = _to_str(it.get("stat_num", ""))
+            stat_unit = _to_str(it.get("stat_unit", ""))
+            if not stat_num:
+                stat_num, stat_unit = _extract_stat_from_desc(
+                    it.get("desc", ""), it.get("desc_main", ""), it.get("text", ""))
+            advs.append({
+                "icon":      _to_str(it.get("emoji", "")) or "✅",
+                "title":     title,
+                "stat_num":  stat_num,
+                "stat_unit": stat_unit,
+                "desc_main": _to_str(it.get("desc_main", "")) or _to_str(it.get("desc", "")),
+                "desc_sub":  _to_str(it.get("desc_sub", "")),
+            })
+        elif isinstance(it, str) and it.strip():
+            advs.append({"icon": "✅", "title": it.strip(),
+                         "stat_num": "", "stat_unit": "",
+                         "desc_main": "", "desc_sub": ""})
+    if advs:
+        adv_ctx: dict = {
+            **theme,
+            "section_label": "CORE ADVANTAGES",
+            "title_main":    "核心优势",
+            "advantages":    advs,
+        }
+        if common_subtitle:
+            adv_ctx["subtitle"] = common_subtitle
+        ctxs["advantages"] = _inject_bg(adv_ctx, "advantages")
+
+    # ══════════════════════════════════════════════════════
+    # SPECS — value/unit 拆分,让 .spec-value 和 .spec-unit 各归各位
+    # ══════════════════════════════════════════════════════
+    e_specs = mapped.get("e_specs") or []
+    spec_rows = []
+    for s in e_specs:
+        if not isinstance(s, dict):
+            continue
+        label = _to_str(s.get("label", "")) or _to_str(s.get("name", ""))
+        val = _to_str(s.get("value", ""))
+        if not (label and val):
+            continue
+        # value 里若内嵌单位(如 "90L"/"3600㎡/h")则拆开,空单位模板自动隐藏
+        unit = _to_str(s.get("unit", ""))
+        if not unit:
+            num_part, extracted_unit = _split_value_unit(val)
+            if extracted_unit:
+                val = num_part
+                unit = extracted_unit
+        spec_rows.append({"label": label, "value": val, "unit": unit})
+
+    if spec_rows:
+        specs_ctx: dict = {
+            **theme,
+            "section_label": "TECHNICAL SPECS",
+            "title_main":    "专业参数",
+            "specs":         spec_rows[:10],
+        }
+        if common_subtitle:
+            specs_ctx["subtitle"] = common_subtitle
+        specs_ctx["product_url"] = product_url  # 空串也传,让 specs.html 走 else 占位
+        if model:
+            specs_ctx["product_badge"] = model
+        ctxs["specs"] = _inject_bg(specs_ctx, "specs")
+
+    # ══════════════════════════════════════════════════════
+    # VS — 补 icon/summary_points,对比屏从"三行表格"变成"视觉收束单元"
+    # ══════════════════════════════════════════════════════
+    vs_raw = parsed.get("vs_comparison") or {}
+    if isinstance(vs_raw, dict):
+        compare_items = vs_raw.get("compare_items") or []
+        cmp_rows = []
+        for c in compare_items:
+            if not isinstance(c, dict):
+                continue
+            label = _to_str(c.get("label", ""))
+            if not label:
+                continue
+            cmp_rows.append({
+                "label":       label,
+                "left_value":  _to_str(c.get("left_value", "")),
+                "left_desc":   _to_str(c.get("left_desc", "")),
+                "right_value": _to_str(c.get("right_value", "")),
+                "right_desc":  _to_str(c.get("right_desc", "")),
+            })
+        left_label = _to_str(vs_raw.get("left_title", "")) or "传统方案"
+        right_label = _to_str(vs_raw.get("right_title", "")) or "本产品"
+
+        # 列头 icon:AI 显式给 > 默认语义图标
+        left_icon = _to_str(vs_raw.get("left_icon", "")) or "🤖"
+        right_icon = _to_str(vs_raw.get("right_icon", "")) or "👤"
+        # 列副标签:可选
+        left_sublabel = _to_str(vs_raw.get("left_sublabel", "")) or "高效智能"
+        right_sublabel = _to_str(vs_raw.get("right_sublabel", "")) or "传统方式"
+
+        # summary_points:从 replace_count + cmp_rows 前 2 项派生一条收束条
+        # 没有 compare_items 就跳过,保持"不硬编造"
+        summary_points = []
+        replace_count = _to_str(vs_raw.get("replace_count", ""))
+        if replace_count:
+            summary_points.append({"num": f"1 顶 {replace_count}", "label": "人力替代"})
+        for c in cmp_rows[:2]:
+            rv = c.get("right_value", "")
+            lbl = c.get("label", "")
+            if rv and lbl and len(summary_points) < 3:
+                summary_points.append({"num": rv, "label": lbl})
+
+        if cmp_rows:
+            vs_ctx: dict = {
+                **theme,
+                "section_label":  "COMPARISON",
+                "title_main":     "对比优势",
+                "left_label":     left_label,
+                "right_label":    right_label,
+                "left_icon":      left_icon,
+                "right_icon":     right_icon,
+                "left_sublabel":  left_sublabel,
+                "right_sublabel": right_sublabel,
+                "compare_items":  cmp_rows,
+            }
+            if common_subtitle:
+                vs_ctx["subtitle"] = common_subtitle
+            if summary_points:
+                vs_ctx["summary_points"] = summary_points
+            ctxs["vs"] = _inject_bg(vs_ctx, "vs")
+
+    # ══════════════════════════════════════════════════════
+    # SCENE
+    # ══════════════════════════════════════════════════════
+    scenes_raw = parsed.get("scenes") or []
+    scene_items = []
+    for s in scenes_raw[:6]:
+        if not isinstance(s, dict):
+            continue
+        name = _to_str(s.get("name", "")) or _to_str(s.get("title", ""))
+        if not name:
+            continue
+        img = _to_str(s.get("image", "")) or _match_scene_image(name)
+        if not img:
+            continue
+        item = {"name": name, "image_url": img,
+                "desc": _to_str(s.get("desc", "")) or _to_str(s.get("description", ""))}
+        scene_items.append(item)
+    if scene_items:
+        scene_ctx: dict = {
+            **theme,
+            "section_label": "APPLICATION SCENARIOS",
+            "title_main":    "适用场景",
+            "scene_items":   scene_items,
+        }
+        if common_subtitle:
+            scene_ctx["subtitle"] = common_subtitle
+        ctxs["scene"] = _inject_bg(scene_ctx, "scene")
+
+    # ══════════════════════════════════════════════════════
+    # BRAND — 补 brand_name_sub (用 model 作英文副名)
+    # ══════════════════════════════════════════════════════
+    story_parts = [_to_str(parsed.get(k, ""))
+                   for k in ("brand_story", "story_desc_1", "story_desc_2")]
+    brand_story = " ".join(p for p in story_parts if p).strip()
+    if brand_name and brand_story:
+        creds = []
+        for s in (parsed.get("brand_stats") or []):
+            if not isinstance(s, dict):
+                continue
+            main = _to_str(s.get("value", "")) or _to_str(s.get("main", ""))
+            lbl = _to_str(s.get("label", ""))
+            if main and lbl:
+                creds.append({"icon": _to_str(s.get("icon", "")) or "🏆",
+                              "main": main, "label": lbl})
+        brand_ctx: dict = {
+            **theme,
+            "section_label": "ABOUT US",
+            "brand_name":    brand_name,
+            "brand_story":   brand_story,
+        }
+        # brand_name_sub:AI 显式给 > model 派生(英文型号作副名)
+        brand_name_sub = _to_str(parsed.get("brand_name_sub", ""))
+        if not brand_name_sub and model:
+            brand_name_sub = model
+        if brand_name_sub:
+            brand_ctx["brand_name_sub"] = brand_name_sub
+        if creds:
+            brand_ctx["credentials"] = creds[:4]
+            brand_ctx["credentials_cols"] = min(len(creds), 4)
+        ctxs["brand"] = _inject_bg(brand_ctx, "brand")
+
+    # ══════════════════════════════════════════════════════
+    # CTA — 补 cta_sub / contacts;product_url 作为副图
+    # ══════════════════════════════════════════════════════
+    cta_main = _to_str(parsed.get("cta_main", ""))
+    if not cta_main and main_title:
+        cta_main = f"立即咨询 · {main_title}"
+    if cta_main:
+        cta: dict = {
+            **theme,
+            "section_label": "CONTACT US",
+            "cta_main":      cta_main,
+        }
+        # cta_sub: AI 显式给 > sub_slogan > category_line
+        cta_sub = _to_str(parsed.get("cta_sub", "")) or common_subtitle
+        if cta_sub:
+            cta["cta_sub"] = cta_sub
+
+        # contacts: AI 显式给 > 基于 brand/model 派生的"品牌名片"占位
+        # 不编假电话号 — 只把 parsed 已有的标识信息重组成"联系卡"形式
+        contacts_raw = parsed.get("contacts") or []
+        contacts = []
+        for c in contacts_raw:
+            if isinstance(c, dict):
+                val = _to_str(c.get("value", ""))
+                if val:
+                    contacts.append({"icon": _to_str(c.get("icon", "")) or "",
+                                     "label": _to_str(c.get("label", "")),
+                                     "value": val})
+        if not contacts:
+            # 占位兜底:用 brand + model,不瞎编号码
+            if brand_name:
+                contacts.append({"icon": "🏢", "label": "BRAND",
+                                 "value": brand_name})
+            if model:
+                contacts.append({"icon": "📦", "label": "MODEL",
+                                 "value": model})
+            if category_line:
+                contacts.append({"icon": "🛠", "label": "CATEGORY",
+                                 "value": category_line})
+        if contacts:
+            cta["contacts"] = contacts
+
+        # cta 屏右半:有产品图就展示产品缩略图(模板已支持 product_url)
+        if product_url:
+            cta["product_url"] = product_url
+
+        ctxs["cta"] = cta
+
+    return ctxs
+
+
+def _to_file_uri_if_local(url: str) -> str:
+    """把 /static/... 或 /output/... 的 HTTP 路径转成 file:// 绝对 URI,
+    已经是 file:// / http(s):// / data: 的保持原样;空串/None 原样返回。"""
+    if not url or not isinstance(url, str):
+        return url
+    if url.startswith(("file://", "http://", "https://", "data:")):
+        return url
+    # 以 / 开头的相对路径,映射到 BASE_DIR 下
+    if url.startswith("/"):
+        local = BASE_DIR / url.lstrip("/")
+        if local.exists():
+            return local.as_uri()
+    return url
+
+
+def _resolve_asset_urls_in_ctx(ctx: dict) -> dict:
+    """深拷贝 ctx 并把已知资源字段的相对路径转成 file:// URI。
+    只处理已知的 asset 键和 scene_items[].image_url — 不误伤其他字符串。"""
+    out = dict(ctx)
+    for k in _ASSET_KEYS_IN_CTX:
+        if k in out:
+            out[k] = _to_file_uri_if_local(out[k])
+    # scene 屏的场景卡片图
+    if isinstance(out.get("scene_items"), list):
+        out["scene_items"] = [
+            {**it, "image_url": _to_file_uri_if_local(it.get("image_url", ""))}
+            if isinstance(it, dict) else it
+            for it in out["scene_items"]
+        ]
+    return out
+
+
+@app.route("/api/generate-ai-detail-html", methods=["POST"])
+@login_required
+@csrf.exempt
+def generate_ai_detail_html():
+    """
+    AI 合成管线 v2:HTML/CSS 排版 + Playwright 截图(7 屏长图)。
+
+    与 /api/generate-ai-detail 的区别:
+      - v1:AI 背景 + Pillow 绘字(字体/排版依赖 PIL)
+      - v2:AI 背景 + HTML/CSS 排版 + Chromium 截图(排版由浏览器负责,更精准)
+
+    请求体:
+    {
+      "ctxs":  { "hero": {...}, "advantages": {...}, ... },  # 必填
+      "order": ["hero","advantages","specs","vs","scene","brand","cta"],  # 可选
+      "out_jpg_name": "long.jpg",  # 可选
+      "jpg_quality":  90,          # 可选
+      "save_png":     false        # 可选(true 额外 +20s 生成档案 PNG)
+    }
+
+    返回:
+    {
+      "image_url": "/static/outputs/<uid>/ai_compose/<jpg_name>",
+      "segments":  [{type, w, h, elapsed}, ...],
+      "render_elapsed": 12.7, "stitch_elapsed": 0.8, "total_elapsed": 13.5,
+      "width": 1500, "height": 11200,
+      "jpg_bytes": 1583204,
+      "png_url"?: "...", "png_bytes"?: ...
+    }
+    """
+    import traceback
+    import ai_compose_pipeline
+
+    data = request.get_json(silent=True) or {}
+
+    # 输入两路:显式 ctxs(测试/CLI)或 parsed_data(前端 AI 解析结果)
+    ctxs = data.get("ctxs") or {}
+    if not ctxs or not isinstance(ctxs, dict):
+        parsed_data = data.get("parsed_data") or {}
+        if not parsed_data:
+            return jsonify({"error": "缺少 ctxs 或 parsed_data"}), 400
+        product_image = data.get("product_image", "")
+        theme_id = (data.get("theme_id") or "classic-red").strip()
+
+        # 先并发生成 6 屏 AI 背景(hero/advantages/specs/vs/scene/brand)
+        # AI_BG_MODE 控制模式: cache(默认 24h 复用) / realtime(每次都新)
+        # API 失败 / 无 key → 该屏 bg_url="" → 模板走 CSS 兜底
+        try:
+            import ai_bg_cache
+            ark_key = os.environ.get("ARK_API_KEY", "").strip()
+            category = (parsed_data.get("product_type")
+                        or parsed_data.get("category_line") or "").strip()
+            brand = (parsed_data.get("brand") or "").strip()
+            # product_name 进缓存 key → 不同型号不共享背景图
+            product_name = (parsed_data.get("product_name")
+                            or parsed_data.get("model")
+                            or parsed_data.get("main_title") or "").strip()
+            backgrounds = ai_bg_cache.generate_backgrounds(
+                theme_id=theme_id, product_category=category,
+                brand=brand, api_key=ark_key,
+                product_name=product_name,
+            )
+        except Exception as e:
+            print(f"[ai-detail-html] 背景生成全局失败,全部走 CSS 兜底: {e}")
+            traceback.print_exc()
+            backgrounds = {}
+
+        ctxs = _build_ctxs_from_parsed(parsed_data, product_image, theme_id,
+                                       backgrounds=backgrounds)
+
+        # ── 诊断日志:审计数据流(由 AI_DETAIL_DEBUG=1 开启)────────
+        # 开启方式: 环境变量 AI_DETAIL_DEBUG=1 python app.py
+        # 目的: 把 parsed_data 关键字段 / ctxs 各屏字段 dump 到 stdout
+        #       便于对比"模板要什么 vs ctxs 有什么 vs 哪些为空"
+        if os.environ.get("AI_DETAIL_DEBUG", "").strip() in ("1", "true", "yes"):
+            import json as _json
+            print("\n" + "═" * 72)
+            print("[AUDIT] /api/generate-ai-detail-html 数据流诊断")
+            print("═" * 72)
+            print(f"[AUDIT] parsed_data.keys() = {sorted(parsed_data.keys())}")
+            for k, v in parsed_data.items():
+                if isinstance(v, (list, dict)):
+                    snippet = _json.dumps(v, ensure_ascii=False)[:120]
+                    print(f"[AUDIT]   {k:20s} = {type(v).__name__}[len={len(v)}]  {snippet}")
+                else:
+                    print(f"[AUDIT]   {k:20s} = {_to_str(v)[:80]!r}")
+            print("─" * 72)
+            print(f"[AUDIT] ctxs.keys() = {list(ctxs.keys())}")
+            for screen, ctx in ctxs.items():
+                keys = list(ctx.keys())
+                empties = [k for k, v in ctx.items()
+                           if v in ("", None, [], {}) or
+                           (isinstance(v, str) and not v.strip())]
+                print(f"[AUDIT]   {screen:12s} keys={keys}")
+                print(f"[AUDIT]   {screen:12s} 空字段={empties}")
+                # 列表字段详细展开(advantages/specs/compare_items/scene_items/credentials)
+                for lk in ("advantages", "specs", "compare_items",
+                           "scene_items", "credentials", "kpi_list", "taglines", "contacts"):
+                    lv = ctx.get(lk)
+                    if isinstance(lv, list):
+                        print(f"[AUDIT]   {screen:12s} {lk}[{len(lv)}] = "
+                              f"{_json.dumps(lv, ensure_ascii=False)[:200]}")
+            print("═" * 72 + "\n")
+
+        if not ctxs:
+            return jsonify({"error": "parsed_data 里没有可渲染的屏(至少需要 main_title)"}), 400
+
+    order = data.get("order") or ai_compose_pipeline.DEFAULT_ORDER
+    if not isinstance(order, list) or not order:
+        return jsonify({"error": "order 必须是非空数组"}), 400
+
+    out_jpg_name = (data.get("out_jpg_name") or "long.jpg").strip()
+    if not out_jpg_name.endswith(".jpg"):
+        out_jpg_name += ".jpg"
+    jpg_quality = int(data.get("jpg_quality") or 90)
+    save_png = bool(data.get("save_png"))
+
+    # 把每屏 ctx 里的 /static/... 路径转成 file:// URI
+    resolved_ctxs = {k: _resolve_asset_urls_in_ctx(v) for k, v in ctxs.items()
+                     if isinstance(v, dict)}
+
+    # 输出目录:static/outputs/<uid>/ai_compose/ — 走 Flask 默认 static 服务
+    uid = current_user.id if current_user.is_authenticated else 0
+    out_dir = STATIC_OUTPUTS / str(uid) / "ai_compose"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = ai_compose_pipeline.compose_detail_page(
+            ctxs=resolved_ctxs,
+            order=order,
+            out_dir=out_dir,
+            out_jpg_name=out_jpg_name,
+            out_png_name="long.png" if save_png else None,
+            jpg_quality=jpg_quality,
+            verbose=True,
+        )
+    except ValueError as e:
+        # 必填字段缺失 / segments 空 — 用户可修复
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"合成失败: {e}"}), 500
+
+    # 把绝对路径转成可访问 URL
+    jpg_rel = Path(result["jpg"]).relative_to(BASE_DIR).as_posix()
+    resp = {
+        "image_url":      "/" + jpg_rel,
+        "segments":       [{k: s[k] for k in ("type", "w", "h", "elapsed")}
+                           for s in result["segments"]],
+        "render_elapsed": result["render_elapsed"],
+        "stitch_elapsed": result["stitch_elapsed"],
+        "total_elapsed":  result["total_elapsed"],
+        "width":          result["width"],
+        "height":         result["height"],
+        "jpg_bytes":      result["jpg_bytes"],
+    }
+    if "png" in result:
+        resp["png_url"] = "/" + Path(result["png"]).relative_to(BASE_DIR).as_posix()
+        resp["png_bytes"] = result["png_bytes"]
+
+    print(f"[AI合成v2] 完成 → {resp['image_url']} "
+          f"({resp['total_elapsed']}s, {resp['jpg_bytes']/1024/1024:.2f} MB)")
+    return jsonify(resp)
 
 
 # ══════════════════════════════════════════════════════════════════════

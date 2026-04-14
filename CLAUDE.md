@@ -7,6 +7,29 @@
 - Playwright + Chromium 已安装（用于导出 PNG）
 - 代理：Clash 端口 7890
 
+### 环境变量 AI_BG_MODE (AI 背景图生成开关)
+
+控制 `/api/generate-ai-detail-html` 端点（v2 HTML 合成管线）生成背景图的模式：
+
+- **`AI_BG_MODE=cache`** (默认，开发/内部测试用)：
+  按 `(theme_id, screen_type, product_category)` hash 缓存 24h。
+  同主题 + 同品类重复点 → 读磁盘缓存，**不重复烧 Seedream API**。
+  首次生成仍需调 API（冷缓存），之后命中直接复用。
+
+- **`AI_BG_MODE=realtime`** (生产/面向客户用)：
+  每次都实时调 Seedream 生成全新背景，**忽略缓存文件**。
+  用于给终端用户演示"每次都不一样"的差异化视觉。
+
+失败降级：API 未配置 / 调用超时 / 下载失败 → 该屏 `bg_url=""` → 模板走 CSS 渐变兜底（不阻塞长图生成）。
+
+缓存目录：`static/cache/ai_bg/<hash>.png` — 可直接删文件清缓存，无需重启。
+
+在 `.env` 里加：
+```
+AI_BG_MODE=cache
+```
+切换到 realtime 时把值改成 `realtime` 即可，无需重启进程之外的任何操作。
+
 ## 项目结构
 ```
 app.py                          主后端（Flask）
@@ -45,3 +68,41 @@ python app.py
 - `POST /api/build/设备类/parse-text` — AI 解析文案，返回表单字段 JSON
 - `POST /build/设备类` — 提交表单，渲染预览页
 - `POST /export/设备类` — Playwright 截图，返回 PNG 文件
+- `GET /api/ai-engines` — 列出可用 AI 引擎（通义万相 / 豆包 Seedream）
+- `POST /api/generate-ai-detail` — 双引擎无缝长图生成（详见 `ai_image_router.py`）
+
+## Claude Code 配置说明
+
+`.claude/` 目录是项目的 Claude Code 协作配置，已落地的内容如下：
+
+### 任务路由（按工作类型选 agent / skill）
+
+| 任务类型 | 用什么 | 入口 |
+|---------|--------|------|
+| 改 Jinja 模板 / 配色 / 文案 | `block-editor` agent | 自动委派 |
+| 改 AI 生图 / Pillow 合成 / 引擎路由 | `ai-image-debugger` agent | 自动委派 |
+| 改完代码快速验证（30秒） | `/smoke` skill | 手动 `/smoke` |
+| 改完模板看预览 | `/regen-thumbs` skill | 手动 `/regen-thumbs` |
+| 推送上线（push + ssh restart） | `/deploy` skill | 手动 `/deploy "msg"` |
+
+### settings.json 关键约束
+
+- **defaultMode: acceptEdits** — 编辑类操作不再每次询问；危险操作走 `ask`/`deny`
+- **deny 列表硬阻止**：`rm -rf /`, `rm -rf ~`, `git push --force`, `git reset --hard`, 编辑/读取 `.env` 和 `instance/`
+- **PreToolUse Edit hook**：阻止任何路径包含 `.env` / `crypto_utils.py` / `/instance/` 的写入
+- **env**：强制 `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`（Windows GBK 终端中文乱码兜底）
+- **additionalDirectories**：把 `static/scene_bank/` 加入工作区，e2e 测试可读
+- **不做 Stop hook**：跨平台脆弱（Windows/Linux 命令不一致）+ 慢；改用 `/smoke` skill 主动验证（更显式、更可控）
+
+### 个人覆盖
+
+`.claude/settings.local.json`（不进 git）放本机临时白名单。团队规则永远写 `settings.json`。
+
+### 修改 .claude/ 后
+
+```bash
+# 验证 JSON 格式
+python -c "import json; json.load(open('.claude/settings.json', encoding='utf-8'))"
+# 验证 Edit hook（应输出 exit=2）
+echo '{"tool_input":{"file_path":".env"}}' | python -c "import sys,json; d=json.load(sys.stdin); p=d.get('tool_input',{}).get('file_path',''); sys.exit(2) if any(b in p for b in ['.env','crypto_utils.py','/instance/']) else sys.exit(0)"; echo "exit=$?"
+```

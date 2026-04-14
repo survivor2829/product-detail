@@ -541,10 +541,12 @@
       <button class="btn-generate" id="btn_generate" onclick="generatePreview()">
         ✨ 一键生成详情页
       </button>
-      <button class="btn-generate" id="btn_ai_image" onclick="generateAiImages()" style="margin-top:10px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; box-shadow:0 2px 6px rgba(139,92,246,0.28);">
-        🎨 AI生图（高质量）
+      <p class="text-hint" style="margin-top:8px;">Jinja 模板秒出 HTML 预览,中央区直接看效果</p>
+
+      <button class="btn-generate" id="btn_ai_html_v2" onclick="generateAiHtmlV2()" style="margin-top:14px; background:linear-gradient(135deg,#10b981,#059669); border:none; box-shadow:0 2px 6px rgba(5,150,105,0.28);">
+        🎨 AI精修（专业版）
       </button>
-      <p class="text-hint" style="margin-top:8px;">AI生成精美背景 + 产品合成，需阿里云百炼API Key</p>
+      <p class="text-hint" style="margin-top:8px;">豆包 Seedream 生成 AI 背景 + HTML/CSS 排版 + Chromium 截图,约 10-20 秒</p>
     </div>
 
   </aside>
@@ -554,16 +556,16 @@
 
     <!-- Tabs -->
     <div class="center-tabs" id="center_tabs">
-      <button class="center-tab active" data-tab="detail" onclick="switchCenterTab('detail')">详情图</button>
+      <button class="center-tab active" data-tab="detail" onclick="switchCenterTab('detail')">一键生成版</button>
       <button class="center-tab" data-tab="main_img" onclick="switchCenterTab('main_img')">模块主图</button>
-      <button class="center-tab" data-tab="ai_img" onclick="switchCenterTab('ai_img')">AI生图</button>
+      <button class="center-tab" data-tab="ai_img" onclick="switchCenterTab('ai_img')">AI精修版</button>
     </div>
 
     <!-- Empty State -->
     <div id="empty_state">
       <div class="empty-icon">📋</div>
       <div class="empty-title">上传产品图 → 粘贴文案 → 一键生成</div>
-      <div class="empty-subtitle">生成后可在「详情图」「主图」「AI生图」之间切换</div>
+      <div class="empty-subtitle">生成后可在「一键生成版」「主图」「AI精修版」之间切换对比</div>
     </div>
 
     <!-- Detail Tab: Preview Wrapper -->
@@ -575,8 +577,8 @@
     <div id="ai_img_wrapper" style="display:none;">
       <div id="ai_img_loading" style="display:none; text-align:center; padding:60px 20px;">
         <div style="font-size:48px; margin-bottom:20px;">🎨</div>
-        <div style="font-size:18px; font-weight:600; color:#6366f1;">AI 正在生成高质量详情图...</div>
-        <div style="font-size:14px; color:#888; margin-top:8px;">通义万相生成背景 → Pillow合成产品+文字，预计30-60秒</div>
+        <div style="font-size:18px; font-weight:600; color:#10b981;">AI 正在生成高质量详情图...</div>
+        <div style="font-size:14px; color:#888; margin-top:8px;">豆包 Seedream 生成 AI 背景 + HTML/CSS 排版 + Chromium 截图,约 10-20 秒</div>
         <div style="margin-top:20px; width:200px; height:4px; background:#e5e7eb; border-radius:2px; margin-left:auto; margin-right:auto; overflow:hidden;">
           <div id="ai_progress_bar" style="width:0%; height:100%; background:linear-gradient(90deg,#6366f1,#8b5cf6); border-radius:2px; transition:width 0.5s;"></div>
         </div>
@@ -701,6 +703,24 @@
   let moduleDataMap = {};        // block_id → block_data (for editing)
   let editingModuleId = null;    // currently editing block_id
 
+  /* e2e 测试钩子 — 让 Playwright 脚本能直接注入 parsed_data 绕过 AI 解析流程 */
+  window.__TEST_setBuildData = (parsed, themeId, productImageUrl) => {
+    currentBuildData = { parsed };
+    if (themeId) currentThemeId = themeId;
+    if (productImageUrl) {
+      // 兜底:让 #product_image_preview 存在且携带 dataset.url,AI精修读这里
+      let el = document.getElementById('product_image_preview');
+      if (!el) {
+        el = document.createElement('img');
+        el.id = 'product_image_preview';
+        el.style.display = 'none';
+        document.body.appendChild(el);
+      }
+      el.dataset.url = productImageUrl;
+      el.src = productImageUrl;
+    }
+  };
+
   /* ── Helpers ────────────────────────────────────────────────── */
   const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 
@@ -734,27 +754,37 @@
   }
 
   /* ── Image Upload ───────────────────────────────────────────── */
-  function initUploadBox(boxId, onSuccess) {
+  /* opts.autoRembg=true → 后端自动调 rembg 抠图,返回去背景透明 PNG
+     仅 upload_product 需要(产品主图),其他图(场景/效果/二维码)保留原背景 */
+  function initUploadBox(boxId, onSuccess, opts) {
     const box = document.getElementById(boxId);
     const input = box.querySelector('input[type="file"]');
     const preview = box.querySelector('.upload-preview');
     const placeholder = box.querySelector('.upload-placeholder');
+    const autoRembg = !!(opts && opts.autoRembg);
 
     box.addEventListener('click', () => input.click());
     box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('drag-over'); });
     box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
     box.addEventListener('drop', e => {
       e.preventDefault(); box.classList.remove('drag-over');
-      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0], box, preview, placeholder, onSuccess);
+      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0], box, preview, placeholder, onSuccess, autoRembg);
     });
     input.addEventListener('change', () => {
-      if (input.files.length) uploadFile(input.files[0], box, preview, placeholder, onSuccess);
+      if (input.files.length) uploadFile(input.files[0], box, preview, placeholder, onSuccess, autoRembg);
     });
   }
 
-  async function uploadFile(file, box, preview, placeholder, onSuccess) {
+  async function uploadFile(file, box, preview, placeholder, onSuccess, autoRembg) {
     const formData = new FormData();
     formData.append('file', file);
+    if (autoRembg) formData.append('auto_rembg', '1');
+    // 抠图耗时 3-8s,给用户即时占位提示避免以为卡死
+    if (autoRembg) {
+      preview.innerHTML = `<div style="padding:24px;color:#6366f1;font-size:13px;">AI 抠图中…约 5 秒</div>`;
+      preview.style.display = 'block';
+      placeholder.style.display = 'none';
+    }
     try {
       const resp = await fetch('/api/upload', {
         method: 'POST',
@@ -763,14 +793,23 @@
       });
       const data = await resp.json();
       if (data.url) {
-        preview.innerHTML = `<img src="${data.url}" alt=""><button class="upload-remove" onclick="removeUpload(event, '${box.id}')">&times;</button>`;
+        const badge = data.rembg
+          ? `<div style="position:absolute;top:4px;left:4px;background:#10b981;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;">已去背景</div>`
+          : '';
+        preview.innerHTML = `${badge}<img src="${data.url}" alt=""><button class="upload-remove" onclick="removeUpload(event, '${box.id}')">&times;</button>`;
         preview.style.display = 'block';
         placeholder.style.display = 'none';
         onSuccess(data.url);
       } else {
+        preview.innerHTML = '';
+        preview.style.display = 'none';
+        placeholder.style.display = 'flex';
         showError(data.error || '上传失败');
       }
     } catch (e) {
+      preview.innerHTML = '';
+      preview.style.display = 'none';
+      placeholder.style.display = 'flex';
       showError('上传失败: ' + e.message);
     }
   }
@@ -1164,108 +1203,70 @@
     document.getElementById('ai_img_wrapper').style.display = tab === 'ai_img' ? 'block' : 'none';
   }
 
-  /* ── AI 生图 ───────────────────────────────────────────────── */
-  let aiImageUrls = [];
-
-  async function generateAiImages() {
+  /* ── AI 精修版：豆包 Seedream 背景 + HTML/CSS + Playwright 截图 ───── */
+  async function generateAiHtmlV2() {
     if (!currentBuildData || !currentBuildData.parsed) {
       showError('请先粘贴产品文案并点击「一键生成详情页」');
       return;
     }
-    const currentParsedData = currentBuildData.parsed;
-
-    // 切到AI生图tab
     switchCenterTab('ai_img');
     document.getElementById('empty_state').style.display = 'none';
 
-    // 显示loading
     const loading = document.getElementById('ai_img_loading');
     const results = document.getElementById('ai_img_results');
     loading.style.display = 'block';
     results.innerHTML = '';
 
-    // 进度条动画
+    const loadingText = loading.querySelector('div:nth-child(2)');
+    const subText = loading.querySelector('div:nth-child(3)');
+    if (loadingText) loadingText.textContent = '正在生成 AI 精修版详情页…';
+    if (subText) subText.textContent = '豆包 Seedream 生成 AI 背景 + HTML/CSS 排版 + Chromium 截图,约 10-20 秒';
+
     const bar = document.getElementById('ai_progress_bar');
     bar.style.width = '0%';
     let progress = 0;
     const progressTimer = setInterval(() => {
-      progress = Math.min(progress + 2, 90);
+      progress = Math.min(progress + 5, 92);
       bar.style.width = progress + '%';
-    }, 1000);
+    }, 700);
 
-    // 获取产品图URL
     const prodImg = document.getElementById('product_image_preview');
     const productImageUrl = prodImg ? (prodImg.dataset.url || '') : '';
 
-    // 弹窗获取百炼key（简单方案）
-    let dashscopeKey = localStorage.getItem('dashscope_api_key') || '';
-    if (!dashscopeKey) {
-      dashscopeKey = prompt('请输入阿里云百炼 API Key（通义万相生图）：\n\n获取地址：https://bailian.console.aliyun.com/');
-      if (!dashscopeKey) {
-        clearInterval(progressTimer);
-        loading.style.display = 'none';
-        return;
-      }
-      localStorage.setItem('dashscope_api_key', dashscopeKey);
-    }
+    const payload = {
+      parsed_data:   currentBuildData.parsed,
+      product_image: productImageUrl,
+      theme_id:      currentThemeId,
+      out_jpg_name:  `detail_v2_${Date.now()}.jpg`,
+      save_png:      false,
+    };
 
     try {
-      const resp = await postJson('/api/generate-ai-images', {
-        parsed_data: currentParsedData,
-        product_image: productImageUrl,
-        dashscope_api_key: dashscopeKey,
-      });
-
+      const resp = await postJson('/api/generate-ai-detail-html', payload);
       clearInterval(progressTimer);
       bar.style.width = '100%';
-
-      if (resp.error) {
-        throw new Error(resp.error);
-      }
-
-      aiImageUrls = resp.images || [];
       loading.style.display = 'none';
 
-      if (!aiImageUrls.length) {
-        results.innerHTML = '<div style="text-align:center; color:#888; padding:40px;">未生成任何图片</div>';
-        return;
-      }
-
-      // 渲染结果
-      let html = '<div style="text-align:center; margin-bottom:16px;">' +
-        '<span style="font-size:16px; font-weight:600; color:#6366f1;">生成完成！共 ' + aiImageUrls.length + ' 张</span>' +
-        '&nbsp;&nbsp;<button onclick="downloadAllAiImages()" style="padding:6px 16px; background:#6366f1; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px;">下载全部</button>' +
-        '</div>';
-
-      aiImageUrls.forEach((url, i) => {
-        html += '<div style="position:relative; width:375px; border-radius:8px; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,0.1);">' +
-          '<img src="' + url + '?t=' + Date.now() + '" style="width:100%; display:block;" />' +
-          '<a href="' + url + '" download style="position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.5); color:#fff; padding:4px 10px; border-radius:4px; font-size:12px; text-decoration:none;">下载</a>' +
-          '</div>';
-      });
-
-      results.innerHTML = html;
-
+      const url = resp.image_url + '?t=' + Date.now();
+      const info = `AI 精修版 · ${resp.segments.length} 屏 · ${resp.total_elapsed}s`;
+      results.innerHTML = `
+        <div style="text-align:center; margin-bottom:16px;">
+          <span style="font-size:14px; color:#555; margin-right:12px;">${info}</span>
+          <a href="${resp.image_url}" download
+            style="padding:6px 16px; background:#10b981; color:#fff;
+            border:none; border-radius:6px; font-size:13px; text-decoration:none;">
+            下载详情图
+          </a>
+        </div>
+        <div style="position:relative; width:375px; border-radius:8px; overflow:hidden;
+          box-shadow:0 4px 18px rgba(0,0,0,0.12);">
+          <img src="${url}" style="width:100%; display:block;" />
+        </div>`;
     } catch (e) {
       clearInterval(progressTimer);
       loading.style.display = 'none';
-      results.innerHTML = '<div style="text-align:center; color:#ef4444; padding:40px;">生成失败: ' + e.message + '</div>';
-      // 如果key无效，清除缓存
-      if (e.message.includes('API Key') || e.message.includes('401') || e.message.includes('403')) {
-        localStorage.removeItem('dashscope_api_key');
-      }
+      results.innerHTML = `<div style="text-align:center; color:#ef4444; padding:40px;">AI 精修失败: ${e.message}</div>`;
     }
-  }
-
-  function downloadAllAiImages() {
-    aiImageUrls.forEach((url, i) => {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'detail_' + (i + 1) + '.png';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    });
   }
 
   /* ── Module Main Image Display ─────────────────────────────── */
@@ -1423,7 +1424,8 @@
   /* ── Init ───────────────────────────────────────────────────── */
   document.addEventListener('DOMContentLoaded', () => {
     loadThemes();
-    initUploadBox('upload_product', url => { productImageUrl = url; });
+    // 产品图走自动抠图 — 否则 AI 精修合成时原图背景 + 原图水印文字会穿透到模板
+    initUploadBox('upload_product', url => { productImageUrl = url; }, { autoRembg: true });
     initUploadBox('upload_scene', url => { sceneImageUrl = url; });
     initUploadBox('upload_effect', url => { effectImageUrl = url; });
     initUploadBox('upload_qr', url => { qrImageUrl = url; });

@@ -6,6 +6,8 @@ AI背景 + 抠图产品 + 中文文字 → 专业详情图PNG
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from pathlib import Path
 import math
+import functools
+import numpy as np
 
 # ── 字体 ──────────────────────────────────────────────────────────────
 FONT_DIR = "C:/Windows/Fonts"
@@ -30,7 +32,7 @@ BLUE_ACCENT = (60, 140, 255)
 
 
 def _font(size, bold=False):
-    return ImageFont.truetype(FONT_BOLD if bold else FONT_REGULAR, size)
+    return _load_chinese_font(size, bold)
 
 
 def _emoji_font(size):
@@ -815,3 +817,847 @@ def compose_all(product_data: dict, product_image: str,
 
     print(f"[合成] 全部完成，共 {len(results)} 张图")
     return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  无缝长图合成器 — 多段 AI 背景渐变融合 + 全页内容叠加
+# ══════════════════════════════════════════════════════════════════════
+
+_FONT_CANDIDATES = {
+    True: [  # bold
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/Library/Fonts/Arial Bold.ttf",
+    ],
+    False: [  # regular
+        "C:/Windows/Fonts/msyh.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/Library/Fonts/Arial.ttf",
+    ],
+}
+
+
+@functools.lru_cache(maxsize=None)
+def _resolve_font_path(bold: bool) -> str:
+    """First-existing path; cached so candidate scanning runs once per (bold)."""
+    for path in _FONT_CANDIDATES[bold]:
+        if Path(path).exists():
+            return path
+    return ""
+
+
+@functools.lru_cache(maxsize=64)
+def _load_chinese_font(size: int, bold: bool = False):
+    """跨平台中文字体加载，按 (size, bold) 缓存避免重复 stat + parse。"""
+    path = _resolve_font_path(bold)
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except (IOError, OSError):
+            pass
+    return ImageFont.load_default()
+
+
+def _draw_text_with_shadow(draw, xy, text, font, fill,
+                           shadow_color=(0, 0, 0, 100),
+                           shadow_offset=(2, 2)):
+    """
+    绘制带阴影的文字，提升深色/浅色背景可读性。
+    draw: ImageDraw 对象（canvas 必须是 RGBA 模式）
+    xy: (x, y) 文字左上角坐标
+    shadow_color: RGBA 阴影颜色（默认半透明黑）
+    shadow_offset: (dx, dy) 阴影偏移像素
+    """
+    sx, sy = xy[0] + shadow_offset[0], xy[1] + shadow_offset[1]
+    draw.text((sx, sy), text, font=font, fill=shadow_color)
+    draw.text(xy, text, font=font, fill=fill)
+
+
+def blend_segments(top_img: Image.Image, bottom_img: Image.Image,
+                   overlap_px: int = 120) -> Image.Image:
+    """
+    把两段背景图在交界处 overlap_px 像素范围内做 alpha 渐变融合，消除拼接硬边。
+    两图必须等宽（宽度不同时自动将窄图 resize 至等宽）。
+
+    - top_img 的底部 overlap_px 像素 与 bottom_img 的顶部 overlap_px 像素融合
+    - 其余部分原样保留
+    - 返回新的合成图（高度 = top_h + bottom_h - overlap_px）
+    """
+    top_img = top_img.convert("RGB")
+    bottom_img = bottom_img.convert("RGB")
+
+    tw, th = top_img.size
+    bw, bh = bottom_img.size
+
+    # 统一宽度
+    target_w = max(tw, bw)
+    if tw != target_w:
+        top_img = top_img.resize((target_w, th), Image.LANCZOS)
+        tw = target_w
+    if bw != target_w:
+        bottom_img = bottom_img.resize((target_w, bh), Image.LANCZOS)
+        bw = target_w
+
+    # clamp overlap
+    overlap_px = max(1, min(overlap_px, th // 2, bh // 2))
+
+    out_h = th + bh - overlap_px
+    out = Image.new("RGB", (target_w, out_h))
+
+    # --- 上段非重叠区 ---
+    out.paste(top_img.crop((0, 0, target_w, th - overlap_px)), (0, 0))
+
+    # --- 重叠区逐行混合（numpy） ---
+    top_overlap = np.array(top_img.crop((0, th - overlap_px, target_w, th)),
+                           dtype=np.float32)   # shape: (overlap_px, W, 3)
+    bot_overlap = np.array(bottom_img.crop((0, 0, target_w, overlap_px)),
+                           dtype=np.float32)
+
+    # alpha: top 从 1→0，bottom 从 0→1，逐行线性
+    alphas = np.linspace(1.0, 0.0, overlap_px, dtype=np.float32)  # (overlap_px,)
+    alphas = alphas[:, np.newaxis, np.newaxis]                      # broadcast-ready
+
+    blended = (top_overlap * alphas + bot_overlap * (1.0 - alphas)).clip(0, 255).astype(np.uint8)
+    blend_img = Image.fromarray(blended, "RGB")
+    out.paste(blend_img, (0, th - overlap_px))
+
+    # --- 下段非重叠区 ---
+    out.paste(bottom_img.crop((0, overlap_px, target_w, bh)), (0, th))
+
+    return out
+
+
+def compose_full_page(segment_paths: list,
+                      overlaps: list = None,
+                      target_width: int = 750) -> Image.Image:
+    """
+    把一系列分段背景图（按顺序）融合成一张连续的长图。
+
+    segment_paths: ["/.../hero.png", "/.../adv.png", ...]
+    overlaps: 每对相邻段之间的重叠像素数，长度 = len(segment_paths) - 1。
+              不传时统一用 100。
+    target_width: 输出宽度（默认 750）；每段图会先 resize 到该宽度保比例。
+
+    返回融合后的 PIL Image（RGB 模式）。
+    """
+    # 加载并 resize 每段
+    images = []
+    for p in segment_paths:
+        if not p or not Path(p).exists():
+            print(f"[compose_full_page] 跳过不存在路径: {p}")
+            continue
+        img = Image.open(p).convert("RGB")
+        w, h = img.size
+        if w != target_width:
+            new_h = int(h * target_width / w)
+            img = img.resize((target_width, new_h), Image.LANCZOS)
+        images.append(img)
+
+    if not images:
+        # 无可用段落：返回纯黑占位图
+        return Image.new("RGB", (target_width, 1334), (10, 12, 24))
+
+    if len(images) == 1:
+        return images[0]
+
+    # 构建 overlaps 列表
+    n = len(images)
+    if overlaps is None:
+        overlaps = [100] * (n - 1)
+    else:
+        # 补齐或截断
+        overlaps = list(overlaps)
+        while len(overlaps) < n - 1:
+            overlaps.append(100)
+        overlaps = overlaps[: n - 1]
+
+    # 逐对融合
+    result = images[0]
+    for i in range(1, n):
+        result = blend_segments(result, images[i], overlap_px=overlaps[i - 1])
+
+    return result
+
+
+def _draw_wrapped_text(draw, x, y, text, font, fill, max_width, line_spacing=8):
+    """
+    自动换行绘制多行文本，返回底部 y 坐标。
+    max_width: 最大行宽（像素）
+    """
+    if not text:
+        return y
+    words = list(text)  # 中文逐字拆分
+    line = ""
+    current_y = y
+    for ch in words:
+        test_line = line + ch
+        bbox = draw.textbbox((0, 0), test_line, font=font)
+        if bbox[2] - bbox[0] > max_width and line:
+            draw.text((x, current_y), line, font=font, fill=fill)
+            bbox2 = draw.textbbox((0, 0), line, font=font)
+            current_y += bbox2[3] - bbox2[1] + line_spacing
+            line = ch
+        else:
+            line = test_line
+    if line:
+        draw.text((x, current_y), line, font=font, fill=fill)
+        bbox2 = draw.textbbox((0, 0), line, font=font)
+        current_y += bbox2[3] - bbox2[1]
+    return current_y
+
+
+def _draw_kpi_card(draw, canvas, x, y, w, h, label, value, unit="",
+                   bg_color=(255, 255, 255, 30), value_color=WHITE,
+                   label_color=(255, 255, 255, 160)):
+    """绘制 KPI 大数字卡（label + value + unit）"""
+    card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(card)
+    cd.rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=14, fill=bg_color)
+    canvas.paste(card, (x, y), card)
+    draw = ImageDraw.Draw(canvas)
+
+    # 数值（大号加粗）
+    vf = _load_chinese_font(38, bold=True)
+    uf = _load_chinese_font(20)
+    lf = _load_chinese_font(15)
+
+    val_text = str(value) + (unit or "")
+    vbox = draw.textbbox((0, 0), val_text, font=vf)
+    vw = vbox[2] - vbox[0]
+    draw.text((x + (w - vw) // 2, y + 14), val_text, font=vf, fill=value_color)
+
+    lbox = draw.textbbox((0, 0), label, font=lf)
+    lw = lbox[2] - lbox[0]
+    draw.text((x + (w - lw) // 2, y + h - 28), label, font=lf, fill=label_color)
+
+
+def compose_final_detail_page(seamless_bg: Image.Image,
+                              layout: list,
+                              output_path: str,
+                              theme_primary: str = "#E8231A") -> str:
+    """
+    在融合好的无缝背景上，逐元素叠加内容，输出最终的整张详情页长图。
+
+    layout 是一个有序列表，每项描述一个区段（zone）的内容元素。
+    支持的 element type:
+      title / subtitle / section_title — 文字（居中/左/右，可选阴影）
+      tag         — 胶囊标签
+      product_image — 产品图（带 drop shadow）
+      icon_grid   — 图标+文字网格（2列）
+      params_strip — 参数条
+      divider     — 极细分割线（带 alpha）
+      kpi_card    — KPI 大数字卡
+      text_block  — 自动换行段落
+
+    所有 y_offset 都是「相对该 zone 的 y_start 偏移」。
+
+    返回保存后的本地路径。
+    """
+    # 解析主题色
+    def _hex(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+    primary_rgb = _hex(theme_primary)
+
+    canvas = seamless_bg.copy().convert("RGBA")
+    draw = ImageDraw.Draw(canvas)
+
+    for zone in layout:
+        y_start = zone.get("y_start", 0)
+        elements = zone.get("elements", [])
+
+        for el in elements:
+            etype = el.get("type", "")
+            y_abs = y_start + el.get("y_offset", 0)
+            align = el.get("align", "center")
+            shadow = el.get("shadow", False)
+            color_raw = el.get("color", "#FFFFFF")
+
+            def parse_color(c):
+                if isinstance(c, tuple):
+                    return c
+                if isinstance(c, str) and c.startswith("#"):
+                    return _hex(c)
+                return (255, 255, 255)
+
+            fill = parse_color(color_raw)
+
+            # ── title / subtitle / section_title ───────────────────────
+            if etype in ("title", "subtitle", "section_title"):
+                sizes = {"title": 48, "section_title": 36, "subtitle": 22}
+                bold_map = {"title": True, "section_title": True, "subtitle": False}
+                size = el.get("size", sizes.get(etype, 28))
+                is_bold = bold_map.get(etype, False)
+                font = _load_chinese_font(size, bold=is_bold)
+                text = el.get("text", "")
+                if not text:
+                    continue
+
+                # 小色块装饰（section_title 前）
+                if etype == "section_title":
+                    bbox = draw.textbbox((0, 0), text, font=font)
+                    tw = bbox[2] - bbox[0]
+                    tx = (W - tw) // 2
+                    bar_w = 4
+                    bar_h = bbox[3] - bbox[1]
+                    draw.rectangle([(tx - 14, y_abs + 2), (tx - 14 + bar_w, y_abs + bar_h - 2)],
+                                   fill=(*primary_rgb, 200))
+
+                if align == "center":
+                    bbox = draw.textbbox((0, 0), text, font=font)
+                    tw = bbox[2] - bbox[0]
+                    tx = (W - tw) // 2
+                elif align == "right":
+                    bbox = draw.textbbox((0, 0), text, font=font)
+                    tw = bbox[2] - bbox[0]
+                    tx = W - tw - 40
+                else:
+                    tx = 40
+
+                if shadow:
+                    _draw_text_with_shadow(draw, (tx, y_abs), text, font, fill,
+                                          shadow_color=(0, 0, 0, 120),
+                                          shadow_offset=(2, 2))
+                else:
+                    draw.text((tx, y_abs), text, font=font, fill=fill)
+
+            # ── tag ────────────────────────────────────────────────────
+            elif etype == "tag":
+                text = el.get("text", "")
+                if not text:
+                    continue
+                size = el.get("size", 18)
+                font = _load_chinese_font(size)
+                bg_raw = el.get("bg", theme_primary)
+                bg_color = parse_color(bg_raw) if isinstance(bg_raw, tuple) else _hex(bg_raw.lstrip("#"))
+                bbox = draw.textbbox((0, 0), text, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                px, py = 16, 7
+                if align == "center":
+                    tx = (W - tw - px * 2) // 2
+                else:
+                    tx = 40
+                tag_layer = Image.new("RGBA", (tw + px * 2, th + py * 2), (0, 0, 0, 0))
+                td = ImageDraw.Draw(tag_layer)
+                td.rounded_rectangle([(0, 0), (tw + px * 2 - 1, th + py * 2 - 1)],
+                                     radius=(th + py * 2) // 2,
+                                     fill=(*bg_color, 220))
+                canvas.paste(tag_layer, (tx, y_abs), tag_layer)
+                draw = ImageDraw.Draw(canvas)
+                draw.text((tx + px, y_abs + py), text, font=font, fill=fill)
+
+            # ── product_image ──────────────────────────────────────────
+            elif etype == "product_image":
+                path = el.get("path", "")
+                if not path or not Path(path).exists():
+                    continue
+                max_w = el.get("max_w", 560)
+                max_h = el.get("max_h", 680)
+                drop_shadow = el.get("drop_shadow", True)
+                cx = W // 2
+                cy = y_abs
+                if drop_shadow:
+                    _add_shadow(canvas, path, max_w, max_h, cx, cy)
+                _paste_product(canvas, path, max_w, max_h, cx, cy)
+                draw = ImageDraw.Draw(canvas)
+
+            # ── icon_grid ──────────────────────────────────────────────
+            elif etype == "icon_grid":
+                items = el.get("items", [])
+                cols = el.get("cols", 2)
+                if not items:
+                    continue
+                col_w = (W - 60) // cols
+                row_h = 120
+                for idx, item in enumerate(items):
+                    col = idx % cols
+                    row = idx // cols
+                    ix = 30 + col * col_w
+                    iy = y_abs + row * row_h
+
+                    # 卡片底
+                    card = Image.new("RGBA", (col_w - 10, row_h - 10), (0, 0, 0, 0))
+                    cd = ImageDraw.Draw(card)
+                    cd.rounded_rectangle([(0, 0), (col_w - 11, row_h - 11)],
+                                         radius=12, fill=(255, 255, 255, 22))
+                    canvas.paste(card, (ix, iy), card)
+                    draw = ImageDraw.Draw(canvas)
+
+                    icon = item.get("icon", "●")
+                    label = item.get("label", "")
+                    desc = item.get("desc", "")
+
+                    # emoji icon
+                    ef = _emoji_font(28)
+                    try:
+                        draw.text((ix + 14, iy + 14), icon, font=ef, fill=fill,
+                                  embedded_color=True)
+                    except Exception:
+                        draw.text((ix + 14, iy + 14), icon, font=_load_chinese_font(24), fill=fill)
+
+                    lf = _load_chinese_font(18, bold=True)
+                    draw.text((ix + 52, iy + 14), label, font=lf, fill=fill)
+                    if desc:
+                        df = _load_chinese_font(14)
+                        draw.text((ix + 52, iy + 46), desc, font=df,
+                                  fill=(*fill[:3], 160) if len(fill) >= 3 else fill)
+
+            # ── params_strip ───────────────────────────────────────────
+            elif etype == "params_strip":
+                params = el.get("params", [])
+                if not params:
+                    continue
+                bar_h = 90
+                bar = Image.new("RGBA", (W - 40, bar_h), (0, 0, 0, 0))
+                bd = ImageDraw.Draw(bar)
+                bd.rounded_rectangle([(0, 0), (W - 41, bar_h - 1)], radius=14,
+                                     fill=(0, 0, 0, 130))
+                canvas.paste(bar, (20, y_abs), bar)
+                draw = ImageDraw.Draw(canvas)
+
+                col_w = (W - 40) // max(len(params), 1)
+                for i, p in enumerate(params):
+                    cx = 20 + col_w * i + col_w // 2
+                    if i > 0:
+                        draw.line([(cx - col_w // 2, y_abs + 15),
+                                   (cx - col_w // 2, y_abs + bar_h - 15)],
+                                  fill=(*fill[:3], 40), width=1)
+                    vf = _load_chinese_font(24, bold=True)
+                    val = str(p.get("value", ""))
+                    vbox = draw.textbbox((0, 0), val, font=vf)
+                    vw = vbox[2] - vbox[0]
+                    draw.text((cx - vw // 2, y_abs + 10), val, font=vf,
+                              fill=(*primary_rgb, 255))
+                    lf2 = _load_chinese_font(13)
+                    lbl = str(p.get("label", ""))
+                    lbox = draw.textbbox((0, 0), lbl, font=lf2)
+                    lw = lbox[2] - lbox[0]
+                    draw.text((cx - lw // 2, y_abs + 52), lbl, font=lf2,
+                              fill=(*fill[:3], 140))
+
+            # ── divider ────────────────────────────────────────────────
+            elif etype == "divider":
+                alpha = el.get("alpha", 60)
+                draw.line([(40, y_abs), (W - 40, y_abs)],
+                          fill=(*fill[:3], alpha), width=1)
+
+            # ── kpi_card ───────────────────────────────────────────────
+            elif etype == "kpi_card":
+                label = el.get("label", "")
+                value = el.get("value", "")
+                unit = el.get("unit", "")
+                card_w = el.get("w", 200)
+                card_h_val = el.get("h", 100)
+                card_x = el.get("x", (W - card_w) // 2)
+                _draw_kpi_card(draw, canvas, card_x, y_abs, card_w, card_h_val,
+                               label, value, unit,
+                               bg_color=(*primary_rgb, 40),
+                               value_color=fill)
+                draw = ImageDraw.Draw(canvas)
+
+            # ── text_block ─────────────────────────────────────────────
+            elif etype == "text_block":
+                text = el.get("text", "")
+                if not text:
+                    continue
+                size = el.get("size", 16)
+                font = _load_chinese_font(size)
+                margin_x = el.get("margin_x", 50)
+                max_w_px = W - margin_x * 2
+                _draw_wrapped_text(draw, margin_x, y_abs, text, font, fill, max_w_px)
+
+    result = canvas.convert("RGB")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    result.save(output_path, "PNG", optimize=True)
+    return output_path
+
+
+def build_seamless_layout(product_data: dict,
+                          plan: list,
+                          product_image: str = "") -> list:
+    """
+    根据已解析的 product_data 和 plan_seamless_page() 的结果，
+    自动生成 compose_final_detail_page 需要的 layout 列表。
+
+    plan 形如 [{"zone":"hero","height":1334,"overlap_bottom":120,...}, ...]
+
+    字段映射规则：
+      hero       → brand_text / model_name / main_title / sub_slogan + product_image
+      advantages → advantages / icon_items
+      story      → story_title_1/2 + story_desc_1/2
+      specs      → specs / detail_params
+      vs         → vs_comparison
+      scene      → scenes（文字标签）
+      brand      → brand_text + footer_note
+    """
+    layout = []
+    y_cursor = 0
+
+    for seg in plan:
+        zone = seg.get("zone", "")
+        height = seg.get("height", 900)
+        overlap = seg.get("overlap_bottom", 0)
+        # 在长图中这个 zone 的实际起始 y（考虑前面各段 overlap 已在 compose_full_page 消耗）
+        y_start = y_cursor
+        y_end = y_start + height
+        y_cursor = y_end - overlap  # 下一段起点 = 当前段底 - overlap（融合消耗）
+
+        elements = []
+
+        if zone == "hero":
+            brand = product_data.get("brand_text", "") or product_data.get("brand", "")
+            model = product_data.get("model_name", "") or product_data.get("model", "")
+            title = (product_data.get("main_title", "")
+                     or product_data.get("tagline_line1", "")
+                     or product_data.get("slogan", ""))
+            sub = (product_data.get("sub_slogan", "")
+                   or product_data.get("tagline_line2", ""))
+            cat = product_data.get("category_line", "")
+
+            if brand:
+                elements.append({"type": "tag", "text": brand,
+                                  "color": "#FFFFFF", "bg": "#FFFFFF20",
+                                  "size": 16, "align": "center", "y_offset": 50})
+            if cat:
+                elements.append({"type": "subtitle", "text": cat,
+                                  "color": "#FFFFFFB0", "size": 18,
+                                  "align": "center", "y_offset": 96, "shadow": False})
+            if model:
+                elements.append({"type": "title", "text": model,
+                                  "color": "#FFFFFF", "size": 52, "bold": True,
+                                  "align": "center", "y_offset": 130, "shadow": True})
+            if title:
+                elements.append({"type": "subtitle", "text": title,
+                                  "color": "#FFFFFF", "size": 26,
+                                  "align": "center", "y_offset": 200, "shadow": True})
+            if sub:
+                elements.append({"type": "subtitle", "text": sub,
+                                  "color": "#FFFFFFA0", "size": 18,
+                                  "align": "center", "y_offset": 240, "shadow": False})
+
+            # 产品图（居中，占据中部大面积）
+            if product_image:
+                elements.append({"type": "product_image", "path": product_image,
+                                  "max_w": 560, "max_h": 680,
+                                  "y_offset": height // 2 - 20,
+                                  "drop_shadow": True})
+
+            # 参数条
+            params = []
+            for key in ["param_1", "param_2", "param_3", "param_4"]:
+                lbl = product_data.get(f"{key}_label", "")
+                val = product_data.get(f"{key}_value", "")
+                if lbl and val:
+                    params.append({"label": lbl, "value": val})
+            if not params:
+                # 尝试从 detail_params / specs 取前 4 个
+                dp = product_data.get("detail_params", {})
+                if isinstance(dp, dict):
+                    for k, v in list(dp.items())[:4]:
+                        params.append({"label": k, "value": v})
+                elif not params:
+                    for sp in product_data.get("specs", [])[:4]:
+                        params.append({"label": sp.get("name", ""), "value": sp.get("value", "")})
+            if params:
+                elements.append({"type": "params_strip", "params": params,
+                                  "color": "#FFFFFF", "y_offset": height - 130})
+
+            footer = product_data.get("footer_note", "")
+            if footer:
+                elements.append({"type": "text_block", "text": footer,
+                                  "color": "#FFFFFF60", "size": 11,
+                                  "y_offset": height - 26, "margin_x": 30})
+
+            elements.append({"type": "divider", "color": "#FFFFFF",
+                              "alpha": 30, "y_offset": height - 20})
+
+        elif zone == "advantages":
+            adv_list = product_data.get("advantages", [])
+            # fallback: block_b2 icon_items
+            if not adv_list:
+                adv_list = product_data.get("icon_items", [])
+            elements.append({"type": "section_title", "text": "六大核心优势",
+                              "color": "#101828", "size": 36,
+                              "align": "center", "y_offset": 60, "shadow": False})
+
+            icon_items = []
+            for i, adv in enumerate(adv_list):
+                if isinstance(adv, dict):
+                    icon_items.append({
+                        "icon": adv.get("emoji", "✅"),
+                        "label": adv.get("text", adv.get("title", f"优势{i+1}")),
+                        "desc": adv.get("desc", ""),
+                    })
+                else:
+                    icon_items.append({"icon": "✅", "label": str(adv), "desc": ""})
+            if icon_items:
+                elements.append({"type": "icon_grid", "items": icon_items,
+                                  "cols": 2, "color": "#101828", "y_offset": 130})
+
+        elif zone == "story":
+            t1 = product_data.get("story_title_1", "")
+            t2 = product_data.get("story_title_2", "")
+            d1 = product_data.get("story_desc_1", "")
+            d2 = product_data.get("story_desc_2", "")
+
+            elements.append({"type": "section_title", "text": "清洁实力",
+                              "color": "#FFFFFF90", "size": 14,
+                              "align": "center", "y_offset": 50, "shadow": False})
+            if t1:
+                elements.append({"type": "title", "text": t1,
+                                  "color": "#FFFFFF", "size": 28,
+                                  "align": "center", "y_offset": 80, "shadow": True})
+            if t2:
+                elements.append({"type": "subtitle", "text": t2,
+                                  "color": "#FFFFFFB0", "size": 22,
+                                  "align": "center", "y_offset": 124, "shadow": False})
+            if d1:
+                elements.append({"type": "text_block", "text": d1,
+                                  "color": "#FFFFFFA0", "size": 16,
+                                  "y_offset": 200, "margin_x": 50})
+            if d2:
+                elements.append({"type": "text_block", "text": d2,
+                                  "color": "#FFFFFF80", "size": 16,
+                                  "y_offset": 240, "margin_x": 50})
+
+        elif zone == "specs":
+            specs = product_data.get("specs", [])
+            if not specs:
+                dp = product_data.get("detail_params", {})
+                if isinstance(dp, dict):
+                    specs = [{"name": k, "value": v} for k, v in dp.items() if k and v]
+
+            model = product_data.get("model_name", "") or product_data.get("model", "")
+            bar_text = f"{model} 产品参数" if model else "产品参数"
+            elements.append({"type": "section_title", "text": bar_text,
+                              "color": "#FFFFFF", "size": 28,
+                              "align": "left", "y_offset": 18, "shadow": False})
+
+            # KPI cards for first 4 params
+            kpi_params = specs[:4] if specs else []
+            card_w = (W - 60) // max(len(kpi_params), 1)
+            for i, sp in enumerate(kpi_params):
+                elements.append({"type": "kpi_card",
+                                  "label": sp.get("name", ""),
+                                  "value": sp.get("value", ""),
+                                  "x": 20 + i * card_w, "w": card_w - 10, "h": 90,
+                                  "color": "#FFFFFF",
+                                  "y_offset": 80})
+            # Remaining specs as text_block
+            if len(specs) > 4:
+                lines = "  /  ".join(f"{s['name']}: {s['value']}" for s in specs[4:])
+                elements.append({"type": "text_block", "text": lines,
+                                  "color": "#FFFFFFA0", "size": 14,
+                                  "y_offset": 200, "margin_x": 30})
+
+        elif zone == "vs":
+            vs = product_data.get("vs_comparison", {})
+            if not isinstance(vs, dict):
+                vs = {}
+            count = vs.get("replace_count", "")
+            if count:
+                elements.append({"type": "title",
+                                  "text": f"1台顶{count}人",
+                                  "color": "#FFFFFF", "size": 48,
+                                  "align": "center", "y_offset": 60, "shadow": True})
+            saving = vs.get("annual_saving", "")
+            if saving:
+                elements.append({"type": "subtitle",
+                                  "text": f"年省 {saving} 元",
+                                  "color": "#FFD666", "size": 22,
+                                  "align": "center", "y_offset": 130, "shadow": False})
+            left_title = vs.get("left_title", "")
+            right_title = vs.get("right_title", "传统人工")
+            if left_title:
+                elements.append({"type": "section_title",
+                                  "text": f"🤖 {left_title}  VS  👷 {right_title}",
+                                  "color": "#FFFFFF", "size": 22,
+                                  "align": "center", "y_offset": 180, "shadow": False})
+
+        elif zone == "scene":
+            scenes = product_data.get("scenes", [])
+            elements.append({"type": "section_title", "text": "适用场景",
+                              "color": "#101828", "size": 36,
+                              "align": "center", "y_offset": 60, "shadow": False})
+            if scenes:
+                scene_items = []
+                for sc in scenes:
+                    if isinstance(sc, dict):
+                        scene_items.append({
+                            "icon": sc.get("icon", "🏢"),
+                            "label": sc.get("name", sc.get("title", "")),
+                            "desc": sc.get("desc", ""),
+                        })
+                    else:
+                        scene_items.append({"icon": "🏢", "label": str(sc), "desc": ""})
+                elements.append({"type": "icon_grid", "items": scene_items,
+                                  "cols": 2, "color": "#101828", "y_offset": 140})
+
+        elif zone == "brand":
+            brand = product_data.get("brand_text", "") or product_data.get("brand", "")
+            model = product_data.get("model_name", "") or product_data.get("model", "")
+            slogan = (product_data.get("slogan", "")
+                      or product_data.get("tagline_line1", ""))
+            footer = product_data.get("footer_note", "")
+
+            if brand:
+                elements.append({"type": "title", "text": brand,
+                                  "color": "#FFFFFF", "size": 32,
+                                  "align": "center", "y_offset": 80, "shadow": True})
+            if model:
+                elements.append({"type": "title", "text": model,
+                                  "color": "#FFFFFF", "size": 44,
+                                  "align": "center", "y_offset": 130, "shadow": True})
+            if slogan:
+                elements.append({"type": "subtitle", "text": slogan,
+                                  "color": "#FFFFFFA0", "size": 18,
+                                  "align": "center", "y_offset": 200, "shadow": False})
+            if footer:
+                elements.append({"type": "text_block", "text": footer,
+                                  "color": "#FFFFFF60", "size": 11,
+                                  "y_offset": height - 40, "margin_x": 30})
+
+        if elements:
+            layout.append({
+                "zone": zone,
+                "y_start": y_start,
+                "y_end": y_end,
+                "elements": elements,
+            })
+
+    return layout
+
+
+def compose_seamless_detail_page(product_data: dict,
+                                 plan: list,
+                                 segment_paths: list,
+                                 product_image: str,
+                                 output_path: str,
+                                 theme_primary: str = "#E8231A") -> str:
+    """
+    无缝长图合成顶层入口，组合三步：
+    1. compose_full_page(segment_paths, overlaps from plan) → seamless_bg
+    2. build_seamless_layout(product_data, plan, product_image) → layout
+    3. compose_final_detail_page(seamless_bg, layout, output_path)
+
+    返回输出文件本地路径。
+    """
+    # 1. 融合分段背景
+    overlaps = [seg.get("overlap_bottom", 100) for seg in plan[:-1]]
+    seamless_bg = compose_full_page(segment_paths, overlaps=overlaps)
+    print(f"[seamless] 背景合成完成，尺寸={seamless_bg.size}")
+
+    # 2. 构建 layout（注入产品图到 hero zone）
+    layout = build_seamless_layout(product_data, plan, product_image=product_image)
+
+    # 3. 叠加内容并输出
+    result_path = compose_final_detail_page(seamless_bg, layout, output_path,
+                                            theme_primary=theme_primary)
+    print(f"[seamless] 最终长图已保存: {result_path}")
+    return result_path
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  自测入口
+# ══════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    import os
+    from pathlib import Path as _Path
+
+    # ── mock 产品数据 ──────────────────────────────────────────────────
+    mock_product = {
+        "brand_text": "德威莱克",
+        "model_name": "DZ50X",
+        "main_title": "驾驶式洗地机",
+        "sub_slogan": "一台顶八人，智能清洁新标准",
+        "category_line": "驾驶式洗地机",
+        "tagline_line1": "一台顶8人 · 3600㎡/h",
+        "tagline_line2": "全自动驾驶洗地，解放双手",
+        "slogan": "高效清洁，智慧运营",
+        "param_1_label": "清扫效率", "param_1_value": "3600㎡/h",
+        "param_2_label": "续航时间", "param_2_value": "4小时",
+        "param_3_label": "水箱容量", "param_3_value": "100L",
+        "param_4_label": "整机重量", "param_4_value": "285kg",
+        "specs": [
+            {"name": "清扫效率",  "value": "3600㎡/h"},
+            {"name": "续航时间",  "value": "4小时"},
+            {"name": "水箱容量",  "value": "100L"},
+            {"name": "整机重量",  "value": "285kg"},
+            {"name": "工作宽度",  "value": "850mm"},
+            {"name": "噪声值",    "value": "≤68dB"},
+        ],
+        "advantages": [
+            {"emoji": "⚡", "text": "高效清扫 3600㎡/h"},
+            {"emoji": "🤖", "text": "全自动驾驶操控"},
+            {"emoji": "💧", "text": "超大100L水箱"},
+            {"emoji": "🔋", "text": "4小时超长续航"},
+            {"emoji": "🔇", "text": "低噪≤68dB"},
+            {"emoji": "🛡️", "text": "工业级防护设计"},
+        ],
+        "story_title_1": "三刷三洗 深度洁净",
+        "story_title_2": "专利刷盘技术，污垢无处遁形",
+        "story_desc_1": "采用三刷协同清洁系统，刷洗同步，一次通过深度还原地面光洁。",
+        "story_desc_2": "配合高压喷水与强力吸水，清洁效率提升300%。",
+        "vs_comparison": {
+            "left_title": "DZ50X洗地机",
+            "left_sub": "3600㎡/h 全自动清洁",
+            "right_title": "传统人工",
+            "replace_count": "8",
+            "annual_saving": "18万",
+        },
+        "footer_note": "*参数以实物为准，图片仅供参考",
+    }
+
+    # ── 找 scene_bank 里的几张图当分段背景 ─────────────────────────────
+    scene_bank = _Path("C:/Users/28293/clean-industry-ai-assistant/static/scene_bank")
+    scene_files = sorted(scene_bank.glob("*.jpg"))
+    # 取 7 张（对应 7 个 zone），不够就重复
+    zones_needed = 7
+    segment_paths = []
+    for i in range(zones_needed):
+        segment_paths.append(str(scene_files[i % len(scene_files)]))
+    print(f"[test] 使用 {len(segment_paths)} 张分段背景图")
+
+    # ── mock plan（来自 ZONE_META）────────────────────────────────────
+    from theme_color_flows import ZONE_META, ZONE_ORDER_DEFAULT
+    mock_plan = []
+    for zone_key in ZONE_ORDER_DEFAULT:
+        meta = ZONE_META[zone_key]
+        mock_plan.append({
+            "zone": zone_key,
+            "height": meta["height"],
+            "overlap_bottom": meta["overlap_bottom"],
+        })
+
+    # ── 输出路径 ───────────────────────────────────────────────────────
+    out_dir = _Path("C:/Users/28293/clean-industry-ai-assistant/output")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = str(out_dir / "test_seamless_compose.png")
+
+    # ── 执行合成 ───────────────────────────────────────────────────────
+    result = compose_seamless_detail_page(
+        product_data=mock_product,
+        plan=mock_plan,
+        segment_paths=segment_paths,
+        product_image="",          # 本机无产品图，跳过
+        output_path=out_path,
+        theme_primary="#E8231A",
+    )
+
+    # ── 验证 ────────────────────────────────────────────────────────────
+    if _Path(result).exists():
+        img = Image.open(result)
+        print(f"[验证] 生成成功！尺寸: {img.size[0]} x {img.size[1]} px")
+        print(f"[验证] 文件路径: {result}")
+    else:
+        print("[验证] 文件未生成，请检查错误！")

@@ -5,6 +5,7 @@ AI 图片生成模块 — 基于阿里云百炼 DashScope (通义万相)
 import os
 import time
 import requests
+from requests.adapters import HTTPAdapter
 import dashscope
 from dashscope.aigc.image_generation import ImageGeneration
 from dashscope.api_entities.dashscope_response import Message
@@ -12,6 +13,10 @@ from pathlib import Path
 
 # 阿里云百炼 API 配置
 dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
+
+# 复用 TCP/TLS 连接，多段下载时省去 ~200-400ms 握手开销
+_SESSION = requests.Session()
+_SESSION.mount("https://", HTTPAdapter(pool_connections=10, pool_maxsize=10))
 
 # 默认模型
 T2I_MODEL = "wan2.6-t2i"
@@ -32,6 +37,22 @@ def _clear_proxy():
 def _restore_proxy(saved):
     for k, v in saved.items():
         os.environ[k] = v
+
+
+_DASHSCOPE_SIZES = ["768*1344", "960*1280", "960*1696", "1024*1024",
+                    "1280*960", "1344*768", "1440*1440", "1696*960"]
+
+
+def _pick_dashscope_size(width: int, height: int) -> str:
+    """从 DashScope 支持的固定尺寸中选比例最接近的，避免 InvalidParameter。"""
+    target_ratio = height / max(width, 1)
+    best, best_diff = _DASHSCOPE_SIZES[0], 1e9
+    for s in _DASHSCOPE_SIZES:
+        w, h = (int(x) for x in s.split("*"))
+        diff = abs(h / w - target_ratio)
+        if diff < best_diff:
+            best, best_diff = s, diff
+    return best
 
 
 def generate_background(prompt: str, api_key: str,
@@ -74,6 +95,19 @@ def generate_background(prompt: str, api_key: str,
     return urls
 
 
+def generate_segment(zone: str, prompt: str, api_key: str,
+                     width: int = 750, height: int = 1334,
+                     negative_prompt: str = "") -> list[str]:
+    """
+    无缝长图方案：为单段背景生成图片，按目标宽高自动选最接近的 DashScope 支持尺寸。
+    返回 URL 列表（通常长度为 1）。
+    """
+    size = _pick_dashscope_size(width, height)
+    print(f"[AI生图][段:{zone}] 目标 {width}x{height} → 选用 {size}")
+    return generate_background(prompt, api_key, size=size,
+                               negative_prompt=negative_prompt, n=1)
+
+
 def download_image(url: str, save_dir: str | Path, filename: str = "") -> str:
     """下载图片到本地，返回本地路径"""
     save_dir = Path(save_dir)
@@ -83,8 +117,9 @@ def download_image(url: str, save_dir: str | Path, filename: str = "") -> str:
         filename = f"ai_bg_{int(time.time())}_{os.urandom(4).hex()}.png"
 
     save_path = save_dir / filename
+    saved = _clear_proxy()
     try:
-        resp = requests.get(url, timeout=60)
+        resp = _SESSION.get(url, timeout=60)
         resp.raise_for_status()
         with open(save_path, 'wb') as f:
             f.write(resp.content)
@@ -93,6 +128,8 @@ def download_image(url: str, save_dir: str | Path, filename: str = "") -> str:
     except Exception as e:
         print(f"[AI生图] 下载失败: {e}")
         return ""
+    finally:
+        _restore_proxy(saved)
 
 
 # ── 预设 Prompt 模板 ─────────────────────────────────────────────────
