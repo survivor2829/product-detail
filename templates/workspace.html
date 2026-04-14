@@ -1230,12 +1230,14 @@
       bar.style.width = progress + '%';
     }, 700);
 
-    const prodImg = document.getElementById('product_image_preview');
-    const productImageUrl = prodImg ? (prodImg.dataset.url || '') : '';
+    // 优先用 parse-text 返回里挂的 _raw_parsed(DeepSeek 原始语义),
+    // 兜底用扁平 parsed(测试钩子/旧缓存时),让 _build_ctxs_from_parsed 拿到它能读的形状
+    const rawParsed = (currentBuildData.parsed && currentBuildData.parsed._raw_parsed)
+      || currentBuildData.parsed;
 
     const payload = {
-      parsed_data:   currentBuildData.parsed,
-      product_image: productImageUrl,
+      parsed_data:   rawParsed,
+      product_image: productImageUrl,   // 模块级已存,不再从 #product_image_preview 读(它只在测试钩子里才被创建)
       theme_id:      currentThemeId,
       out_jpg_name:  `detail_v2_${Date.now()}.jpg`,
       save_png:      false,

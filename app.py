@@ -1367,6 +1367,9 @@ def parse_text_for_build(product_type):
         if not parsed.get("main_title"):
             parsed["main_title"] = product_title
     mapped = _map_parsed_to_form_fields(parsed)
+    # AI 精修(HTML v2) 需要原始 DeepSeek 语义(advantages[]/scenes[]/vs_comparison{}/brand)
+    # 而不是扁平表单。挂一份原始数据给它用,render-preview/其他端点仍只读扁平字段。
+    mapped["_raw_parsed"] = parsed
     return jsonify(mapped)
 
 
@@ -1846,6 +1849,25 @@ def _build_ctxs_from_parsed(parsed: dict,
     vs_raw = parsed.get("vs_comparison") or {}
     if isinstance(vs_raw, dict):
         compare_items = vs_raw.get("compare_items") or []
+        # DeepSeek 当前 prompt 不要 compare_items,但 VS 屏渲染要求至少 1 行表数据;
+        # 用 replace_count / annual_saving 这两个标量事实派生表行,避免整屏丢失。
+        if not compare_items:
+            derived = []
+            rc = _to_str(vs_raw.get("replace_count", ""))
+            if rc:
+                derived.append({
+                    "label": "人力替代",
+                    "left_value": "1 台", "left_desc": "智能机器人",
+                    "right_value": f"{rc} 人", "right_desc": "传统人工",
+                })
+            asv = _to_str(vs_raw.get("annual_saving", ""))
+            if asv:
+                derived.append({
+                    "label": "年成本",
+                    "left_value": f"省 {asv}", "left_desc": "一次性投入",
+                    "right_value": "持续支出", "right_desc": "人力 + 耗材",
+                })
+            compare_items = derived
         cmp_rows = []
         for c in compare_items:
             if not isinstance(c, dict):
