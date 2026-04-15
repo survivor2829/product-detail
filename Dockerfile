@@ -5,11 +5,14 @@ RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.
     sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list 2>/dev/null; true
 
 # 系统依赖（Playwright Chromium 需要）— 极少变化，缓存命中率高
+# 关键:libxfixes3 / libxext6 / libatspi2.0-0 是 Chromium 启动必需,少一个都会
+# 报 "error while loading shared libraries: libXfixes.so.3" 之类的致命错
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-cjk \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
     libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 \
     libgbm1 libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
+    libxfixes3 libxext6 libatspi2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # 国内 pip 源（腾讯云）
