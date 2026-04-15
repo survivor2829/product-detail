@@ -29,7 +29,13 @@ BASE = Path(__file__).parent
 TPL_DIR = BASE / "templates" / "ai_compose"
 DEFAULT_REGISTRY_PATH = TPL_DIR / "_registry.json"
 
-DEFAULT_ORDER = ["hero", "advantages", "specs", "vs", "scene", "brand", "cta"]
+DEFAULT_ORDER = ["hero", "effect", "advantages", "vs", "scene", "brand", "specs", "cta"]
+# 顺序逻辑(详情页心智):钩子→实景→优势→对比→场景→品牌→详细参数→CTA
+
+_ENV = Environment(
+    loader=FileSystemLoader(str(TPL_DIR)),
+    autoescape=select_autoescape(["html"]),
+)
 
 
 def load_registry(path: Path | None = None) -> dict:
@@ -38,12 +44,19 @@ def load_registry(path: Path | None = None) -> dict:
 
 
 def _render_one(page, env, registry, screen_type, ctx, out_dir):
-    """单屏渲染(内部用),返回 (png_path, w, h)"""
+    """单屏渲染(内部用),返回 (png_path, w, h)
+    canvas 尺寸优先级:ctx 显式传入 > registry 默认值
+    Why: 让 advantages/vs 这类"按数据项数撑版"的屏能按 ctx['canvas_height'] 动态撑版,
+         registry 回退到默认值,两边都不用改。
+    """
     meta = registry[screen_type]
-    cw, ch = meta["canvas"]
+    cw_reg, ch_reg = meta["canvas"]
     template = meta["template"]
 
     full_ctx = dict(ctx)
+    # ctx 胜出,registry 兜底(允许数据驱动的动态尺寸)
+    cw = int(full_ctx.get("canvas_width") or cw_reg)
+    ch = int(full_ctx.get("canvas_height") or ch_reg)
     full_ctx["canvas_width"] = cw
     full_ctx["canvas_height"] = ch
 
@@ -84,15 +97,17 @@ def render_screens(ctxs: dict, order: list[str], out_dir: Path,
     返回:
       [{"type", "png", "w", "h", "elapsed"}, ...]
     """
-    out_dir = Path(out_dir)
+    out_dir = Path(out_dir).resolve()  # 必须绝对路径,Playwright tmp.as_uri() 才能工作
     out_dir.mkdir(parents=True, exist_ok=True)
     registry = registry or load_registry()
-    tpl_dir = tpl_dir or TPL_DIR
 
-    env = Environment(
-        loader=FileSystemLoader(str(tpl_dir)),
-        autoescape=select_autoescape(["html"]),
-    )
+    if tpl_dir is not None and Path(tpl_dir) != TPL_DIR:
+        env = Environment(
+            loader=FileSystemLoader(str(tpl_dir)),
+            autoescape=select_autoescape(["html"]),
+        )
+    else:
+        env = _ENV
 
     segments = []
     with sync_playwright() as pw:

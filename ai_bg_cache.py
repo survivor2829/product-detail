@@ -19,7 +19,9 @@ AI 背景图缓存层 — v2 HTML 合成管线专用
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import mimetypes
 import os
 import time
 import traceback
@@ -28,7 +30,45 @@ from pathlib import Path
 from typing import Dict, Iterable
 
 import ai_image_volcengine as vol
-import theme_color_flows
+import prompt_templates
+
+
+# ── 参考图工具 ──────────────────────────────────────────────
+
+def _to_data_url(local_path_or_url: str) -> str:
+    """
+    把本地图片路径转成 data:image/<mime>;base64,... 字符串。
+
+    - 输入是 /static/uploads/xxx.png 或 C:\\...\\xxx.png 等绝对/相对路径。
+    - 根据文件扩展名用 mimetypes.guess_type 判 mime，默认 image/png。
+    - 文件不存在或读取失败 → 返回 ""（上层走纯文生图，不报错）。
+    - 不处理 http(s):// URL，原样返回（调用方已是 data URL 时也原样返回）。
+    """
+    if not local_path_or_url:
+        return ""
+    # 已经是 data URL 或远程 URL，直接透传
+    if local_path_or_url.startswith("data:") or local_path_or_url.startswith("http"):
+        return local_path_or_url
+
+    path = Path(local_path_or_url)
+    # 相对路径：以 BASE_DIR 为基准解析（如 /static/uploads/xxx.png）
+    if not path.is_absolute():
+        # 去掉开头的 /，再拼 BASE_DIR
+        rel = local_path_or_url.lstrip("/\\")
+        path = BASE_DIR / rel
+
+    try:
+        raw = path.read_bytes()
+    except Exception as e:
+        print(f"[bg] _to_data_url 读取失败 {path}: {e}")
+        return ""
+
+    mime, _ = mimetypes.guess_type(path.name)
+    if not mime:
+        mime = "image/png"
+
+    b64 = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{b64}"
 
 
 # ── 常量 ─────────────────────────────────────────────────────
@@ -36,7 +76,7 @@ import theme_color_flows
 BASE_DIR = Path(__file__).parent
 CACHE_DIR = BASE_DIR / "static" / "cache" / "ai_bg"
 
-PROMPT_VERSION = "v1"            # 提示词模板版本,改版时 +1 使旧缓存失效
+PROMPT_VERSION = "v2-prompt-lib"  # 切到 prompt_templates 6 维实景 prompt(强制旧缓存失效)
 CACHE_TTL_SECONDS = 24 * 3600    # cache 模式的文件新鲜期(24h)
 
 SCREENS_NEEDING_BG = ("hero", "advantages", "specs", "vs", "scene", "brand")
@@ -56,8 +96,15 @@ _SCREEN_CANVAS: dict[str, tuple[int, int]] = {
 # ── 模式解析 ────────────────────────────────────────────────
 
 def get_mode() -> str:
-    """读 AI_BG_MODE,缺省返回 'cache'"""
-    return (os.getenv("AI_BG_MODE") or "cache").strip().lower()
+    """
+    永久 realtime 模式 — 不走磁盘缓存,每次调 Doubao API 新生成。
+
+    Why: 用户明确要求"每次都是盲盒",避免重复生成的模板感。
+         测试 & 生产都走 realtime,不再提供 cache 模式。
+    How to apply: 任何场景都返回 "realtime",完全忽略 AI_BG_MODE 环境变量。
+                  旧 cache 分支在 _generate_one 里保留但不会被触发。
+    """
+    return "realtime"
 
 
 def _cache_key(theme_id: str, screen: str, category: str,
@@ -92,41 +139,48 @@ def _to_static_url(path: Path) -> str:
 
 # ── Prompt 构造 ─────────────────────────────────────────────
 
-def _build_prompt(theme_id: str, screen: str, category: str, brand: str) -> str:
+def _build_prompt(theme_id: str, screen: str, category: str,
+                  prev_screen: str | None,
+                  next_screen: str | None) -> tuple[str, str]:
     """
-    拼接"基础产品语义" + "主题色调" → 最终给 Seedream 的提示词。
-    基础语义来自 ai_image_volcengine 的 prompt_* 函数;
-    色调来自 theme_color_flows.get_flow(theme_id)["screens"][screen]["bg_tone"]。
+    v2 实景 prompt — 走 prompt_templates 的 6 维散文 prompt + 强 negative。
+
+    返回 (prompt, negative_prompt),由调用方分别传给 Seedream。
+    product_hint 用 category(如"驾驶式洗地机")让 hero 等屏的环境带语境。
+
+    Why: 旧实现拼了一段抽象色调描述(theme_color_flows.bg_tone) +
+         vol.prompt_* 函数,出来的图全是色块/渐变;新 prompt_templates
+         给的是 cinematic 实景描述(showroom/transport_hub/...) + 强 negative,
+         能拉到设计师级摄影质感。
     """
-    flow = theme_color_flows.get_flow(theme_id) or {}
-    tone = (flow.get("screens") or {}).get(screen, {}).get("bg_tone", "")
-
-    if screen == "hero":
-        base = vol.prompt_hero(category or "商用设备", brand)
-    elif screen == "specs":
-        base = vol.prompt_specs_bg()
-    elif screen == "vs":
-        base = vol.prompt_comparison_bg()
-    elif screen == "brand":
-        base = vol.prompt_brand_bg(brand)
-    elif screen == "scene":
-        base = vol.prompt_scene("通用应用场景", category or "商用设备")
-    elif screen == "advantages":
-        base = f"{category or '商用设备'} 优势说明屏背景,干净极简商业摄影,充足留白以叠加白色卡片和文字"
-    else:
-        base = f"{category or '商用设备'} 产品详情页背景"
-
-    return f"{base}, {tone}" if tone else base
+    prompt = prompt_templates.build_prompt(
+        screen_type=screen,
+        variant=None,  # None → 走 DEFAULT_VARIANT(showroom/mall_corridor/...)
+        theme_id=theme_id,
+        prev_screen=prev_screen,
+        next_screen=next_screen,
+        product_hint=category or "",
+    )
+    return prompt, prompt_templates.NEGATIVE_PROMPT
 
 
 # ── 单屏生成 ────────────────────────────────────────────────
 
 def _generate_one(theme_id: str, screen: str, category: str,
                   brand: str, api_key: str, mode: str,
-                  product_name: str = "") -> str:
+                  product_name: str = "",
+                  prev_screen: str | None = None,
+                  next_screen: str | None = None,
+                  reference_image_url: str = "") -> str:
     """
     单屏生成入口 — 根据 mode 决定走缓存或实时调 API。
     返回 /static/cache/ai_bg/<key>.png(成功)或 ""(失败 → 模板兜底)
+
+    prev_screen/next_screen 由 generate_backgrounds 按 screens 顺序算好,
+    传给 prompt_templates 拼"边缘融合提示"(seamless gradient, no seam)。
+
+    reference_image_url: 可选参考图路径或 data URL。
+                         传空字符串(默认) → 纯文生图,行为与原来完全一致。
     """
     key = _cache_key(theme_id, screen, category, product_name)
     path = _cached_path(key)
@@ -136,12 +190,20 @@ def _generate_one(theme_id: str, screen: str, category: str,
         print(f"[bg] HIT   {screen:11s} → {path.name}")
         return _to_static_url(path)
 
-    prompt = _build_prompt(theme_id, screen, category, brand)
+    prompt, negative = _build_prompt(theme_id, screen, category,
+                                     prev_screen, next_screen)
     w, h = _SCREEN_CANVAS.get(screen, (768, 1024))
+
+    # 参考图：把本地路径转成 data URL（已是 data URL 或 http URL 则原样透传）
+    ref_data_url = _to_data_url(reference_image_url) if reference_image_url else ""
+    if ref_data_url:
+        print(f"[bg] REF   {screen:11s} → 用参考图生成 (data_url len={len(ref_data_url)})")
 
     try:
         urls = vol.generate_segment(screen, prompt, api_key,
-                                    width=w, height=h)
+                                    width=w, height=h,
+                                    negative_prompt=negative,
+                                    reference_image_url=ref_data_url)
         if not urls:
             print(f"[bg] EMPTY {screen:11s} Seedream 返回空 URL 列表")
             return ""
@@ -171,6 +233,7 @@ def generate_backgrounds(theme_id: str,
                          api_key: str = "",
                          screens: Iterable[str] = SCREENS_NEEDING_BG,
                          product_name: str = "",
+                         reference_image_url: str = "",
                          ) -> Dict[str, str]:
     """
     并发生成 N 屏背景图。返回 {screen_type: bg_url 或 ""}。
@@ -181,6 +244,11 @@ def generate_backgrounds(theme_id: str,
     product_name 是缓存 key 的一部分(见 _cache_key):
       不传 → 同主题+品类所有产品串用同一张背景(DZ50X 看到 DZ60X 的图)
       传了 → 每个型号各自有独立缓存,避免视觉串包
+
+    reference_image_url: 可选参考图路径或 data URL。
+      传空字符串(默认) → 纯文生图,行为与原来完全一致。
+      传本地路径(如 /static/uploads/xxx.png)或 data URL →
+        每屏调用都带同一张参考图,Seedream 会在风格/色调上向参考图靠拢。
     """
     screens = tuple(screens)
     mode = get_mode()
@@ -190,16 +258,27 @@ def generate_backgrounds(theme_id: str,
         print(f"[bg] 无 ARK_API_KEY,全部 {len(screens)} 屏走 CSS 兜底")
         return {s: "" for s in screens}
 
+    ref_hint = f"  参考图={'有' if reference_image_url else '无'}"
     print(f"[bg] 模式={mode}  主题={theme_id}  品类={product_category or '(空)'}  "
-          f"产品={product_name or '(空)'}  并发屏数={len(screens)}")
+          f"产品={product_name or '(空)'}  并发屏数={len(screens)}{ref_hint}")
 
-    results: Dict[str, str] = {s: "" for s in screens}
+    # 计算每屏的相邻屏(供 prompt_templates 拼"边缘融合提示")
+    # 顺序就是 screens 的迭代顺序,默认 SCREENS_NEEDING_BG
+    screens_list = list(screens)
+    prev_map = {s: (screens_list[i - 1] if i > 0 else None)
+                for i, s in enumerate(screens_list)}
+    next_map = {s: (screens_list[i + 1] if i + 1 < len(screens_list) else None)
+                for i, s in enumerate(screens_list)}
+
+    results: Dict[str, str] = {s: "" for s in screens_list}
     # I/O bound,用线程池;Seedream 调用是串行 HTTP,并发可减总时长到接近单屏
-    with ThreadPoolExecutor(max_workers=min(len(screens), 7)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(screens_list), 7)) as pool:
         futures = {
             pool.submit(_generate_one, theme_id, s, product_category,
-                        brand, api_key, mode, product_name): s
-            for s in screens
+                        brand, api_key, mode, product_name,
+                        prev_map[s], next_map[s],
+                        reference_image_url): s
+            for s in screens_list
         }
         for fut in as_completed(futures):
             s = futures[fut]

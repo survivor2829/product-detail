@@ -10,7 +10,8 @@
       --theme-accent:       {{ theme_accent       | default('#FFD166') }};
 
       --canvas-w: {{ canvas_width  | default(750) }}px;
-      --canvas-h: {{ canvas_height | default(900) }}px;
+      /* 高度从 900 → 820:压 80px,vs-container flex:1 + compare-row flex:1 让行自然铺满 */
+      --canvas-h: {{ canvas_height | default(820) }}px;
 
       /* AI 背景上覆淡色雾化,让对比卡浮起来 */
       --veil-start:   {{ veil_start | default('rgba(248, 248, 252, 0.55)') }};
@@ -70,7 +71,7 @@
     .content {
       position: relative;
       z-index: 2;
-      padding: 52px 32px 36px;
+      padding: 32px 28px 24px;
       display: flex;
       flex-direction: column;
       height: 100%;
@@ -79,7 +80,7 @@
     /* ── 标题区 ──────────────────────────────────────── */
     .title-block {
       text-align: center;
-      margin-bottom: 26px;
+      margin-bottom: 16px;
     }
     .section-label {
       font-size: 12px;
@@ -102,7 +103,7 @@
       height: 3px;
       background: var(--theme-primary);
       border-radius: 2px;
-      margin: 12px auto 10px;
+      margin: 8px auto 7px;
     }
     .subtitle {
       font-size: 14px;
@@ -119,11 +120,13 @@
       -webkit-backdrop-filter: blur(18px) saturate(140%);
       border: 1px solid rgba(255, 255, 255, 0.85);
       border-radius: 18px;
-      padding: 26px 18px 22px;
+      padding: 28px 22px 24px;
       box-shadow:
         0 14px 40px rgba(0, 0, 0, 0.10),
         0 2px 8px rgba(0, 0, 0, 0.05);
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     /* 左右色温条带 (放在 .content 之下,rows 之上) */
@@ -167,9 +170,18 @@
       align-items: center;
     }
 
+    /* 对比行区域:撑满剩余高度,行从顶部开始堆,多余空间甩到 summary 上方 */
+    .rows-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      min-height: 0;
+    }
+
     /* ── 列头区 ─────────────────────────────────────── */
     .col-heads {
-      padding: 6px 0 20px;
+      padding: 8px 0 22px;
       margin-bottom: 10px;
       border-bottom: 1px solid var(--divider);
     }
@@ -177,33 +189,33 @@
       text-align: center;
     }
     .head-icon {
-      font-size: 28px;
+      font-size: 34px;
       line-height: 1;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
       font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
     }
     .head-title {
-      font-size: 15px;
+      font-size: 17px;
       font-weight: 700;
       letter-spacing: 1.5px;
       color: var(--text-dark);
     }
     .col-head.right-head .head-title { color: var(--theme-primary); }
     .head-sub {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-sub);
-      margin-top: 4px;
+      margin-top: 5px;
       letter-spacing: 0.5px;
     }
 
     /* VS 徽标:中心圆形红色渐变 */
     .vs-badge {
-      width: 54px;
-      height: 54px;
+      width: 62px;
+      height: 62px;
       border-radius: 50%;
       background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-primary-dark) 100%);
       color: #fff;
-      font-size: 18px;
+      font-size: 20px;
       font-weight: 800;
       letter-spacing: 1.5px;
       display: flex;
@@ -218,9 +230,16 @@
     }
 
     /* ── 对比行 ─────────────────────────────────────── */
+    /* 固定 min-height 而非 flex:1 — 2-3 行时避免行被拉得过高成大留白;
+       行多时自然撑开(内容驱动),行少时剩余空间甩到底部 summary 上 */
     .compare-row {
-      padding: 14px 0;
+      min-height: 90px;
+      flex: 0 0 auto;
       border-bottom: 1px solid var(--divider);
+      display: grid;
+      grid-template-columns: 1fr 92px 1fr;
+      align-items: center;
+      padding: 14px 0;
     }
     .compare-row:last-child { border-bottom: none; }
 
@@ -229,7 +248,7 @@
       padding: 0 10px;
     }
     .cell-value {
-      font-size: 22px;
+      font-size: 26px;
       font-weight: 800;
       line-height: 1.05;
       letter-spacing: 0.5px;
@@ -238,14 +257,14 @@
     .cell.left .cell-value  { color: #6a6a6a; }
     .cell.right .cell-value { color: var(--theme-primary); }
     .cell-desc {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-sub);
-      margin-top: 5px;
+      margin-top: 6px;
       letter-spacing: 0.5px;
     }
     .cell-label {
-      font-size: 11px;
-      letter-spacing: 2.5px;
+      font-size: 12px;
+      letter-spacing: 2px;
       color: var(--text-label);
       text-align: center;
       font-weight: 500;
@@ -255,10 +274,10 @@
     .vs-summary {
       position: relative;
       z-index: 1;
-      margin-top: 14px;
-      padding: 14px 12px;
+      margin-top: 16px;
+      padding: 18px 16px;
       background: linear-gradient(135deg, var(--theme-primary-dark) 0%, var(--theme-primary) 100%);
-      border-radius: 12px;
+      border-radius: 14px;
       color: #fff;
       display: flex;
       justify-content: space-around;
@@ -266,6 +285,7 @@
       box-shadow:
         0 8px 22px rgba(232, 35, 26, 0.32),
         inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      flex-shrink: 0;
     }
     .summary-item {
       display: flex;
@@ -275,17 +295,17 @@
       flex: 1;
     }
     .summary-num {
-      font-size: 22px;
+      font-size: 26px;
       font-weight: 800;
       letter-spacing: 0.5px;
       line-height: 1;
       font-family: "Arial", "Helvetica Neue", "Microsoft YaHei", sans-serif;
     }
     .summary-label {
-      font-size: 11px;
+      font-size: 12px;
       opacity: 0.88;
       letter-spacing: 2px;
-      margin-top: 6px;
+      margin-top: 7px;
     }
     .summary-divider {
       width: 1px;
@@ -334,6 +354,7 @@
         </div>
 
         <!-- 对比行 -->
+        <div class="rows-body">
         {% for c in compare_items %}
         <div class="vs-row compare-row">
           <div class="cell left">
@@ -347,6 +368,7 @@
           </div>
         </div>
         {% endfor %}
+        </div>
 
         <!-- 底部红色总结条:可选,收束对比叙事 -->
         {% if summary_points %}

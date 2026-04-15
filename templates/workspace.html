@@ -1237,6 +1237,9 @@
     const payload = {
       parsed_data:   rawParsed,
       product_image: productImageUrl,
+      scene_image:   sceneImageUrl  || '',   // 配景 → 传给 Doubao 做图生图参考
+      effect_image:  effectImageUrl || '',   // 效果图 → scene 屏背景覆盖
+      qr_image:      qrImageUrl     || '',   // 二维码 → cta 屏
       theme_id:      currentThemeId,
       out_jpg_name:  `detail_v2_${Date.now()}.jpg`,
       save_png:      false,

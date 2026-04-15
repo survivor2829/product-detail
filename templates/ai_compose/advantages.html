@@ -11,7 +11,10 @@
       --theme-accent:       {{ theme_accent | default('#FFD166') }};
 
       --canvas-w: {{ canvas_width | default(750) }}px;
-      --canvas-h: {{ canvas_height | default(900) }}px;
+      /* canvas 由 ctx 动态撑(3 项 480 / 4 项 640 / 5-6 项 780),registry 的 900 不再硬覆盖 */
+      --canvas-h: {{ canvas_height | default(780) }}px;
+      /* 网格列数由 ctx 动态给:3 项 1×3、4 项 2×2、5-6 项 2×3,杜绝空格子留白 */
+      --grid-cols: {{ grid_cols | default('1fr 1fr 1fr') }};
 
       /* 浅色背景专用文字阶 */
       --text-dark:     #1a1a1a;  /* 卡片主标题 */
@@ -59,7 +62,7 @@
       /* 无 AI 背景时的纯净白灰渐变兜底(符合 advantages 屏的极简调性) */
       background: linear-gradient(180deg, #fafafa 0%, #f0f0f2 100%);
       {% endif %}
-      padding: 56px 40px 40px;
+      padding: 36px 32px 28px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -68,7 +71,7 @@
     /* ── 标题区 ──────────────────────────────────────── */
     .title-block {
       text-align: center;
-      margin-bottom: 32px;
+      margin-bottom: 20px;
     }
 
     .section-label {
@@ -97,7 +100,7 @@
       height: 3px;
       background: var(--theme-primary);
       border-radius: 2px;
-      margin: 14px auto 12px;
+      margin: 10px auto 8px;
     }
 
     .subtitle {
@@ -106,13 +109,13 @@
       letter-spacing: 2px;
     }
 
-    /* ── 6 卡片网格 ──────────────────────────────────── */
+    /* ── 动态网格(列数 / 行数由 ctx 决定) ─────────────── */
     .advantage-grid {
       flex: 1;
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: var(--grid-cols);
       grid-auto-rows: 1fr;
-      gap: 14px;
+      gap: 12px;
     }
 
     .card {
@@ -121,10 +124,12 @@
       backdrop-filter: blur(18px) saturate(140%);
       -webkit-backdrop-filter: blur(18px) saturate(140%);
       border: 1px solid var(--card-border);
-      border-radius: 14px;
-      padding: 20px 20px 22px;
+      border-radius: 16px;
+      padding: 20px 22px 22px;
       display: flex;
       flex-direction: column;
+      /* space-between:icon 顶、desc 底、stat 中间被天然拉开 — 消除内部留白 */
+      justify-content: space-between;
       box-shadow: var(--card-shadow);
       overflow: hidden;
     }
@@ -145,21 +150,22 @@
     }
 
     .icon-chip {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
       background: var(--icon-bg);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 22px;
+      font-size: 26px;
       font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
                    "Microsoft YaHei", sans-serif;
       margin-bottom: 10px;
+      flex-shrink: 0;
     }
 
     .card-title {
-      font-size: 17px;
+      font-size: 18px;
       font-weight: 700;
       color: var(--text-dark);
       letter-spacing: 0.5px;
@@ -171,26 +177,26 @@
       display: flex;
       align-items: baseline;
       gap: 3px;
-      margin: 6px 0 8px;
+      margin: 7px 0 9px;
       line-height: 1;
     }
     .stat-num {
-      font-size: 26px;
+      font-size: 34px;
       font-weight: 800;
       color: var(--theme-primary);
       letter-spacing: 0.5px;
       font-family: "Arial", "Helvetica Neue", "Microsoft YaHei", sans-serif;
     }
     .stat-unit {
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 600;
       color: var(--theme-primary);
       letter-spacing: 0.5px;
     }
 
     .card-desc {
-      font-size: 12.5px;
-      line-height: 1.65;
+      font-size: 13.5px;
+      line-height: 1.7;
       color: var(--text-body);
       letter-spacing: 0.3px;
     }
@@ -199,7 +205,7 @@
     }
     .card-desc .desc-line + .desc-line {
       color: var(--text-label);
-      margin-top: 1px;
+      margin-top: 2px;
     }
   </style>
 </head>

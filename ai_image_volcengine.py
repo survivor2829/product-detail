@@ -18,6 +18,11 @@ ARK_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
 # 复用 TCP/TLS 连接，多段下载时省去握手开销
 _SESSION = requests.Session()
 _SESSION.mount("https://", HTTPAdapter(pool_connections=10, pool_maxsize=10))
+# CRITICAL: Windows 上 requests 会读注册表里的"系统代理"设置(Clash/Fiddler/等都会写这里),
+# 国内 API(火山方舟/DeepSeek)走 Clash 会触发 SSL MITM 中断 → SSLError(UNEXPECTED_EOF)。
+# trust_env=False 让 session 完全不读 环境变量 / 系统代理注册表,只认显式传的 proxies。
+# Why: 仅清 os.environ 不够 — Windows WinINET 系统代理是独立通道,必须从 session 层级屏蔽。
+_SESSION.trust_env = False
 
 # ── 代理清除（火山方舟国内服务，不走 Clash）───────────────────
 _PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
@@ -42,11 +47,15 @@ def _restore_proxy(saved):
 def generate_background(prompt: str, api_key: str,
                         size: str = "1024x1024",
                         negative_prompt: str = "",
-                        n: int = 1) -> list[str]:
+                        n: int = 1,
+                        reference_image_url: str = "") -> list[str]:
     """
     文生图：调用豆包 Seedream 4.0，返回图片 URL 列表
     size 格式：豆包原生 "WxH"（小写 x），如 "1024x1024" / "2048x2048"
     注意：返回 URL 有效期约 24 小时，请尽快下载
+
+    reference_image_url: 可选参考图。支持 https:// URL 或 data:image/...;base64,... 格式。
+                         传空字符串（默认）→ 纯文生图，行为与原来完全一致。
     """
     payload = {
         "model": T2I_MODEL,
@@ -60,6 +69,11 @@ def generate_background(prompt: str, api_key: str,
     if negative_prompt:
         payload["prompt"] = f"{prompt} --no {negative_prompt}"
 
+    # image-to-image：有参考图时注入 image 字段
+    if reference_image_url:
+        payload["image"] = reference_image_url
+        print(f"[豆包生图] 使用参考图 (image-to-image), len={len(reference_image_url)}")
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -67,7 +81,9 @@ def generate_background(prompt: str, api_key: str,
 
     saved = _clear_proxy()
     try:
-        resp = _SESSION.post(ARK_ENDPOINT, json=payload, headers=headers, timeout=120)
+        # proxies={} 双保险 — 即使 trust_env 漏网也绝不走代理
+        resp = _SESSION.post(ARK_ENDPOINT, json=payload, headers=headers,
+                             timeout=120, proxies={"http": "", "https": ""})
     except Exception:
         print("[豆包生图] 网络请求失败:")
         traceback.print_exc()
@@ -124,12 +140,18 @@ def _pick_seedream_size(width: int, height: int) -> str:
 
 def generate_segment(zone: str, prompt: str, api_key: str,
                      width: int = 750, height: int = 1334,
-                     negative_prompt: str = "") -> list[str]:
-    """无缝长图方案：单段背景生成，按目标宽高自动选最接近的支持尺寸"""
+                     negative_prompt: str = "",
+                     reference_image_url: str = "") -> list[str]:
+    """无缝长图方案：单段背景生成，按目标宽高自动选最接近的支持尺寸
+
+    reference_image_url: 可选参考图。支持 https:// URL 或 data:image/...;base64,... 格式。
+                         传空字符串（默认）→ 纯文生图路径，行为与原来完全一致。
+    """
     size = _pick_seedream_size(width, height)
     print(f"[豆包生图][段:{zone}] 目标 {width}x{height} → 选用 {size}")
     return generate_background(prompt, api_key, size=size,
-                               negative_prompt=negative_prompt, n=1)
+                               negative_prompt=negative_prompt, n=1,
+                               reference_image_url=reference_image_url)
 
 
 def download_image(url: str, save_dir, filename: str = "") -> str:
@@ -143,7 +165,7 @@ def download_image(url: str, save_dir, filename: str = "") -> str:
     save_path = save_dir / filename
     saved = _clear_proxy()
     try:
-        r = _SESSION.get(url, timeout=60)
+        r = _SESSION.get(url, timeout=60, proxies={"http": "", "https": ""})
         r.raise_for_status()
         with open(save_path, "wb") as f:
             f.write(r.content)

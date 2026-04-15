@@ -134,6 +134,23 @@
       display: block;
     }
 
+    /* 无图场景卡:品牌色渐变 + 首字占位(对齐 v1 block_h 兜底,避免强套不相关图) */
+    .scene-placeholder {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg,
+        rgba(232, 35, 26, 0.82) 0%,
+        rgba(181, 26, 19, 0.90) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 84px;
+      font-weight: 900;
+      color: rgba(255, 255, 255, 0.35);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      letter-spacing: 0;
+    }
+
     /* 底部深色渐变,让场景名在任意图上都清晰 */
     .scene-overlay {
       position: absolute;
@@ -207,8 +224,13 @@
       <div class="scene-grid">
         {% for s in scene_items %}
         <div class="scene-card">
+          {% if s.image_url %}
           <img class="scene-img" src="{{ s.image_url }}" alt="">
           <div class="scene-overlay"></div>
+          {% else %}
+          <div class="scene-placeholder">{{ s.name[:1] }}</div>
+          <div class="scene-overlay"></div>
+          {% endif %}
           {% if s.tag %}<div class="scene-tag">{{ s.tag }}</div>{% endif %}
           <div class="scene-label">
             <div class="scene-name">{{ s.name }}</div>
