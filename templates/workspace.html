@@ -547,6 +547,10 @@
         🎨 AI精修（专业版）
       </button>
       <p class="text-hint" style="margin-top:8px;">豆包 Seedream 生成 AI 背景 + HTML/CSS 排版 + Chromium 截图,约 10-20 秒</p>
+      <div id="ark_key_status" style="margin-top:8px; padding:8px 10px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; font-size:12px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <span id="ark_key_label" style="color:#6b7280;">⚙️ 豆包 Key: 未配置</span>
+        <a href="#" onclick="setupArkKey(); return false;" style="color:#10b981; text-decoration:underline; font-size:12px;">设置</a>
+      </div>
     </div>
 
   </aside>
@@ -1203,11 +1207,45 @@
     document.getElementById('ai_img_wrapper').style.display = tab === 'ai_img' ? 'block' : 'none';
   }
 
+  /* ── 豆包 API Key 用户自管(只存浏览器 localStorage,不上传服务器存储) ─── */
+  function renderArkKeyStatus() {
+    const key = (localStorage.getItem('ark_api_key') || '').trim();
+    const label = document.getElementById('ark_key_label');
+    if (!label) return;
+    if (key) {
+      label.innerHTML = `⚙️ 豆包 Key: <span style="color:#059669;">已配置 ✓ ····${key.slice(-4)}</span>`;
+    } else {
+      label.innerHTML = `⚙️ 豆包 Key: <span style="color:#dc2626;">未配置 ⚠️</span>`;
+    }
+  }
+  function setupArkKey() {
+    const cur = (localStorage.getItem('ark_api_key') || '').trim();
+    const tip = '请粘贴你的豆包 Seedream API Key:\n\n' +
+      '获取入口:火山方舟控制台 → API Key 管理 → 创建 → 复制 sk-xxx\n' +
+      '安全说明:仅存在你浏览器 localStorage,不会上传服务器,清空请提交空内容\n\n' +
+      (cur ? `当前(末4位 ····${cur.slice(-4)})` : '当前:未配置');
+    const input = prompt(tip, cur);
+    if (input === null) return cur;
+    const next = input.trim();
+    if (next) localStorage.setItem('ark_api_key', next);
+    else      localStorage.removeItem('ark_api_key');
+    renderArkKeyStatus();
+    return next;
+  }
+
   /* ── AI 精修版：豆包 Seedream 背景 + HTML/CSS + Playwright 截图 ───── */
   async function generateAiHtmlV2() {
     if (!currentBuildData || !currentBuildData.parsed) {
       showError('请先粘贴产品文案并点击「一键生成详情页」');
       return;
+    }
+    let arkKey = (localStorage.getItem('ark_api_key') || '').trim();
+    if (!arkKey) {
+      arkKey = setupArkKey();
+      if (!arkKey) {
+        showError('未填豆包 API Key,无法生成 AI 精修(点左侧「⚙️ 豆包 Key 设置」)');
+        return;
+      }
     }
     switchCenterTab('ai_img');
     document.getElementById('empty_state').style.display = 'none';
@@ -1241,6 +1279,7 @@
       effect_image:  effectImageUrl || '',   // 效果图 → scene 屏背景覆盖
       qr_image:      qrImageUrl     || '',   // 二维码 → cta 屏
       theme_id:      currentThemeId,
+      ark_api_key:   arkKey,                 // 用户自带 key,服务端优先用这个,不消耗站长 ENV 额度
       out_jpg_name:  `detail_v2_${Date.now()}.jpg`,
       save_png:      false,
     };
@@ -1428,6 +1467,7 @@
   /* ── Init ───────────────────────────────────────────────────── */
   document.addEventListener('DOMContentLoaded', () => {
     loadThemes();
+    renderArkKeyStatus();   // 显示用户已配置的豆包 Key 状态(末4位)
     // 产品图走自动抠图 — 否则 AI 精修合成时原图背景 + 原图水印文字会穿透到模板
     initUploadBox('upload_product', url => { productImageUrl = url; }, { autoRembg: true });
     initUploadBox('upload_scene', url => { sceneImageUrl = url; });

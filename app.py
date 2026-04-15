@@ -2219,9 +2219,22 @@ def generate_ai_detail_html():
         # AI_BG_MODE 控制模式: cache(默认 24h 复用) / realtime(每次都新)
         # API 失败 / 无 key → 该屏 bg_url="" → 模板走 CSS 兜底
         # scene_image 存在时 → 作为 Doubao 图生图参考,生成的 6 屏背景会向其色调/风格靠拢
+        # 优先用前端传的 ark_api_key(用户自己 key),REQUIRE_USER_KEY=true 时禁用 ENV 兜底
+        # 这样生产部署即使 ENV 有 key 也不会替用户付账单(防被薅羊毛)
+        user_ark_key = (data.get("ark_api_key") or "").strip()
+        require_user_key = os.environ.get("REQUIRE_USER_KEY", "false").lower() == "true"
+        if user_ark_key:
+            ark_key = user_ark_key
+        elif require_user_key:
+            return jsonify({
+                "error": "需要豆包 API Key 才能生成 AI 精修。请在「AI 精修(专业版)」按钮"
+                         "下方点「设置」填入你的 sk-xxx(火山方舟控制台申请)"
+            }), 403
+        else:
+            ark_key = os.environ.get("ARK_API_KEY", "").strip()
+
         try:
             import ai_bg_cache
-            ark_key = os.environ.get("ARK_API_KEY", "").strip()
             category = (parsed_data.get("product_type")
                         or parsed_data.get("category_line") or "").strip()
             brand = (parsed_data.get("brand") or "").strip()
