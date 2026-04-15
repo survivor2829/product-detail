@@ -34,6 +34,9 @@ static/设备类/ref_*.png
 .omc/
 PROJECT_ARCHITECTURE.md
 
+# 调试 / 探针目录(下载脚本已迁到 scripts/download_scene_bank.py)
+.probe/
+
 # 系统文件
 .DS_Store
 Thumbs.db
