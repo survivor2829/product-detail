@@ -87,7 +87,8 @@ RUN mkdir -p /root/.u2net && \
 
 COPY . .
 
-RUN rm -f instance && mkdir -p static/uploads static/outputs output instance
+# -rf 而非 -f:本地 instance/ 会被 COPY . . 带进镜像(可能是目录也可能是软链),rm -f 只能删文件会挂
+RUN rm -rf instance && mkdir -p static/uploads static/outputs output instance
 
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
