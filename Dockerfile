@@ -81,11 +81,15 @@ RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simpl
 # 所以必须分两次调 playwright install, 每次换 HOST. 第一次下完 chrome+shell 即
 # 写入 INSTALLATION_COMPLETE 标记, 第二次只会补 ffmpeg 不会重下 chrome.
 
-# 系统依赖已在上一步装好，这里只拉浏览器二进制 — 两阶段绕不同镜像
+# 系统依赖已在上一步装好，这里只拉浏览器二进制 — 两阶段顺序关键:
+# 先装 ffmpeg (2M, 快), 写入 marker; 再装 chromium 时 playwright 看到 ffmpeg 已完成,
+# 只会拉 chrome + chrome-headless-shell, 不会重复拉 ffmpeg.
+# 反过来则失败: chromium 先装触发 ffmpeg 404 → 整个命令 fail → chrome+shell 的
+# INSTALLATION_COMPLETE 不落盘 → 第二阶段再重下 chrome+shell 仍 404 (HOST 换过了).
 RUN pip install --no-cache-dir playwright && \
-    PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing \
-      playwright install chromium || true
-RUN PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
+    PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
+      playwright install ffmpeg
+RUN PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing \
       playwright install chromium
 
 # requirements.txt 单独 COPY：只有它变化才重装 Python 依赖（利用 Docker 层缓存）
