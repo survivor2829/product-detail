@@ -21,7 +21,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: xiaoxi
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填, 跑 scripts/generate_secrets.py}
+      # ⚠ full profile 部署必须在 .env 里配真密码. 这里用 :- 软默认值是为了
+      # 让默认 `docker compose up` (pg 不激活) 不在 interpolation 阶段就炸 —
+      # Compose V2 的 bug/feature: profile 过滤发生在 interpolation 之后
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-MUST_SET_IN_ENV_FOR_FULL_PROFILE}
       POSTGRES_DB: xiaoxi
     volumes:
       - pg_data:/var/lib/postgresql/data
