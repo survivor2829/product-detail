@@ -1,18 +1,38 @@
 # 批量生成功能 项目状态
 
-> 最后更新：2026-04-20
-> 当前进度：阶段一·任务 4b（Playwright 渲染 + PNG 落盘）等待用户验证 → 阶段一收口
+> 最后更新：2026-04-21
+> 当前进度：阶段四全部归档，待启动阶段五
 
 ## 任务进度
 
-### 阶段一：后台基础
-- [x] 任务1：文件夹上传 API + 文件夹结构解析（完成于 2026-04-20，用户已验证 curl 通过）
-- [x] 任务2：双资源池任务队列（完成于 2026-04-20，3 并发上限+池隔离+失败容错全部通过）
-- [x] 任务3：批次数据库表 batches+batch_items（完成于 2026-04-20，(第N次) 后缀+5 个端点全过）
-- [x] 任务4a：DeepSeek + rembg 主干集成 + 用户 Key 鉴权（完成于 2026-04-20，用户验证通过）
-- [x] 任务4b：Playwright HTML 渲染 + 落 PNG（完成于 2026-04-20，等待验证）← 本轮
+### 阶段一：后台基础 ✅
+- [x] 任务1：文件夹上传 API + 文件夹结构解析（2026-04-20，curl 验证通过）
+- [x] 任务2：双资源池任务队列（2026-04-20，3 并发上限 + 池隔离 + 失败容错）
+- [x] 任务3：批次数据库表 batches+batch_items（2026-04-20，`(第N次)` 后缀 + 5 个端点）
+- [x] 任务4a：DeepSeek + rembg 主干集成 + 用户 Key 鉴权（2026-04-20）
+- [x] 任务4b：Playwright HTML 渲染 + 落 PNG（2026-04-20，用户验证通过）
 
-### 阶段二/三/四/五：见 `PRD_批量生成.md`
+### 阶段二：前端工作台 ✅
+- [x] 任务5–8.5：workspace UI（批次列表、产品卡片、状态徽章、查看/重跑/下载按钮）
+  - 完成于 2026-04-20。详见 `PRD_批量生成.md` 任务 5–8.5 章节。
+
+### 阶段三：模板策略 + AI 精修 ✅
+- [x] 任务9：模板智能匹配（2026-04-20，auto/fixed 策略 + `theme_matcher.py`，commit `3b6e3a3`）
+- [x] 任务10：费用预估弹窗（2026-04-20，`pricing_config` + `/ai-refine-estimate`，commit `3b6e3a3`）
+- [x] 任务11：AI 精修队列（2026-04-20，`refine_processor.py` + 三层防扣费，commit `e67700b`）
+
+### 阶段四：完整下载体验 ✅
+- [x] Step A：`/uploads/` 静态路由修复（`login_required` + 路径穿越防御，commit `e67700b`）
+- [x] Step B：单文件下载端点 `/api/batch/<id>/item/<item_id>/download`
+- [x] Step C：工作台缩略图列 + lightbox + lazy load
+- [x] Step D：整批 zip 打包下载 `/api/batch/<id>/export`
+
+### 阶段五：收尾清理 🔜 待启动
+执行顺序（用户 2026-04-21 拍板）：**1 → 2 → 3 → 4**
+- [ ] **1. 清理 Claude Code plugin/skill/agent** — 当前 190+ agents，裁到常用子集（block-editor / ai-image-debugger / explore / plan 等），减少加载时间和决策噪音
+- [ ] **2. DZ70X / DZ95X 旧批次重跑精修** — 前期试跑 failed 状态的产品需重新走 refine_processor，用真实 theme_id
+- [ ] **3. 磁盘孤儿文件清理脚本** — `uploads/batches/` 下无 DB 记录的目录（比 `cleanup_orphan_items.py` 的 DB 侧清理更彻底）
+- [ ] **4. 服务器部署配置文档整理** — Docker / Playwright / `ARK_API_KEY` / `.env.example` 同步至 `CLOUD_HANDOFF.md`
 
 ## 已确认的决策
 - [2026-04-20] 任务1 暂不加 `@login_required` + `@csrf.exempt`，方便 curl/Postman 直测；任务4 整链路打通后补回。
@@ -129,6 +149,52 @@ with app.app_context():
 1. 新增 worker 代码 PR 里必须 grep 检查 `url_for|render_template|current_app`
 2. 单元测试用真 `ThreadPoolExecutor` 跑一次 worker（参考 scripts/verify_refine_worker_context.py 模式）
 3. 异常不要静默塞 result JSON；worker 抛出 → 标记产品 `status=failed`，别让前端看到假 done
+
+### 修 bug 后必问同类问题 (2026-04-20 漏网复盘)
+
+**原则**：修完一个 bug 不等于结束。必须立刻问：
+**"这是个例还是模式？代码库里还有多少处会犯同样的错？"**
+
+**案例**：
+- 早上 `refine_processor.py` 修 Flask context bug → 以为搞定收工
+- 晚上 `batch_processor.py` 被同一 bug 击穿 → 3 个产品 render 失败但 status=done（前端假绿）
+- 共享模式：worker 线程 + `render_template/url_for/current_*`，当时没做全局扫描
+
+**动作清单**（任何 bug 修完必跑一遍）：
+1. 归纳 bug 的本质模式（e.g. "worker 线程里摸 Flask context"）
+2. 用 grep 搜同类模式（`ThreadPoolExecutor|threading.Thread` 交叉 `render_template|url_for|current_app`）
+3. 每一处都检查是否有同样缺陷，不放过任何一处
+4. 写一个 `verify_*.py` 把这个不变量锁死（参考 `scripts/verify_refine_worker_context.py` 模式）
+
+**反例**（永远不要再犯）：修完一处就 commit 收工，不做全局扫描 → 等同一 bug 第二次爆炸。
+
+### 烧钱 API 必须三层防护 (2026-04-20 ¥10.8 事故后立碑)
+
+**背景**：任务 11 AI 精修首次试跑意外烧 ¥10.8（正常预估 ¥3.6 的 3 倍）。
+根因：前端按钮未锁 → 用户连点 → 3 个并发批次同时跑 → 每批 6 屏 × Seedream 全额烧。
+
+**三层防护**（缺一不可，已全部落地 — 见 commit `e67700b`）：
+
+1. **前端按钮锁（防误点）**
+   - 点"开始 AI 精修"立刻 `disabled` + loading 文案
+   - `window.confirm` 弹窗期也保持锁，防止弹窗阶段连点
+   - fetch 成功/失败都在 `finally` 里解锁
+
+2. **Key 缺失跳转（防空跑）**
+   - 后端启动端点第一步查 `ARK_API_KEY`
+   - 没 key 直接 302 `/settings`，**不入队**（不扣费也不产生 failed 记录）
+   - 前端错误 toast 指向"去配置"链接
+
+3. **硬上限 `MAX_REFINE_COST_PER_RUN`（防意外）**
+   - 环境变量 `MAX_REFINE_COST_PER_RUN`（默认 ¥50）
+   - 启动前调 `compute_estimate()` 预估费用，超额直接 400 拒绝
+   - 日志打印预估 vs 上限，方便运维调参
+
+**未来新增烧钱 API 的上线清单**（强制检查）：
+- [ ] 前端按钮有 `disabled` + loading 态？
+- [ ] 后端入队前查依赖 Key？没 Key 走跳转不走队列？
+- [ ] 有硬上限 env var？`compute_estimate()` 接入了吗？
+- [ ] 失败场景的提示是否让用户能自己修复（而不只是 "error 500"）？
 
 ## 用户偏好
 - 用户能看 JSON 字段对错，但不直接读 Python 代码 → 验证步骤要写"预期看到 X"而不是"运行什么测试"
@@ -302,19 +368,22 @@ Get-Content "uploads\batches\$batchId\产品A\parsed.json" -Raw | python -m json
 
 ## 恢复指引
 新对话续做时按以下顺序操作：
-1. 读本文件了解进度
+1. 读本文件了解进度（重点看"任务进度"+"技术债/经验教训"两节）
 2. 读 `PRD_批量生成.md` 了解目标
-3. 当前任务 = 任务 4b（已写完，等用户验证）/ 阶段二·前端工作台（下一轮）
+3. 当前任务 = **阶段五 · 任务 1 清理 Claude Code plugin/skill/agent**
 
-### 阶段二接续点（如 4b 验证通过）
-- 阶段一闭环：上传 zip → 启动批次 → 后台并发跑 DeepSeek+rembg+Playwright → DB 持久化
-- 阶段二要做：前端 `/workspace/batch/<batch_id>` 页面，列出该批次所有产品的 preview.png 缩略图
-  - 复用 templates/workspace.html 的展示套路（最热路径文件，已有 211 次访问）
-  - 网格布局：每张卡片显示 preview.png 缩略 + 产品名 + status badge + (查看 / 重跑 / 下载) 按钮
-  - 失败的产品（status=failed 或 render_error 非空）显示红色提示
-- 风险点：preview.png 文件大（截图全长可能 2–5MB），列表页需要做缩略图（可加 thumbnail.png 在 4b 后追加，或前端用 `<img loading=lazy>` 兜底）
+### 阶段五接续点（下一轮启动点）
 
-### 阶段三/四/五（按 PRD）
-- 阶段三：批量列表页（用户的所有历史批次）
-- 阶段四：单个批次内的 AI 精修（接 ARK_API_KEY 豆包 Seedream，类似单产品的 /api/generate-ai-detail-html）
-- 阶段五：导出 zip + 计费/Quota 接入
+**优先做任务 1：清理 plugin/skill/agent**
+- 动机：当前 `.claude/` 加载 190+ agents，子代理选型时决策噪音大、加载慢
+- 策略：先列出"过去一周真正用到的 agent/skill"，再裁剪到常用子集
+- 保留最小集：阶段五开始时再盘点决定（基于真实使用数据，不提前写死）
+- 裁剪前先把当前 `.claude/` 备份到 `.claude.backup.<date>/`
+
+**后续顺序**：任务 2（旧批次重跑精修）→ 任务 3（磁盘孤儿清理）→ 任务 4（部署文档整理）
+
+### 核心只读铁律（无论做到哪一步都要遵守）
+- **Flask context 铁律**：所有 worker 线程碰 Flask API 必须 `test_request_context()`，不是 `app_context()`
+- **修 bug 后必问同类问题**：修完立刻 grep 全局同类模式，别让同一 bug 二次爆炸
+- **烧钱 API 三层防护**：前端按钮锁 + 后端 Key/上限 + 失败提示可操作
+- 详见"技术债/经验教训"章节
