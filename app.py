@@ -18,12 +18,16 @@ from pathlib import Path
 from urllib.parse import unquote
 from dotenv import load_dotenv
 import ai_bg_cache
+import batch_upload as batch_upload_mod
+import batch_queue as batch_queue_mod
+import batch_processor as batch_processor_mod
+import batch_pubsub as batch_pubsub_mod
 
 # 加载 .env 文件（本地开发用，生产环境靠系统环境变量）
 load_dotenv(Path(__file__).parent / ".env")
 
 import threading
-from flask import Flask, request, jsonify, send_file, render_template, redirect, url_for, abort, flash
+from flask import Flask, request, jsonify, send_file, send_from_directory, render_template, redirect, url_for, abort, flash
 from flask_login import login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 
@@ -62,12 +66,33 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # ── 初始化扩展 ──
 from extensions import db, login_manager, migrate
-from models import User, GenerationLog
+from models import User, GenerationLog, Batch, BatchItem
+from sqlalchemy import func as _sa_func
+import json as _json_mod
 
 csrf = CSRFProtect(app)
+
+# 批次实时推送：flask-sock 与现有 ThreadPoolExecutor 共存,不替换 Werkzeug worker。
+from flask_sock import Sock as _Sock  # noqa: E402
+sock = _Sock(app)
 db.init_app(app)
 login_manager.init_app(app)
 migrate.init_app(app, db)
+
+# ── SQLite 默认 PRAGMA foreign_keys=OFF, 必须每连接都打开,
+#    否则 ON DELETE CASCADE 不生效 → 删 Batch 不会带走 BatchItem,
+#    再加 SQLite 的 rowid reuse 行为, 会出现"幽灵子记录附给新父记录"的污染。
+#    必须在 db.init_app() 之后, 但在任何 query 前注册。
+from sqlalchemy import event as _sa_event
+from sqlalchemy.engine import Engine as _SA_Engine
+@_sa_event.listens_for(_SA_Engine, "connect")
+def _enable_sqlite_fk(dbapi_conn, _conn_record):
+    try:
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+    except Exception:
+        pass  # 非 SQLite (比如未来切 Postgres) 静默跳过
 
 @login_manager.user_loader
 def _load_user(user_id):
@@ -1062,6 +1087,976 @@ def upload():
 
     auto_rembg = str(request.form.get("auto_rembg", "")).lower() in ("1", "true", "yes")
     return jsonify(_persist_upload(file, auto_rembg=auto_rembg))
+
+
+# ── 批量上传 UI 页面（PRD 阶段二·任务5）─────────────────────────────
+@app.route("/batch/upload", methods=["GET"])
+@login_required
+def batch_upload_page():
+    """批量生成入口页：浏览器选文件夹 → JS 用 JSZip 打包 → POST /api/batch/upload。"""
+    return render_template("batch/upload.html")
+
+
+# 任务9: /api/themes 复用已有端点 (app.py:990 get_themes), 返回 themes.json 全量。
+# 前端只读 .themes 数组的 id/name/description 字段, 兼容。
+
+
+# ── 批量上传（PRD: PRD_批量生成.md F1/F2/F3）──────────────────────────
+@app.route("/api/batch/upload", methods=["POST"])
+@login_required
+@csrf.exempt  # 走 cookie 鉴权 + curl 测试需 cookie 文件，CSRF 由会话保证
+def batch_upload():
+    """接收一个 zip，解压后扫描产品文件夹结构，返回识别报告。
+
+    multipart/form-data:
+        file: <zip 文件，必填>
+        batch_name: <批次显示名，可选；默认取 zip 文件名>
+    """
+    import shutil
+    import zipfile as _zf
+
+    if "file" not in request.files:
+        return jsonify({"error": "请求中没有文件字段 file"}), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "文件名为空"}), 400
+    if not file.filename.lower().endswith(".zip"):
+        return jsonify({"error": "只支持 .zip 格式"}), 400
+
+    batch_name = (request.form.get("batch_name", "") or "").strip() \
+        or Path(file.filename).stem
+
+    # 任务9 (PRD F11): 模板策略
+    from theme_matcher import KNOWN_THEME_IDS as _THEMES_OK
+    template_strategy = (request.form.get("template_strategy", "auto") or "auto").strip()
+    if template_strategy not in ("auto", "fixed"):
+        template_strategy = "auto"
+    fixed_theme_id = (request.form.get("fixed_theme_id", "") or "").strip() or None
+    if template_strategy == "fixed":
+        if not fixed_theme_id or fixed_theme_id not in _THEMES_OK:
+            return jsonify({
+                "error": (f"template_strategy=fixed 但 fixed_theme_id 不在白名单内: "
+                         f"{fixed_theme_id!r}; 可选: {sorted(_THEMES_OK)}"),
+            }), 400
+    else:
+        fixed_theme_id = None  # auto 模式下强制清空,避免脏数据
+    product_category = (request.form.get("product_category", "设备类") or "设备类").strip()
+    if product_category not in ALLOWED_PRODUCT_TYPES:
+        product_category = "设备类"
+
+    batches_root = UPLOAD_DIR / "batches"
+    batches_root.mkdir(parents=True, exist_ok=True)
+    batch_id = batch_upload_mod.generate_batch_id(batches_root)
+    batch_dir = batches_root / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path = batch_dir / "_upload.zip"
+    file.save(str(zip_path))
+
+    try:
+        extracted = batch_upload_mod.extract_zip_safe(zip_path, batch_dir)
+    except _zf.BadZipFile:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+        return jsonify({"error": "无效的 zip 文件（损坏或不是 zip 格式）"}), 400
+    except Exception as e:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+        return jsonify({"error": f"解压失败：{type(e).__name__}: {e}"}), 500
+    finally:
+        try:
+            zip_path.unlink()
+        except OSError:
+            pass
+
+    report = batch_upload_mod.scan_batch(batch_dir, BASE_DIR)
+
+    if report["total_folders"] > batch_upload_mod.MAX_PRODUCTS_PER_BATCH:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+        return jsonify({
+            "error": (f"单次最多 {batch_upload_mod.MAX_PRODUCTS_PER_BATCH} 个产品，"
+                      f"当前 zip 包含 {report['total_folders']} 个文件夹"),
+        }), 400
+
+    # ── PRD F10：同名 (第N次) 后缀 + 持久化到 batches / batch_items ──
+    display_name = _generate_unique_batch_name(batch_name)
+    batch_dir_rel = str(batch_dir.relative_to(BASE_DIR)).replace("\\", "/")
+    user_id_or_none = current_user.id if current_user.is_authenticated else None
+
+    batch_row = Batch(
+        batch_id=batch_id,
+        name=display_name,
+        raw_name=batch_name,
+        user_id=user_id_or_none,
+        status="uploaded",
+        total_count=report["total_folders"],
+        valid_count=report["valid_count"],
+        skipped_count=report["skipped_count"],
+        batch_dir=batch_dir_rel,
+        template_strategy=template_strategy,
+        fixed_theme_id=fixed_theme_id,
+        product_category=product_category,
+    )
+    db.session.add(batch_row)
+    db.session.flush()  # 拿 id
+
+    for p in report["products"]:
+        db.session.add(BatchItem(
+            batch_pk=batch_row.id,
+            name=p["name"],
+            status="pending",
+            main_image_path=p["main_image_path"],
+            detail_image_paths=_json_mod.dumps(p["detail_image_paths"], ensure_ascii=False),
+            desc_text=p.get("desc_text", ""),
+            desc_chars=p["desc_chars"],
+        ))
+    for s in report["skipped"]:
+        db.session.add(BatchItem(
+            batch_pk=batch_row.id,
+            name=s["name"],
+            status="skipped",
+            skip_reason=s["reason"],
+        ))
+    db.session.commit()
+
+    # 响应里把 desc_text 全文剥掉(可能很长),只保留 preview
+    products_response = [{k: v for k, v in p.items() if k != "desc_text"}
+                         for p in report["products"]]
+
+    return jsonify({
+        "db_id": batch_row.id,
+        "batch_id": batch_id,
+        "batch_name": display_name,
+        "raw_name": batch_name,
+        "batch_dir": "/" + batch_dir_rel,
+        "extracted_files": extracted,
+        "scan_root": report["scan_root"],
+        "total_folders": report["total_folders"],
+        "valid_count": report["valid_count"],
+        "skipped_count": report["skipped_count"],
+        "products": products_response,
+        "skipped": report["skipped"],
+        # 任务9 (PRD F11): 让前端能在结果页显示当前批次的模板策略
+        "template_strategy": template_strategy,
+        "fixed_theme_id": fixed_theme_id,
+        "product_category": product_category,
+    })
+
+
+def _generate_unique_batch_name(raw_name: str) -> str:
+    """PRD F10：同一天 raw_name 重复 → 第 2/3/N 次自动加 (第N次) 后缀。"""
+    today = _dt.utcnow().date()
+    count = Batch.query.filter(
+        Batch.raw_name == raw_name,
+        _sa_func.date(Batch.created_at) == today,
+    ).count()
+    if count == 0:
+        return raw_name
+    return f"{raw_name} (第{count + 1}次)"
+
+
+# ── 历史批次查询（PRD F9 雏形）──────────────────────────────────────
+@app.route("/api/batches", methods=["GET"])
+@login_required
+def batches_list():
+    """列出批次，按创建时间倒序。?limit=50&offset=0"""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", "50"))))
+        offset = max(0, int(request.args.get("offset", "0")))
+    except ValueError:
+        return jsonify({"error": "limit/offset 必须是整数"}), 400
+    q = Batch.query.order_by(Batch.created_at.desc())
+    total = q.count()
+    rows = q.offset(offset).limit(limit).all()
+    return jsonify({
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "batches": [b.to_dict() for b in rows],
+    })
+
+
+@app.route("/api/batches/<batch_id>", methods=["GET"])
+@login_required
+def batches_detail(batch_id):
+    """单个批次详情，含全部 items。仅 owner 可读(legacy 无主批次仍开放)。"""
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if not batch:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+    if batch.user_id is not None and batch.user_id != current_user.id:
+        return jsonify({"error": "没有权限查看该批次"}), 403
+    return jsonify(batch.to_dict(with_items=True))
+
+
+@app.route("/api/batches/<batch_id>/items/<item_name>", methods=["PATCH"])
+@login_required
+@csrf.exempt
+def batches_item_update(batch_id, item_name):
+    """更新单个 item，目前只支持 want_ai_refine。
+
+    Body: {"want_ai_refine": true|false}
+    """
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if not batch:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+    if batch.user_id is not None and batch.user_id != current_user.id:
+        return jsonify({"error": "没有权限修改该批次"}), 403
+    item = BatchItem.query.filter_by(batch_pk=batch.id, name=item_name).first()
+    if not item:
+        return jsonify({"error": f"产品不存在: {item_name}"}), 404
+    data = request.get_json(silent=True) or {}
+    changed = False
+    if "want_ai_refine" in data:
+        item.want_ai_refine = bool(data["want_ai_refine"])
+        changed = True
+    if changed:
+        db.session.commit()
+    return jsonify(item.to_dict())
+
+
+# ── 批量队列：mock 触发与状态查询（PRD F4/F7 验证用）────────────────
+@app.route("/api/batch/<batch_id>/start-mock", methods=["POST"])
+@login_required
+@csrf.exempt
+def batch_start_mock(batch_id):
+    """重新扫描已上传的批次目录，把识别到的产品扔进批量池跑 mock 处理器。
+
+    任务4 会替换为真实的 DeepSeek+rembg+Playwright 流水线。
+    """
+    batches_root = UPLOAD_DIR / "batches"
+    batch_dir = batches_root / batch_id
+    if not batch_dir.is_dir():
+        return jsonify({"error": f"batch_id 不存在: {batch_id}"}), 404
+
+    report = batch_upload_mod.scan_batch(batch_dir, BASE_DIR)
+    if report["valid_count"] == 0:
+        return jsonify({"error": "批次内没有合规产品",
+                       "skipped": report["skipped"]}), 400
+
+    batch_name = (request.form.get("batch_name", "") or "").strip() or batch_id
+    try:
+        batch_queue_mod.submit_batch(
+            batch_id=batch_id, batch_name=batch_name,
+            products=report["products"],
+            processor_fn=batch_queue_mod.mock_processor,
+            on_state_change=_batch_db_sync_callback,  # 任务6:让 mock 也走 WS 推送
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+
+    return jsonify({
+        "ok": True,
+        "batch_id": batch_id,
+        "submitted": report["valid_count"],
+        "skipped": report["skipped_count"],
+        "message": "已扔进批量池；GET /api/batch/<batch_id>/status 查进度",
+    })
+
+
+@app.route("/api/batch/<batch_id>/status", methods=["GET"])
+@login_required
+def batch_status(batch_id):
+    """查询批次进度。"""
+    state = batch_queue_mod.get_batch_status(batch_id)
+    if state is None:
+        return jsonify({"error": f"批次未在内存中: {batch_id}（可能未触发或服务重启过）"}), 404
+    return jsonify(state)
+
+
+# ── 批量真实处理流水线（PRD F4/F7/F8 任务4a 主干）───────────────────
+def _batch_db_sync_callback(batch_id, name, status, result, error):
+    """worker 状态变更 → 同步到 batch_items + 收尾 batches.status。
+
+    必须套 app.app_context()，因为 worker 跑在线程池里，没有请求上下文。
+    任何异常被 batch_queue 兜住，不会卡死 worker。
+    """
+    with app.app_context():
+        batch = Batch.query.filter_by(batch_id=batch_id).first()
+        if not batch:
+            print(f"[db-sync] 找不到 batch_id={batch_id}，跳过", flush=True)
+            return
+        item = BatchItem.query.filter_by(batch_pk=batch.id, name=name).first()
+        if not item:
+            print(f"[db-sync] 找不到 batch.{batch.id} 的产品 {name}，跳过", flush=True)
+            return
+
+        now = _dt.utcnow()
+        item.status = status
+        if status == "processing":
+            item.started_at = now
+            if batch.status != "running":
+                batch.status = "running"
+        elif status in ("done", "failed"):
+            item.finished_at = now
+            if result is not None:
+                item.result = _json_mod.dumps(result, ensure_ascii=False)
+                # 任务9 (PRD F11): 把 processor 算出的主题落库,
+                # 给后续 AI 精修阶段 (任务10/11) 直接用,不用再重算。
+                if isinstance(result, dict):
+                    if result.get("resolved_theme_id"):
+                        item.resolved_theme_id = result["resolved_theme_id"]
+                    if result.get("resolved_theme_matched_by"):
+                        item.resolved_theme_matched_by = result["resolved_theme_matched_by"]
+            if error is not None:
+                item.error = error
+        db.session.commit()
+
+        # 收尾：所有 item 都终态了 → batches.status = completed
+        batch_completed = False
+        if status in ("done", "failed"):
+            outstanding = BatchItem.query.filter(
+                BatchItem.batch_pk == batch.id,
+                BatchItem.status.in_(["pending", "processing"])
+            ).count()
+            if outstanding == 0:
+                batch.status = "completed"
+                db.session.commit()
+                batch_completed = True
+                print(f"[db-sync] batch {batch_id} 全部完成 → status=completed",
+                      flush=True)
+
+    # ── 推送到所有订阅了该批次的 WebSocket 前端 (PRD F5) ──────────────
+    # 注意:必须在 app_context 之外做(避免 WS 写阻塞耽搁 DB session 释放),
+    # 但仍在 worker 线程内同步调,因为 batch_pubsub 自带锁,线程安全。
+    try:
+        snap = batch_queue_mod.get_batch_status(batch_id)
+        batch_pubsub_mod.publish(batch_id, {
+            "type": "product",
+            "name": name,
+            "status": status,
+            "result": result,
+            "error": error,
+            "snapshot": snap,
+        })
+        if batch_completed:
+            batch_pubsub_mod.publish(batch_id, {
+                "type": "batch_complete",
+                "snapshot": snap,
+            })
+    except Exception:
+        import traceback as _tb; _tb.print_exc()  # 推送失败绝不影响 worker
+
+
+# ── 任务11 (PRD F6): 精修池 worker → DB 回写 ────────────────────────────
+def _refine_db_sync_callback(batch_id, name, status, result, error):
+    """精修 worker 状态变更 → 同步到 batch_items.ai_refine_status + result JSON。
+
+    与 _batch_db_sync_callback 的区别:
+      - 只动 ai_refine_status, 不碰 item.status (HTML 阶段的终态)
+      - 把 result 里的 ai_refined_path / ai_refined_at 合并到 item.result JSON
+        (不覆盖任务4 写的 parsed_path / preview_png 等字段)
+      - 不改 batches.status (精修不会让整个 batch 变 completed/running)
+    WS 推送 type='refine' 让前端能区分两个阶段。
+    """
+    with app.app_context():
+        batch = Batch.query.filter_by(batch_id=batch_id).first()
+        if not batch:
+            print(f"[refine-db] 找不到 batch_id={batch_id},跳过", flush=True)
+            return
+        item = BatchItem.query.filter_by(batch_pk=batch.id, name=name).first()
+        if not item:
+            print(f"[refine-db] 找不到 batch.{batch.id} 产品 {name},跳过", flush=True)
+            return
+
+        now = _dt.utcnow()
+        item.ai_refine_status = status
+        if status == "processing":
+            # 精修 started_at 复用 BatchItem.started_at? 不,那是 HTML 阶段的。
+            # 精修时间戳塞进 result JSON,不加新列。
+            pass
+        elif status in ("done", "failed"):
+            if result is not None and isinstance(result, dict):
+                # 合并到现有 result (保留 HTML 阶段的 parsed_path 等)
+                try:
+                    existing = _json_mod.loads(item.result or "{}")
+                    if not isinstance(existing, dict):
+                        existing = {}
+                except _json_mod.JSONDecodeError:
+                    existing = {}
+                existing.update(result)
+                item.result = _json_mod.dumps(existing, ensure_ascii=False)
+            if error is not None:
+                # 精修错误塞到 result.ai_refine_error, 不覆盖 HTML 阶段的 item.error
+                try:
+                    existing = _json_mod.loads(item.result or "{}")
+                    if not isinstance(existing, dict):
+                        existing = {}
+                except _json_mod.JSONDecodeError:
+                    existing = {}
+                existing["ai_refine_error"] = error
+                item.result = _json_mod.dumps(existing, ensure_ascii=False)
+        db.session.commit()
+
+    # WS 推送: type='refine' (前端区别于 type='product')
+    try:
+        snap = batch_queue_mod.get_refine_status(batch_id)
+        batch_pubsub_mod.publish(batch_id, {
+            "type": "refine",
+            "name": name,
+            "status": status,
+            "result": result,
+            "error": error,
+            "snapshot": snap,
+        })
+    except Exception:
+        import traceback as _tb; _tb.print_exc()
+
+
+@app.route("/api/batch/<batch_id>/ai-refine-start", methods=["POST"])
+@login_required
+@csrf.exempt
+def batch_ai_refine_start(batch_id):
+    """任务11 (PRD F6): 把勾选的产品扔进精修池, 真调豆包 Seedream。
+
+    请求体 JSON:
+        { "ark_api_key": "sk-xxxxx" }   # 前端从 localStorage['ark_api_key'] 读
+    """
+    import refine_processor
+
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if batch is None:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+    if batch.user_id is None or batch.user_id != current_user.id:
+        return jsonify({"error": "只有批次上传者可以启动精修"}), 403
+
+    data = request.get_json(silent=True) or {}
+    ark_api_key = (data.get("ark_api_key") or "").strip()
+    if not ark_api_key:
+        return jsonify({
+            "error": "未检测到豆包 API Key。请先到 workspace 页"
+                     "(/#/ai-compose) 点「AI 精修(专业版)→ 设置」填入 sk-xxx",
+            "action": "configure_ark_key",
+            "redirect": "/#/ai-compose",
+        }), 400
+
+    candidates, skipped, already_done = _select_refine_candidates(batch)
+    if not candidates:
+        return jsonify({
+            "error": "没有可精修的产品 (全部被白名单拦住)",
+            "skipped": skipped,
+        }), 400
+
+    # ── 物理余额保护 (2026-04-20 事故后加) ─────────────────────────
+    # 绝不让单次请求超过 MAX_REFINE_COST_PER_RUN. 这是最后一道防线,
+    # 前端即使被绕过、按钮锁失效、用户手工 POST, 这里都能兜住.
+    from pricing_config import compute_estimate, MAX_REFINE_COST_PER_RUN
+    est = compute_estimate(len(candidates))
+    if est["est_cost_yuan"] > MAX_REFINE_COST_PER_RUN:
+        return jsonify({
+            "error": (
+                f"预估 ¥{est['est_cost_yuan']:.2f} 超过单次保护上限 "
+                f"¥{MAX_REFINE_COST_PER_RUN:.2f} — 请减少勾选或调大 "
+                f"环境变量 MAX_REFINE_COST_PER_RUN 后重试"
+            ),
+            "action": "cost_exceeds_cap",
+            "estimated_cost_yuan": est["est_cost_yuan"],
+            "cap_yuan": MAX_REFINE_COST_PER_RUN,
+            "product_count": est["count"],
+        }), 400
+
+    # 构造 payload: 只取精修需要的字段,避免池里传一大堆没用的东西
+    items = []
+    for it in candidates:
+        # parsed.json 路径 — 从 result JSON 拿 (任务4 存的)
+        parsed_path = ""
+        try:
+            r = _json_mod.loads(it.result or "{}")
+            if isinstance(r, dict):
+                parsed_path = r.get("parsed_path") or ""
+        except _json_mod.JSONDecodeError:
+            pass
+        cutout_path = ""
+        try:
+            r = _json_mod.loads(it.result or "{}")
+            if isinstance(r, dict):
+                cutout_path = r.get("cutout_path") or ""
+        except _json_mod.JSONDecodeError:
+            pass
+        items.append({
+            "name": it.name,
+            "main_image_path":   it.main_image_path,
+            "cutout_path":       cutout_path,
+            "parsed_json_path":  parsed_path,
+            "resolved_theme_id": it.resolved_theme_id or "classic-red",
+            "product_category":  batch.product_category or "设备类",
+        })
+
+    # 入队前把 ai_refine_status 置 'queued', 让 UI 立即看到状态流转
+    for it in candidates:
+        it.ai_refine_status = "queued"
+    db.session.commit()
+
+    # 用闭包绑定 ark_api_key → processor_fn 仍是 (scope_id, payload) 两参签名
+    def _processor_with_ark(scope_id, payload, _key=ark_api_key):
+        return refine_processor.refine_one_product(
+            scope_id, payload, ark_api_key=_key
+        )
+
+    batch_queue_mod.submit_refine(
+        batch_id=batch_id,
+        items=items,
+        processor_fn=_processor_with_ark,
+        on_state_change=_refine_db_sync_callback,
+    )
+
+    return jsonify({
+        "ok": True,
+        "batch_id": batch_id,
+        "submitted": len(items),
+        "skipped": skipped,
+        "already_done_count": already_done,
+    })
+
+
+@app.route("/api/batch/<batch_id>/start", methods=["POST"])
+@login_required
+@csrf.exempt
+def batch_start_real(batch_id):
+    """触发批次的真实处理流水线（DeepSeek + rembg；4b 接 Playwright）。
+
+    从 DB 拉 status=pending 的产品，扔进批量池，进度回写 batch_items。
+    DeepSeek Key 从批次发起者（batch.user_id）账号设置里解密后注入处理器。
+    """
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if not batch:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+
+    # ── 鉴权：必须由发起人触发（防止 A 用户用 B 的 Key 烧 quota）──
+    if batch.user_id is None:
+        return jsonify({
+            "error": "该批次没有归属用户（可能是历史遗留数据），请重新上传",
+        }), 400
+    if batch.user_id != current_user.id:
+        return jsonify({"error": "只有批次的上传者可以启动该批次"}), 403
+
+    # ── 拉用户的 DeepSeek Key（不在则 400，不进队列）────────────────
+    owner = db.session.get(User, batch.user_id)
+    if owner is None:
+        return jsonify({"error": "找不到批次上传者账号"}), 400
+    if not owner.custom_api_key_enc:
+        return jsonify({
+            "error": "请先在「账号设置」中配置 DeepSeek API Key 后再启动批次",
+        }), 400
+    try:
+        from crypto_utils import decrypt_api_key
+        api_key = decrypt_api_key(owner.custom_api_key_enc)
+    except Exception as e:
+        return jsonify({
+            "error": f"DeepSeek Key 解密失败（请重新到账号设置保存一次）：{type(e).__name__}",
+        }), 500
+    if not (api_key or "").strip():
+        return jsonify({
+            "error": "解密出的 DeepSeek Key 为空，请到账号设置重新填写",
+        }), 400
+
+    pending_items = BatchItem.query.filter_by(
+        batch_pk=batch.id, status="pending"
+    ).all()
+    if not pending_items:
+        return jsonify({
+            "error": "没有待处理的产品（pending 队列为空）",
+            "batch_status": batch.status,
+        }), 400
+
+    # 任务9 (PRD F11): 把批次的模板策略一起带给 processor
+    products = []
+    for it in pending_items:
+        try:
+            details = _json_mod.loads(it.detail_image_paths or "[]")
+        except _json_mod.JSONDecodeError:
+            details = []
+        products.append({
+            "name": it.name,
+            "main_image_path": it.main_image_path,
+            "detail_image_paths": details,
+            "desc_text": it.desc_text or "",
+            "desc_chars": it.desc_chars or 0,
+            "template_strategy": batch.template_strategy or "auto",
+            "fixed_theme_id": batch.fixed_theme_id,
+            "product_category": batch.product_category or "设备类",
+        })
+
+    # 用闭包绑定 api_key，让 processor_fn 仍是 (scope_id, payload) 两参签名
+    def _processor_with_key(scope_id, payload, _key=api_key):
+        return batch_processor_mod.process_one_product(
+            scope_id, payload, api_key=_key
+        )
+
+    try:
+        batch_queue_mod.submit_batch(
+            batch_id=batch_id,
+            batch_name=batch.name,
+            products=products,
+            processor_fn=_processor_with_key,
+            on_state_change=_batch_db_sync_callback,
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+
+    batch.status = "queued"
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "batch_id": batch_id,
+        "submitted": len(products),
+        "batch_status": batch.status,
+        "message": ("已提交真实处理流水线；GET /api/batch/<id>/status 看内存进度，"
+                    "GET /api/batches/<id> 看 DB 持久化结果"),
+    })
+
+
+@app.route("/api/single/_mock-task", methods=["POST"])
+@login_required
+@csrf.exempt
+def single_mock_task():
+    """喂 N 个 mock 任务到单品池（验证池隔离）。
+
+    Query: count=<int>, default 1
+    """
+    try:
+        count = int(request.args.get("count", "1"))
+    except ValueError:
+        return jsonify({"error": "count 必须是整数"}), 400
+    if count < 1 or count > 20:
+        return jsonify({"error": "count 必须在 1-20 之间"}), 400
+
+    task_ids = []
+    for i in range(count):
+        tid = f"single_{int(_dt.utcnow().timestamp() * 1000)}_{i}"
+        batch_queue_mod.submit_single(
+            task_id=tid,
+            payload={"name": f"mock_single_{i}"},
+            processor_fn=batch_queue_mod.mock_processor,
+        )
+        task_ids.append(tid)
+    return jsonify({"ok": True, "submitted": count, "task_ids": task_ids})
+
+
+@app.route("/api/single/<task_id>/status", methods=["GET"])
+@login_required
+def single_task_status(task_id):
+    state = batch_queue_mod.get_single_status(task_id)
+    if state is None:
+        return jsonify({"error": f"任务未找到: {task_id}"}), 404
+    return jsonify(state)
+
+
+# ── 阶段四·Step A: 批次资源代理 (修图片 404) ───────────────────────────────
+# DB 里 main_image_path 存的是 /uploads/batches/<batch_id>/... 但 Flask 默认
+# 只服务 /static/*, 所以浏览器全 404. 用 send_from_directory 加一个代理端点,
+# 必须 @login_required + owner 校验 (防止 A 拿 B 的批次).
+def _check_batch_owner(batch_id: str) -> Batch:
+    """显式传 batch_id 做 owner 校验,不隐式解析 URL.
+
+    返回 Batch 实例; 不存在 → abort 404; 不是 owner → abort 403.
+    调用方拿到 Batch 就可以放心继续, 校验不通过根本不会 return.
+    """
+    b = Batch.query.filter_by(batch_id=batch_id).first()
+    if b is None:
+        abort(404)
+    if b.user_id is None or b.user_id != current_user.id:
+        abort(403)
+    return b
+
+
+@app.route("/uploads/batches/<batch_id>/<path:subpath>", methods=["GET"])
+@login_required
+def serve_batch_upload(batch_id: str, subpath: str):
+    """代理批次目录下的图片/JSON (主图 / preview.png / ai_refined.jpg / parsed.json).
+
+    - batch_id 作为真 Flask 路由参数, owner 校验走 _check_batch_owner — 零隐式 parse.
+    - send_from_directory 内置 safe_join, 自动防 ../ 路径穿越.
+    - 大文件 (HTML/AI 长图) 走 send_from_directory 的默认 streaming — 不会一次性读内存.
+    - 中文文件名: Flask 的 <path:> 已 unquote, pathlib 在 Windows 也 OK.
+    """
+    _check_batch_owner(batch_id)
+    batch_root = UPLOAD_DIR / "batches" / batch_id
+    if not batch_root.is_dir():
+        abort(404)
+    # conditional=True → 自动处理 If-Modified-Since/ETag,缩略图多次加载直接 304
+    return send_from_directory(batch_root, subpath, conditional=True)
+
+
+# ── 阶段四·Step B: 单文件下载端点 (HTML 版 / AI 精修版) ───────────────────
+# 前端每行一个"下载"按钮 → GET /api/batch/<bid>/download?name=XXX&kind=html|ai
+# 和 serve_batch_upload 不同点: 强制 as_attachment + 用"<产品名>_HTML版.png"
+# 做下载文件名 (而不是裸 preview.png) — 用户一眼知道哪个产品哪个版本.
+# kind=html → preview.png (任务4 落盘); kind=ai → ai_refined.jpg (任务11 落盘).
+_KIND_TO_FILE = {
+    "html": ("preview.png",    "HTML版.png"),  # (磁盘实际文件, 下载后缀)
+    "ai":   ("ai_refined.jpg", "AI精修版.jpg"),
+}
+
+
+@app.route("/api/batch/<batch_id>/download", methods=["GET"])
+@login_required
+def batch_download_one(batch_id: str):
+    """下载单个产品的单个版本 (HTML 或 AI 精修).
+
+    Query:
+        name: 产品名 (= BatchItem.name, 也是磁盘目录名)
+        kind: html | ai
+
+    Response:
+        200 + attachment (Content-Disposition: attachment)
+        400: 参数不对 (kind 非法 / name 缺)
+        403/404: owner 校验 (沿用 _check_batch_owner)
+        404: BatchItem 不存在 / 文件还没生成 (HTML 没跑完 / AI 没精修过)
+
+    为什么要 DB 校验 + 磁盘校验两层?
+      - DB 校验防止"URL 猜产品名"拿到任意批次里不存在的产品 (降噪 404 的 trace)
+      - 磁盘校验防止"DB 有但 worker 挂了"的半成品 → 明确 404 原因
+    """
+    b = _check_batch_owner(batch_id)
+
+    name = (request.args.get("name") or "").strip()
+    kind = (request.args.get("kind") or "").strip().lower()
+    if not name:
+        return jsonify({"error": "缺 name 参数"}), 400
+    if kind not in _KIND_TO_FILE:
+        return jsonify({"error": f"kind 必须是 html/ai, 实际 {kind!r}"}), 400
+
+    # DB 二次校验: 该产品确实属于该批次 (不是用 URL 随便猜的名字)
+    item = BatchItem.query.filter_by(batch_pk=b.id, name=name).first()
+    if item is None:
+        return jsonify({"error": f"产品 {name!r} 不在该批次"}), 404
+
+    # AI 精修版要求 ai_refine_status == 'done' (防止下载半成品)
+    if kind == "ai" and item.ai_refine_status != "done":
+        return jsonify({
+            "error": f"产品 {name!r} 的 AI 精修还未完成 "
+                     f"(当前状态 {item.ai_refine_status!r})",
+            "ai_refine_status": item.ai_refine_status,
+        }), 404
+
+    disk_name, pretty_suffix = _KIND_TO_FILE[kind]
+    product_dir = UPLOAD_DIR / "batches" / batch_id / name
+    file_abs = product_dir / disk_name
+    if not file_abs.is_file():
+        return jsonify({
+            "error": f"{kind} 版本文件不存在: {disk_name}",
+            "hint": "可能 worker 还没跑完 / 跑失败了",
+        }), 404
+
+    download_name = f"{name}_{pretty_suffix}"  # 中文名 Flask 会自动 RFC 5987 编码
+    return send_from_directory(
+        product_dir, disk_name,
+        as_attachment=True,
+        download_name=download_name,
+        conditional=True,  # 大文件支持 Range / If-Modified-Since
+    )
+
+
+# ── 阶段四·Step D: 打包下载整批 zip ──────────────────────────────────────
+# GET /api/batch/<bid>/download-all → ZIP 流
+# 结构:
+#   <batch_id>/
+#     <产品名1>/
+#       preview.png        (HTML 版, 如果 status=done)
+#       ai_refined.jpg     (AI 精修版, 如果 ai_refine_status=done)
+#     <产品名2>/
+#       ...
+# 设计要点:
+#   1. 内存 BytesIO — 50 产品 × ~2MB = ~100MB, 单机内存 OK;
+#      streaming zip 需 zipstream-ng (未装), 增加复杂度没必要
+#   2. 只打包"真有价值"的文件 (preview.png + ai_refined.jpg),
+#      不放 parsed.json / product.jpg / preview.html (原料, 用户不需要)
+#   3. Chinese 文件名: Python 3 zipfile auto-sets UTF-8 flag 当 arcname 含非 ASCII
+#   4. 如果整批连一张图都没落盘 → 404 (不返回空 zip, 避免用户下载空白文件困惑)
+#   5. Range 请求不支持 (BytesIO zip 一次性生成, 没意义) — 够小的 zip 直接下载完事
+@app.route("/api/batch/<batch_id>/download-all", methods=["GET"])
+@login_required
+def batch_download_all(batch_id: str):
+    """打包下载整批 HTML 版 + AI 精修版产品图, 按 {bid}/{产品名}/ 结构组织."""
+    import io, zipfile
+    b = _check_batch_owner(batch_id)
+
+    batch_root = UPLOAD_DIR / "batches" / batch_id
+    if not batch_root.is_dir():
+        return jsonify({"error": "批次目录不存在"}), 404
+
+    items = BatchItem.query.filter_by(batch_pk=b.id).order_by(BatchItem.id.asc()).all()
+    if not items:
+        return jsonify({"error": "批次下没有产品"}), 404
+
+    buf = io.BytesIO()
+    included_count = 0
+    skipped: list[str] = []
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for item in items:
+            product_dir = batch_root / item.name
+            if not product_dir.is_dir():
+                skipped.append(f"{item.name} (目录缺失)"); continue
+            row_any = False
+            # HTML 版 (preview.png) — status 必须 done
+            if item.status == "done":
+                png = product_dir / "preview.png"
+                if png.is_file():
+                    zf.write(str(png), arcname=f"{batch_id}/{item.name}/preview.png")
+                    row_any = True
+            # AI 精修版 (ai_refined.jpg) — ai_refine_status 必须 done
+            if item.ai_refine_status == "done":
+                jpg = product_dir / "ai_refined.jpg"
+                if jpg.is_file():
+                    zf.write(str(jpg), arcname=f"{batch_id}/{item.name}/ai_refined.jpg")
+                    row_any = True
+            if row_any:
+                included_count += 1
+            else:
+                skipped.append(f"{item.name} (无可打包文件)")
+
+    if included_count == 0:
+        # 避免下空 zip — 给用户明确原因
+        return jsonify({
+            "error": "整批没有任何可打包的文件",
+            "hint": "等产品生成完成 / AI 精修完成后再试",
+            "total": len(items),
+            "skipped": skipped[:20],  # 最多列 20 个, 防止 response 过大
+        }), 404
+
+    buf.seek(0)
+    safe_bname = (b.name or b.batch_id).replace("/", "_").replace("\\", "_")
+    download_name = f"{safe_bname}_{batch_id}.zip"
+    print(f"[batch_download_all] {batch_id}: {included_count}/{len(items)} 产品打包, "
+          f"zip size = {len(buf.getvalue())} bytes", flush=True)
+    return send_file(
+        buf, mimetype="application/zip",
+        as_attachment=True, download_name=download_name,
+    )
+
+
+# ── 任务11 (PRD F6/F11): 精修候选白名单筛选 ────────────────────────────────
+# 双保险:即使前端勾错/并发重复提交,这里也不让脏数据进池。
+# 筛选条件 (全部满足才入队):
+#   1. want_ai_refine = True        (用户勾选)
+#   2. status = 'done'               (有 HTML 底图可精修)
+#   3. main_image_path 非空          (精修流水线需要产品图)
+#   4. ai_refine_status != 'processing'  (只拦并发重跑; done 允许重跑以支持换风格)
+# 任务10 的 estimate 端点和 任务11 的 start 端点都消费同一个函数 — 一处真相。
+def _select_refine_candidates(batch):
+    """返回 (candidates, skipped, already_done_count):
+        candidates: list[BatchItem] — 可精修 (含 ai_refine_status='done' 的重跑候选)
+        skipped:    list[{name, reason}] — 勾选但不合格
+        already_done_count: int — candidates 中之前已精修过 (ai_refine_status='done') 的个数
+                            前端要据此展示"⚠ N 个会被覆盖重扣费"警告
+    """
+    candidates: list = []
+    skipped: list[dict] = []
+    already_done_count = 0
+    items = BatchItem.query.filter_by(
+        batch_pk=batch.id, want_ai_refine=True,
+    ).order_by(BatchItem.id.asc()).all()
+    for it in items:
+        reason = None
+        if it.status != "done":
+            reason = f"状态={it.status},非 done 无底图"
+        elif not (it.main_image_path or "").strip():
+            reason = "缺主图路径"
+        elif (it.ai_refine_status or "") == "processing":
+            reason = "精修正在跑,防并发重复入队"
+        if reason:
+            skipped.append({"name": it.name, "reason": reason})
+        else:
+            candidates.append(it)
+            if (it.ai_refine_status or "") == "done":
+                already_done_count += 1
+    return candidates, skipped, already_done_count
+
+
+@app.route("/api/batch/<batch_id>/ai-refine-estimate", methods=["GET"])
+@login_required
+def batch_ai_refine_estimate(batch_id):
+    """任务10 (PRD F6): 返回该批次"已勾选 AI 精修且合格"产品的费用估算。
+
+    合格定义见 _select_refine_candidates — 同一套逻辑 任务11 入队时直接复用,
+    所以用户在弹窗里看到的 count 就是真实会入队的数量, 费用不虚。
+    单价/屏数/吞吐 全部从 pricing_config 拿, 运维改价不动这里。
+    """
+    from pricing_config import compute_estimate
+
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if batch is None:
+        return jsonify({"error": f"批次未找到: {batch_id}"}), 404
+
+    candidates, skipped, already_done_count = _select_refine_candidates(batch)
+    payload = compute_estimate(len(candidates))
+    payload["batch_id"] = batch_id
+    payload["skipped"] = skipped                       # 前端: "⚠ N 个会被跳过"
+    payload["already_done_count"] = already_done_count  # 前端: "⚠ N 个已精修过,重扣费"
+    return jsonify(payload)
+
+
+@app.route("/api/batch/_pools/stats", methods=["GET"])
+@login_required
+def batch_pools_stats():
+    """返回两池实时占用，验证 PRD F4：互不阻塞。"""
+    return jsonify(batch_queue_mod.get_pool_stats())
+
+
+@app.route("/api/batch/_pubsub/stats", methods=["GET"])
+@login_required
+def batch_pubsub_stats():
+    """看哪些批次当前有前端在监听 (debug)。"""
+    return jsonify(batch_pubsub_mod.stats())
+
+
+# ── 实时进度推送 WebSocket (PRD 阶段二·任务6 / F5)──────────────────
+@sock.route("/ws/batch/<batch_id>")
+def batch_progress_ws(ws, batch_id):
+    """前端订阅某批次的实时进度。
+
+    握手时校验:
+      - 必须已登录 (cookie 同源)
+      - 必须是批次的 owner (防 A 监听 B 的批次)
+
+    通信:
+      - 连上立刻 push 一个 snapshot 事件 (含当前 pending/processing/done/failed +
+        每个产品的最新 status), 这样前端不需要先 GET status
+      - 之后每次 _batch_db_sync_callback 触发就 push update 事件
+      - 客户端可以发任意文本作为心跳, 服务端不管内容只要不断开就行
+      - 断开 → 服务端 unsubscribe 并退出 (worker 不受影响, 继续在线程池里跑)
+    """
+    if not current_user.is_authenticated:
+        ws.send(_json_mod.dumps({"type": "error", "code": "unauthorized"}))
+        return
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if not batch:
+        ws.send(_json_mod.dumps({"type": "error", "code": "not_found",
+                                  "batch_id": batch_id}))
+        return
+    if batch.user_id is not None and batch.user_id != current_user.id:
+        ws.send(_json_mod.dumps({"type": "error", "code": "forbidden"}))
+        return
+
+    batch_pubsub_mod.subscribe(batch_id, ws)
+    print(f"[ws] subscribe batch_id={batch_id} user={current_user.id} "
+          f"(now {batch_pubsub_mod.subscriber_count(batch_id)} listener[s])",
+          flush=True)
+
+    try:
+        # 1) 立刻 push 当前状态快照 (内存里的 batch_queue 状态)
+        snap = batch_queue_mod.get_batch_status(batch_id)
+        ws.send(_json_mod.dumps({
+            "type": "snapshot",
+            "batch_id": batch_id,
+            "snapshot": snap,  # None = 还没启动 (没在内存里),前端拿到就知道
+        }, ensure_ascii=False))
+
+        # 2) 阻塞读, 把 ws 喂活;客户端心跳消息我们都忽略内容
+        while True:
+            msg = ws.receive(timeout=None)
+            if msg is None:  # 客户端关闭
+                break
+    except Exception as e:
+        print(f"[ws] {batch_id} disconnect: {type(e).__name__}: {e}",
+              flush=True)
+    finally:
+        batch_pubsub_mod.unsubscribe(batch_id, ws)
+        print(f"[ws] unsubscribe batch_id={batch_id} "
+              f"(now {batch_pubsub_mod.subscriber_count(batch_id)} listener[s])",
+              flush=True)
+
+
 # ── 文本解析（DeepSeek API）──────────────────────────────────────────
 _NO_FABRICATION_RULE = (
     "【数据准确性要求】\n"
