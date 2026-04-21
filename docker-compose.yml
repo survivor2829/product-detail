@@ -62,11 +62,10 @@ services:
   web:
     build: .
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    # ⚠ 不用 depends_on — Compose V2 对 depends_on 不跟随 profile gating,
+    # full profile 未激活时 depends_on 指向 db/redis 会报 "undefined service".
+    # 代价: full 部署时 web 可能先于 pg 起来, 靠 restart + pool_pre_ping 重连.
+    # 阶段七用 docker-compose.full.yml override 文件把 depends_on 补回去.
     ports:
       - "${WEB_PORT:-5000}:5000"
     env_file:
