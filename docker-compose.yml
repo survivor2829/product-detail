@@ -1,23 +1,83 @@
+# 生产 compose — 带 Postgres + Redis, 无热挂载 (镜像里是完整代码副本).
+# 开发用 docker-compose.dev.yml (带 :ro 热挂载, 免重建镜像迭代).
+#
+# 启动:
+#   docker compose up -d --build
+#
+# 扩展性标注:
+# - db/redis 走内部网络, 不对外暴露端口 (腾讯云安全组外层还会再挡)
+# - web depends_on 只保证启动顺序, 不保证业务就绪; web 的 DB 连接要靠 pool_pre_ping 重连
+# - pg_data / redis_data 是 named volume, docker compose down 不会清, 只有 down -v 才会
+# - 未来要上 LB / 多机部署, 把 db/redis 剥出来走独立 Compose 或云托管即可
+#   (web 侧零改动, 只换 DATABASE_URL / REDIS_URL)
+
 services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xiaoxi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填, 跑 scripts/generate_secrets.py}
+      POSTGRES_DB: xiaoxi
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    # 容器内端口 5432, 不对外暴露 — web 走 service 名 db:5432 连
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiaoxi -d xiaoxi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # --requirepass 只在 REDIS_PASSWORD 非空时生效 (内网部署可选)
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes
+        else
+          exec redis-server --appendonly yes
+        fi
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   web:
     build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "5000:5000"
+      - "${WEB_PORT:-5000}:5000"
     env_file:
       - .env
     environment:
       PYTHONUNBUFFERED: "1"
+      # 关键默认值 — .env 里没配就走这里
+      PUBSUB_BACKEND: ${PUBSUB_BACKEND:-redis}
     volumes:
+      # 用户产物持久化 — named volume 在 /var/lib/docker/volumes/ 下
       - uploads:/app/static/uploads
       - outputs:/app/static/outputs
-      # 数据库持久化 — 管理员账号/用户/日志都存这里，绝不能丢
+      - ai_cache:/app/static/cache
+      # 兼容老部署: 仍挂 instance/, 但生产用 Postgres 后它只存调试 sqlite (如有)
       - ./instance:/app/instance
-      # 代码热挂载 — 改完代码只需 docker compose restart，不用 --build
-      - ./app.py:/app/app.py:ro
-      - ./templates:/app/templates:ro
-      - ./static/设备类:/app/static/设备类:ro
-    restart: unless-stopped
 
 volumes:
+  pg_data:
+  redis_data:
   uploads:
   outputs:
+  ai_cache:

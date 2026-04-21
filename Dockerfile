@@ -76,7 +76,7 @@ RUN pip install --no-cache-dir playwright && \
 # requirements.txt 单独 COPY：只有它变化才重装 Python 依赖（利用 Docker 层缓存）
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn requests
+RUN pip install --no-cache-dir -r requirements.txt
 
 # 预下载 rembg 模型（ghfast.top 镜像）：避免运行时首次抠图超时；失败则运行时兜底
 RUN mkdir -p /root/.u2net && \
@@ -95,5 +95,17 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 5000
 
-# gunicorn 生产启动，WORKERS/PORT 可通过环境变量覆盖
-CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers ${WORKERS:-2} --timeout 180 app:app
+# gunicorn 生产启动，全部走环境变量:
+# - worker-class gthread: WS 长连接 + ThreadPoolExecutor + Playwright subprocess + rembg CPU,
+#   这个组合和 gevent monkey-patch 交互是坑,用真 OS 线程最稳
+# - WEB_WORKERS × WEB_THREADS = 总并发容量 (默认 2×25=50, 单机 4C8G 可调到 4×25=100)
+# - WEB_TIMEOUT=180: Playwright 截图 + 大 zip 单请求可能 60s+, 180 留足安全余量
+CMD gunicorn \
+    --bind 0.0.0.0:${WEB_PORT:-5000} \
+    --workers ${WEB_WORKERS:-2} \
+    --worker-class gthread \
+    --threads ${WEB_THREADS:-25} \
+    --timeout ${WEB_TIMEOUT:-180} \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    app:app

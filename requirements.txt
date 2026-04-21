@@ -15,3 +15,8 @@ flask-migrate
 python-dotenv
 cryptography
 flask-wtf
+flask-sock
+# 生产驱动 — gunicorn 容器启动; psycopg2-binary 连 Postgres; redis 走 PubSubBackend
+gunicorn
+psycopg2-binary
+redis
