@@ -121,7 +121,42 @@
 
 **当前状态** (2026-04-21): 2C2G 单用户小批 (3 产品) 已实测 ~10 分钟内完成, 未触发升级条件; 但第二批跑慢已踩到心理阈值边缘, 下次 ≥ 5 产品批就要上 4C8G。
 
-- [ ] **机器升级 4C8G 起**（当前 2C2G 跑 2 workers + rembg 模型加载偶发内存紧张）
+- [ ] **机器升级 4C8G 起** (触发条件见上表; 2026-04-21 OOM 事故后硬需求)
+  1. **升配前备份** (SQLite + uploads + outputs + instance):
+     ```bash
+     ssh tencent-prod 'cd /root/clean-industry-ai-assistant && tar czf /tmp/backup_pre_upgrade_$(date +%Y%m%d).tar.gz instance/ static/uploads/batches/ static/outputs/ 2>&1 | tail'
+     scp tencent-prod:/tmp/backup_pre_upgrade_*.tar.gz ./prod_backups/
+     ```
+  2. **腾讯云控制台升配 2C2G → 4C8G** (停服 10–30 分钟, IP 不变)
+     - 实例 → 更改实例规格 → 4C8G → 确认重启
+     - 验证: `ssh tencent-prod 'free -h; nproc'` → RAM ~7.5GB, CPU=4
+  3. **调 `docker-compose.yml` 资源限额** (和并发池同步):
+     ```yaml
+     web:
+       mem_limit: 6500m        # 8GB 主机留 1.5GB 给 sshd/journald/docker
+       memswap_limit: 9500m    # +3GB swap buffer
+       environment:
+         BATCH_POOL_SIZE: "3"  # 恢复默认 (单实例峰值 ~1.8GB × 3 = 5.4GB < 6.5GB)
+         SINGLE_POOL_SIZE: "2"
+         REFINE_POOL_SIZE: "2"
+     ```
+     `git commit` + `git push` + `ssh tencent-prod 'git pull && docker compose up -d'` (必须 `up -d` 不是 `restart`, mem_limit 改动需 recreate)
+  4. **验证升级生效** (对照 2C2G Block 1 7 项清单):
+     - `docker stats --no-stream` MEM LIMIT ≈ 6.34GiB
+     - `docker inspect ...HostConfig.Memory` = 6815744000
+     - `docker compose exec printenv BATCH_POOL_SIZE` = 3
+     - `curl http://localhost:5000/` = 200/302
+     - 日志 clean
+  5. **真实并发验证** (升配的核心目的):
+     - 用户发 5–10 产品批次, `docker stats` 峰值 MEM USAGE 应 < 5GB
+     - `dmesg | grep oom` 无新增
+     - 单产品均耗时 40s → ~20s (3 并发 + CPU 不再是瓶颈)
+  6. **观察 2 周**无 OOM + swap 使用 < 500MB → 收工; 出问题腾讯云控制台再降配回 2C2G
+  7. **4C8G 稳后才开始阶段八 UX** (否则性能/UX 改动混在一起难 debug)
+- [ ] **僵尸批次自愈** (2026-04-21 OOM 事故暴露, 详见"技术债 / 经验教训 → 容器资源限额 + 僵尸批次自愈"):
+  - `batch_processor.process_one_product` 顶层 try/except → try/finally (status update 放 finally)
+  - 新增 `POST /api/batch/<id>/reset-stuck-items` 端点, 刷 > N 分钟未动的 processing → failed
+  - `batch/history.html` 显示"有卡住 item"提示 + reset 按钮
 - [ ] **Postgres 接入**：
   - `.env` 改 `DATABASE_URL=postgresql://xiaoxi:<pwd>@db:5432/xiaoxi`
   - `docker compose --profile full up -d`
@@ -492,6 +527,37 @@ Host tencent-prod
 ```
 之后所有命令走别名。Windows 下用 PowerShell `Out-File -Encoding ascii` 避免 UTF-8 BOM 毒化 config 文件。
 
+### 容器资源限额 + 僵尸批次自愈 (2026-04-21 生产 OOM 事故立碑)
+
+**详细案例**见 `docs/2026-04-21_踩坑复盘_生产上线.md` → "坑 7：生产 OOM 事故 —— Docker 默认禁 swap + 并发池未收敛"。
+
+**铁律 8 — docker-compose 服务必显式配资源限额 + 并发池**:
+
+`mem_limit` 默认 = 主机全 RAM; `memswap_limit` 默认 = `mem_limit` (即**禁 swap**). 两个默认值叠加 + 并发池未收敛, 2C2G 机器必 OOM。2026-04-21 晚三个产品在 rembg/Playwright 阶段被 SIGKILL, 主机 `free -h` 看到 swap 1.9GB 存在但容器根本摸不到。
+
+**上线清单** (每条 docker-compose service 必过):
+1. `mem_limit` < 主机 RAM × 0.85? (留 15% 给 sshd/journald/docker daemon)
+2. `memswap_limit` ≥ `mem_limit` (一般 2× 到 3×, 给 Chromium 冷启偶发峰值兜底)?
+3. 每个 CPU/RAM-bound 并发池都有 env var 控制 (不在代码里写死)?
+4. 单实例峰值 RAM × 并发上限 < `mem_limit` × 0.8?
+
+**判定工具**:
+- `docker stats --no-stream` 看 MEM LIMIT (这是硬顶, 不是 MEM USAGE)
+- `docker inspect <ct> --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'` 看字节级精确值
+- 主机 `free -h` 查 swap 是否真存在 (存在 ≠ 容器能用)
+- `sudo dmesg -T | grep -iE 'oom|memcg'` 查历史 OOM
+- `sudo journalctl -k | grep oom-kill` 看 cgroup 作用域是否容器级
+
+**已落地修复 (commit `0fa36fa`)**: `docker-compose.yml` web 服务下显式 `mem_limit: 1400m` + `memswap_limit: 3400m` + `BATCH_POOL_SIZE/SINGLE_POOL_SIZE/REFINE_POOL_SIZE: "1"`。放 compose.yml 不放 `.env` 的理由: 非机密部署参数, 进 git 方便 code review + 回滚; `.env` 只留密钥/连接串。
+
+**僵尸批次自愈 — 阶段七 TODO**:
+OOM 或其他崩溃后 items 卡 `status=processing`; `app.py:5146-5162` startup-recovery 仅在**容器完整重启**时触发, **worker 个别 SIGKILL 后 gunicorn 自动 respawn 同一 worker 不触发**。错误消息统一 "服务重启中断, 请手动重新提交", 不区分 OOM。需补:
+1. `batch_processor.process_one_product` 顶层 try/except → try/finally (SIGKILL 仍无效, 但 graceful crash 能兜)
+2. `POST /api/batch/<id>/reset-stuck-items` 端点, 刷 > N 分钟未动的 processing → failed
+3. `batch/history.html` 显示"有卡住 item"提示 + 直达 reset 按钮
+
+**4C8G 升级后这些参数要同步调**, 详见 阶段七 "4C8G 升级具体步骤"。
+
 ## 用户偏好
 - 用户能看 JSON 字段对错，但不直接读 Python 代码 → 验证步骤要写"预期看到 X"而不是"运行什么测试"
 - 用户用 curl 验证（但需要登录态时改用 requests.Session 脚本，curl + CSRF 在 PowerShell 里太啰嗦）
@@ -505,6 +571,8 @@ Host tencent-prod
 - **PG + Redis 上大机**：当前 2C2G 撑不起全栈，SQLite + memory pub/sub 单机已满足个人测试。升 4C8G 后执行 `docker compose --profile full up -d` + `scripts/migrate_sqlite_to_pg.py`。
 - **`db.create_all()` 生产路径关闭**：app.py 启动时的 `db.create_all()` 仅保留 `FLASK_ENV=development` 分支，防止未来 migration 和 `create_all` 打架。
 - **DEPLOYMENT.md 正式整理**：当前部署经验落在 `docs/2026-04-21_踩坑复盘_生产上线.md`，后续整理成带"首次部署 + 滚动升级 + 回滚"三部分的独立文档。
+- **🆕 僵尸批次自愈** (2026-04-21 OOM 事故暴露)：OOM / worker SIGKILL 后 items 卡 `status=processing`, 当前 startup-recovery 仅在容器完整重启时跑, worker 个别被杀后 gunicorn 自动 respawn 不触发。前端用户只能等下次容器重启。详见"技术债 → 容器资源限额 + 僵尸批次自愈"; TODO: try/finally 兜底 + `/api/batch/<id>/reset-stuck-items` + UI reset 按钮。
+- **🆕 升 4C8G 后同步调容器资源** (2026-04-21 OOM 事故应急已配 1400m/3400m/池=1)：升配后要把 `mem_limit` 调到 6500m / `memswap_limit` 9500m / 并发池回 3，详见阶段七 "4C8G 升级具体步骤" 第 3 步。
 
 ---
 
