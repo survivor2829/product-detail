@@ -71,18 +71,22 @@ RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simpl
 
 # playwright 1.58+ 改用 Chrome for Testing 分发, chromium 150M 二进制默认走
 # playwright.azureedge.net, 中国大陆首次 TLS 握手 + 超长 backoff 能卡到 40 分钟
-# (腾讯云实测). 改走阿里 npmmirror 的 chrome-for-testing 镜像, <1 分钟下完.
+# (腾讯云实测). 改走阿里 npmmirror 镜像, <1 分钟下完.
 #
-# URL 结构:
-#   HOST/{chrome_version}/linux64/chrome-linux64.zip
-#   HOST/{chrome_version}/linux64/chrome-headless-shell-linux64.zip
-# 两个文件 npmmirror 都有. 我们只用 page.screenshot() 不录视频, 不需要 ffmpeg,
-# 所以单 HOST 覆盖 CfT 就够 (ffmpeg 在 npmmirror 是另一条路径, 单 HOST 覆盖不到).
-ENV PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing
+# 两套 URL 结构在 npmmirror 是不同前缀, 一个 DOWNLOAD_HOST 覆盖不了两个:
+#   1) Chrome/headless-shell (CfT):  HOST/{chrome_version}/linux64/chrome-linux64.zip
+#      → npmmirror 在 /binaries/chrome-for-testing/
+#   2) FFmpeg (playwright CDN 老路径): HOST/builds/ffmpeg/{rev}/ffmpeg-linux.zip
+#      → npmmirror 在 /binaries/playwright/builds/ffmpeg/
+# 所以必须分两次调 playwright install, 每次换 HOST. 第一次下完 chrome+shell 即
+# 写入 INSTALLATION_COMPLETE 标记, 第二次只会补 ffmpeg 不会重下 chrome.
 
-# 系统依赖已在上一步装好，这里只拉浏览器二进制
+# 系统依赖已在上一步装好，这里只拉浏览器二进制 — 两阶段绕不同镜像
 RUN pip install --no-cache-dir playwright && \
-    playwright install chromium
+    PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing \
+      playwright install chromium || true
+RUN PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
+      playwright install chromium
 
 # requirements.txt 单独 COPY：只有它变化才重装 Python 依赖（利用 Docker 层缓存）
 WORKDIR /app
