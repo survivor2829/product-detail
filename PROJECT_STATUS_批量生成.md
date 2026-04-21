@@ -34,6 +34,52 @@
 - [ ] **3. 磁盘孤儿文件清理脚本** — `uploads/batches/` 下无 DB 记录的目录（比 `cleanup_orphan_items.py` 的 DB 侧清理更彻底）
 - [ ] **4. 服务器部署配置文档整理** — Docker / Playwright / `ARK_API_KEY` / `.env.example` 同步至 `CLOUD_HANDOFF.md`
 
+### 阶段六：生产化收尾 🟡 进行中（2026-04-21 起）
+> 目标：腾讯云生产部署前把所有"临时绕过"闭环。用户 D4 指令（2026-04-21）：
+> **"文档先锁住技术债范围，不让它扩大。排期可以延后，但不能当成'不要做'。"**
+
+**已完成 (2026-04-21)**：
+- [x] SQLAlchemy 连接池参数 env 化（`DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_RECYCLE` / `DB_POOL_PRE_PING`），仅 Postgres 生效
+- [x] 启动恢复钩子：`pending` / `processing` / `queued` / `running` 中断批次在启动时标 `failed`（不自动重试，避免烧钱 API 重复扣）
+- [x] DB 级重入检查：
+  - 批次启动走 `UPDATE ... WHERE status IN (uploaded, failed)` 原子抢占（跨 worker 安全）
+  - 精修启动走 `with_for_update(skip_locked=True)` 行锁（跨 worker 原子 claim）
+- [x] `pubsub/` 抽象层：内存 backend（单 worker dev）/ Redis backend（多 worker prod，pattern-subscribe）
+- [x] Alembic 接入：`flask db upgrade` 维护 schema；`create_all()` 保留为 SQLite 开发兜底
+- [x] SQLite → Postgres 迁移脚本 `scripts/migrate_sqlite_to_pg.py`（dry-run 默认 + `--commit` 实际执行，幂等，可重跑）
+- [x] `/batch/history` 最简历史页：按 created_at 倒序，LIMIT 50，分页 v2 加
+- [x] `/api/batches` 跨用户泄露修复（之前 `SELECT *` 无 user_id 过滤，任意登录用户可见全库批次元数据）
+
+**CSRF 豁免审计（14 条 `@csrf.exempt`）**：
+
+| 路由 | 方法 | 风险等级 | 本轮动作 | 原因 |
+|---|---|---|---|---|
+| `/api/batch/upload` | POST | 🔴 高 | 今日收紧 | 创建批次 + 写文件 |
+| `/api/batch/<id>/start` | POST | 🔴 高 | 今日收紧 | 启动付费 API 任务 |
+| `/api/batch/<id>/ai-refine-start` | POST | 🔴 高 | 今日收紧 | 启动付费精修 API |
+| `/api/batches/<id>/items/<name>` | PATCH | 🟠 中 | 今日收紧 | 改 DB（want_ai_refine 标志） |
+| `/api/generate-ai-detail` | POST | 🟠 中 | 今日收紧 | 烧图片 API 配额 |
+| `/api/generate-ai-detail-html` | POST | 🟠 中 | 今日收紧 | 烧 Seedream API |
+| `/api/generate-ai-images` | POST | 🟠 中 | 今日收紧 | 烧图片 API 配额 |
+| `/api/build/<type>/parse-text` | POST | 🟠 中 | 今日收紧 | 烧 DeepSeek 配额 |
+| `/api/build/<type>/render-main-images` | POST | 🟠 中 | 今日收紧 | 烧 AI + 落盘 |
+| `/api/build/<type>/render-preview` | POST | 🟢 低 | 今日收紧 | workspace.html 已送 token，顺手 |
+| `/api/build/<type>/render-block` | POST | 🟢 低 | 今日收紧 | 同上 |
+| `/api/build/<type>/regenerate-block` | POST | 🟢 低 | 今日收紧 | 同上 |
+| `/api/batch/<id>/start-mock` | POST | ⚪ dev only | 保留豁免 + 生产拒绝 | 仅开发 mock，生产路径不暴露 |
+| `/api/single/_mock-task` | POST | ⚪ dev only | 保留豁免 + 生产拒绝 | 同上 |
+
+**Legacy 权限策略**（`batches.user_id IS NULL` 的老数据）：
+- 现状：`batches_detail` / `batches_list` / `/batch/history` 三处策略不统一 — 前两者"legacy 对所有人可见"，我的新列表页先对齐了 API，但这是临时方案
+- **阶段六-收尾动作**：跑 `UPDATE batches SET user_id = 1 WHERE user_id IS NULL`（绑定到 admin），然后把所有 legacy-visible 分支删掉，只留 `user_id == current_user.id` 单一判定
+- 决策依赖：用户确认生产 DB 里 `user_id IS NULL` 的行是哪些（0 条 / 有历史 / 属于哪个早期 admin），本地 dry-run 通过后再跑
+
+**其他阶段六待办**：
+- [ ] 生产环境 secrets 生成：`python scripts/generate_secrets.py --fmt env` → 填入 `.env`
+- [ ] `docker-compose.yml`（prod）首次启动 smoke：db healthcheck 绿 + redis healthcheck 绿 + web 能连上
+- [ ] 多用户并发 E2E：两账号同时跑 HTML 批次 + 精修，验证无跨用户污染 + 跨 worker WS 推送
+- [ ] `DEPLOYMENT.md`：腾讯云首次部署 + 滚动升级 + 回滚流程
+
 ## 已确认的决策
 - [2026-04-20] 任务1 暂不加 `@login_required` + `@csrf.exempt`，方便 curl/Postman 直测；任务4 整链路打通后补回。
 - [2026-04-20] 批次目录路径固定为 `uploads/batches/{batch_id}/{产品名}/...`，不污染现有平铺 uploads 结构。
