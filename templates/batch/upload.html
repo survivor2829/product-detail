@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <title>批量生成 · 小玺AI</title>
 <link rel="stylesheet" href="/static/css/design-system.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -518,8 +519,12 @@
   </div>
   <div class="topbar-right">
     <a href="/">返回首页</a>
+    <a href="/batch/history">历史批次</a>
     <span>{{ current_user.username }}</span>
     <a href="/settings">账号设置</a>
+    {% if current_user.is_admin %}
+      <a href="/admin/users" class="admin-link">管理后台</a>
+    {% endif %}
     <form method="POST" action="/auth/logout" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">退出</button>
@@ -606,6 +611,9 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
+  // 所有改后端状态的 fetch 必须带上这个 token — 后端 CSRFProtect 用它校验,
+  // 缺失或错误直接 400. 详见 PROJECT_STATUS_批量生成.md 阶段六 CSRF 审计表.
+  const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
   const folderInput = $('folderInput');
   const picker = $('picker');
   const pickerHint = $('pickerHint');
@@ -715,7 +723,11 @@
         fd.append('fixed_theme_id', fixedThemeSelect.value);
       }
 
-      const r = await fetch('/api/batch/upload', { method: 'POST', body: fd });
+      const r = await fetch('/api/batch/upload', {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
+        body: fd,
+      });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         setStatus(`上传失败 ${r.status}: ${data.error || r.statusText}`, 'error');
@@ -878,6 +890,7 @@
     try {
       const r = await fetch(`/api/batch/${session.batchId}/start`, {
         method: 'POST',
+        headers: {'X-CSRFToken': csrfToken},
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -1273,7 +1286,8 @@
     try {
       const r = await fetch(
         `/api/batches/${session.batchId}/items/${encodeURIComponent(name)}`,
-        { method: 'PATCH', headers: {'Content-Type': 'application/json'},
+        { method: 'PATCH',
+          headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
           body: JSON.stringify({want_ai_refine: cb.checked}) }
       );
       if (!r.ok) {
@@ -1424,7 +1438,7 @@
     fetch(`/api/batch/${encodeURIComponent(session.batchId)}/ai-refine-start`, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
       body: JSON.stringify({ark_api_key: arkKey}),
     })
       .then(r => r.json().then(d => ({ok: r.ok, status: r.status, data: d})))

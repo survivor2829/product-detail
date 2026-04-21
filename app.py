@@ -64,6 +64,20 @@ app.config["SECRET_KEY"] = _secret_key or "dev-change-me-in-production"
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///wubaoyun.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+# ── SQLAlchemy 连接池参数 (Postgres 长连接生产必备) ─────────────────────────
+# - pool_size/max_overflow: 并发上限. gthread worker × threads 是上限参考.
+# - pool_recycle: 比云 LB 的 idle timeout 小一点 (腾讯云 TKE 默认 3600, 我们 1800 安全).
+# - pool_pre_ping: 每次 checkout 先 ping, 躲开死连接重连期.
+# - SQLite 不吃这些参数 (用 SingletonThreadPool), 传进去会 TypeError, 必须条件启用.
+_db_url = app.config["SQLALCHEMY_DATABASE_URI"]
+if not _db_url.startswith("sqlite"):
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
+        "pool_recycle": int(os.environ.get("DB_POOL_RECYCLE", "1800")),
+        "pool_pre_ping": os.environ.get("DB_POOL_PRE_PING", "true").lower() == "true",
+    }
+
 # ── 初始化扩展 ──
 from extensions import db, login_manager, migrate
 from models import User, GenerationLog, Batch, BatchItem
@@ -1097,6 +1111,29 @@ def batch_upload_page():
     return render_template("batch/upload.html")
 
 
+# 任务6 (UX): 最简历史列表页 — 按 created_at 倒序列出当前用户全部批次,
+# 点击跳回 upload.html#batch=<batch_id> 让前端恢复该批次视图.
+# 扩展性备注:
+#   - 现在用 SQL LIMIT 50 硬顶, 避免用户攒几千条时一次性传全量. 加分页只需把
+#     50 改为 PAGE_SIZE + offset=(page-1)*PAGE_SIZE, 不需要改模板结构.
+#   - 过滤 (按状态/日期) / 搜索 (按 raw_name) 留 v2, 当前版本故意不加,
+#     避免 UX 复杂化和索引维护成本.
+@app.route("/batch/history", methods=["GET"])
+@login_required
+def batch_history_page():
+    """列出当前用户的批次, 创建时间倒序, 最多 50 条 (防 DoS)."""
+    # 过滤策略与 /api/batches 保持一致: 当前用户 + legacy 无主批次
+    # (user_id=NULL, 历史遗留). 任务7 决定是否把 legacy 一次性 backfill 后再锁死.
+    batches = (
+        Batch.query
+        .filter((Batch.user_id == current_user.id) | (Batch.user_id.is_(None)))
+        .order_by(Batch.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return render_template("batch/history.html", batches=batches)
+
+
 # 任务9: /api/themes 复用已有端点 (app.py:990 get_themes), 返回 themes.json 全量。
 # 前端只读 .themes 数组的 id/name/description 字段, 兼容。
 
@@ -1104,7 +1141,6 @@ def batch_upload_page():
 # ── 批量上传（PRD: PRD_批量生成.md F1/F2/F3）──────────────────────────
 @app.route("/api/batch/upload", methods=["POST"])
 @login_required
-@csrf.exempt  # 走 cookie 鉴权 + curl 测试需 cookie 文件，CSRF 由会话保证
 def batch_upload():
     """接收一个 zip，解压后扫描产品文件夹结构，返回识别报告。
 
@@ -1263,7 +1299,15 @@ def batches_list():
         offset = max(0, int(request.args.get("offset", "0")))
     except ValueError:
         return jsonify({"error": "limit/offset 必须是整数"}), 400
-    q = Batch.query.order_by(Batch.created_at.desc())
+    # 安全修复 (任务6 顺带): 之前没按 user_id 过滤, 会把全部用户的批次
+    # 元数据 (raw_name / total_count / ...) 泄露给任意登录用户.
+    # legacy 无主批次 (user_id=NULL) 依然开放读取, 与 batches_detail 的
+    # "is not None 才校验" 策略保持一致, 避免把老数据锁死.
+    q = (
+        Batch.query
+        .filter((Batch.user_id == current_user.id) | (Batch.user_id.is_(None)))
+        .order_by(Batch.created_at.desc())
+    )
     total = q.count()
     rows = q.offset(offset).limit(limit).all()
     return jsonify({
@@ -1288,7 +1332,6 @@ def batches_detail(batch_id):
 
 @app.route("/api/batches/<batch_id>/items/<item_name>", methods=["PATCH"])
 @login_required
-@csrf.exempt
 def batches_item_update(batch_id, item_name):
     """更新单个 item，目前只支持 want_ai_refine。
 
@@ -1315,12 +1358,15 @@ def batches_item_update(batch_id, item_name):
 # ── 批量队列：mock 触发与状态查询（PRD F4/F7 验证用）────────────────
 @app.route("/api/batch/<batch_id>/start-mock", methods=["POST"])
 @login_required
-@csrf.exempt
+@csrf.exempt  # dev-only: 保留豁免是为 curl 自测, 生产环境下面的 guard 会直接 403
 def batch_start_mock(batch_id):
     """重新扫描已上传的批次目录，把识别到的产品扔进批量池跑 mock 处理器。
 
     任务4 会替换为真实的 DeepSeek+rembg+Playwright 流水线。
     """
+    # 生产拒绝: 这个端点只服务本地开发 / curl 自测, 不应从公网可达
+    if os.environ.get("FLASK_ENV", "").lower() == "production":
+        return jsonify({"error": "mock 端点在生产环境已禁用"}), 403
     batches_root = UPLOAD_DIR / "batches"
     batch_dir = batches_root / batch_id
     if not batch_dir.is_dir():
@@ -1502,7 +1548,6 @@ def _refine_db_sync_callback(batch_id, name, status, result, error):
 
 @app.route("/api/batch/<batch_id>/ai-refine-start", methods=["POST"])
 @login_required
-@csrf.exempt
 def batch_ai_refine_start(batch_id):
     """任务11 (PRD F6): 把勾选的产品扔进精修池, 真调豆包 Seedream。
 
@@ -1552,6 +1597,40 @@ def batch_ai_refine_start(batch_id):
             "product_count": est["count"],
         }), 400
 
+    # ── 原子 claim (多 worker 互斥入队) ─────────────────────────────
+    # SELECT ... FOR UPDATE SKIP LOCKED: 跨 worker 场景下同一条 BatchItem 只会
+    # 被一个 worker 锁住; 另一个 worker 直接跳过锁住行, 避免双扣费.
+    # SQLite 不支持 FOR UPDATE, SQLAlchemy 会降级成普通 SELECT, 但 SQLite 本身
+    # 就是单写, 所以也不会双扣. 生产 Postgres 必定走 skip_locked 分支.
+    claimed_items = (
+        db.session.query(BatchItem)
+        .filter(
+            BatchItem.id.in_([c.id for c in candidates]),
+            BatchItem.ai_refine_status.in_(["not_requested", "failed"]),
+        )
+        .with_for_update(skip_locked=True)
+        .all()
+    )
+    if not claimed_items:
+        db.session.commit()
+        return jsonify({
+            "error": "所有条目已在精修队列中 / 已跑过, 无需重复提交",
+            "skipped": skipped,
+            "already_done_count": already_done,
+        }), 409
+    for _it in claimed_items:
+        _it.ai_refine_status = "queued"
+    db.session.commit()
+
+    if len(claimed_items) < len(candidates):
+        # 并发 claim 的边界情况: 一部分条目被另一个 worker 锁走了, 只处理自己拿到的
+        print(
+            f"[refine-claim] 并发: 请求 {len(candidates)} 条, "
+            f"claim 成功 {len(claimed_items)} 条",
+            flush=True,
+        )
+    candidates = claimed_items  # 下游 items 构造只基于 claim 成功的条目
+
     # 构造 payload: 只取精修需要的字段,避免池里传一大堆没用的东西
     items = []
     for it in candidates:
@@ -1579,10 +1658,7 @@ def batch_ai_refine_start(batch_id):
             "product_category":  batch.product_category or "设备类",
         })
 
-    # 入队前把 ai_refine_status 置 'queued', 让 UI 立即看到状态流转
-    for it in candidates:
-        it.ai_refine_status = "queued"
-    db.session.commit()
+    # (状态置 queued 已由上面的原子 claim 完成, 这里不再重复 UPDATE)
 
     # 用闭包绑定 ark_api_key → processor_fn 仍是 (scope_id, payload) 两参签名
     def _processor_with_ark(scope_id, payload, _key=ark_api_key):
@@ -1608,7 +1684,6 @@ def batch_ai_refine_start(batch_id):
 
 @app.route("/api/batch/<batch_id>/start", methods=["POST"])
 @login_required
-@csrf.exempt
 def batch_start_real(batch_id):
     """触发批次的真实处理流水线（DeepSeek + rembg；4b 接 Playwright）。
 
@@ -1680,6 +1755,27 @@ def batch_start_real(batch_id):
             scope_id, payload, api_key=_key
         )
 
+    # ── 原子 claim (跨 worker 互斥启动) ─────────────────────────────
+    # 条件 UPDATE: 只能从 uploaded/failed 转到 queued; 其它状态 (queued/running/completed)
+    # 都会让 UPDATE 返回 0 行, 我们据此判定"批次已在处理"直接 409.
+    # 这一步天然互斥 (Postgres 行锁 / SQLite 单写), 替代原本在 submit_batch 之后
+    # 再设 batch.status 的非原子做法. 多 worker 并发时, 后到者立即收到 409.
+    claimed = (
+        db.session.query(Batch)
+        .filter(
+            Batch.batch_id == batch_id,
+            Batch.status.in_(["uploaded", "failed"]),
+        )
+        .update({"status": "queued"}, synchronize_session=False)
+    )
+    db.session.commit()
+    if claimed == 0:
+        current = Batch.query.filter_by(batch_id=batch_id).first()
+        return jsonify({
+            "error": "批次已在处理中或状态不允许启动",
+            "current_status": current.status if current else None,
+        }), 409
+
     try:
         batch_queue_mod.submit_batch(
             batch_id=batch_id,
@@ -1689,10 +1785,19 @@ def batch_start_real(batch_id):
             on_state_change=_batch_db_sync_callback,
         )
     except ValueError as e:
+        # in-memory 冲突 (同 worker 内重入): DB claim 赢了但池里已有 → 回滚 claim
+        (
+            db.session.query(Batch)
+            .filter(
+                Batch.batch_id == batch_id,
+                Batch.status == "queued",
+            )
+            .update({"status": "failed"}, synchronize_session=False)
+        )
+        db.session.commit()
         return jsonify({"error": str(e)}), 409
 
-    batch.status = "queued"
-    db.session.commit()
+    # batch.status 已由原子 claim 设置为 queued, 不再需要重复 commit
 
     return jsonify({
         "ok": True,
@@ -1706,12 +1811,14 @@ def batch_start_real(batch_id):
 
 @app.route("/api/single/_mock-task", methods=["POST"])
 @login_required
-@csrf.exempt
+@csrf.exempt  # dev-only: 同 batch_start_mock, 生产 guard 已加
 def single_mock_task():
     """喂 N 个 mock 任务到单品池（验证池隔离）。
 
     Query: count=<int>, default 1
     """
+    if os.environ.get("FLASK_ENV", "").lower() == "production":
+        return jsonify({"error": "mock 端点在生产环境已禁用"}), 403
     try:
         count = int(request.args.get("count", "1"))
     except ValueError:
@@ -2544,7 +2651,6 @@ def _derive_advantages_from_specs(detail_params: dict) -> list:
     return items
 @app.route("/api/build/<product_type>/parse-text", methods=["POST"])
 @login_required
-@csrf.exempt
 def parse_text_for_build(product_type):
     _validate_product_type(product_type)
     data = request.get_json(silent=True)
@@ -2618,7 +2724,6 @@ def parse_text_for_build(product_type):
 
 @app.route("/api/generate-ai-images", methods=["POST"])
 @login_required
-@csrf.exempt
 def generate_ai_images():
     """
     AI 生图 API：根据产品数据生成完整详情图集
@@ -2748,7 +2853,6 @@ def list_ai_engines():
 
 @app.route("/api/generate-ai-detail", methods=["POST"])
 @login_required
-@csrf.exempt
 def generate_ai_detail():
     """
     无缝长图 AI 精修：双引擎 + 色调流分段 + 渐变融合 + 中文字体合成。
@@ -3460,7 +3564,6 @@ def _resolve_asset_urls_in_ctx(ctx: dict) -> dict:
 
 @app.route("/api/generate-ai-detail-html", methods=["POST"])
 @login_required
-@csrf.exempt
 def generate_ai_detail_html():
     """
     AI 合成管线 v2:HTML/CSS 排版 + Playwright 截图(7 屏长图)。
@@ -4474,7 +4577,6 @@ def build_submit_generic(product_type):
 
 @app.route('/api/build/<product_type>/render-preview', methods=['POST'])
 @login_required
-@csrf.exempt
 def render_preview(product_type):
     """Render all modules as HTML fragments for the workspace preview."""
     _validate_product_type(product_type)
@@ -4536,7 +4638,6 @@ def render_preview(product_type):
 
 @app.route('/api/build/<product_type>/render-block', methods=['POST'])
 @login_required
-@csrf.exempt
 def render_single_block_api(product_type):
     """Re-render a single block's HTML (for edit-and-refresh)."""
     _validate_product_type(product_type)
@@ -4556,7 +4657,6 @@ def render_single_block_api(product_type):
 
 @app.route('/api/build/<product_type>/regenerate-block', methods=['POST'])
 @login_required
-@csrf.exempt
 def regenerate_block_api(product_type):
     """AI-regenerate a single block's content without affecting others."""
     _validate_product_type(product_type)
@@ -4644,7 +4744,6 @@ def regenerate_block_api(product_type):
 
 @app.route('/api/build/<product_type>/render-main-images', methods=['POST'])
 @login_required
-@csrf.exempt
 def render_main_images(product_type):
     """Render all 5 main image templates as HTML fragments."""
     _validate_product_type(product_type)
@@ -5014,8 +5113,69 @@ def create_admin(username, password):
     click.echo(f"管理员 {username} 创建成功")
 
 # ── 启动时自动建表 ──
+# 本地 SQLite / 首次部署的兜底. 生产强烈建议走 alembic (flask db upgrade), 不靠 create_all.
+# create_all 的缺点: 不会对已有表做结构变更 (加字段/改约束), 也不会产生可审计 migration 记录.
+# 跳过 create_all 的两种情况:
+#   1. ALEMBIC_AUTOGEN=1   — 正在跑 flask db migrate/revision 生成基线, 必须对空库比 diff
+#   2. 运维显式走 flask db upgrade — 让 alembic 来建表 (不需要 create_all 兜底)
+_skip_create_all = os.environ.get("ALEMBIC_AUTOGEN", "").strip() == "1"
 with app.app_context():
-    db.create_all()
+    if not _skip_create_all:
+        db.create_all()
+
+    # ── 启动恢复: gunicorn 重启 / 容器重建后, DB 里仍有 processing/pending 状态的记录 ──
+    # worker 线程已经没了, 不会有人把它们跑完; 统一标记成 failed + 写明原因,
+    # 让用户在前端看见后手动重跑. 故意不做 auto-resubmit, 因为:
+    #   1. 精修条目 (want_ai_refine=true) 调豆包要花钱, 不能"静默重跑" (¥10.8 事故教训)
+    #   2. HTML 渲染虽然不花钱, 但用户可能只想看当前状态再决定, 不该抢手
+    # 该逻辑幂等: 首次启动表里没记录就是 no-op; 每次重启各扫一轮.
+    if _skip_create_all:
+        # alembic autogen 环境下表可能还不存在, 跳过恢复扫描 (无业务意义)
+        print("[startup-recovery] ALEMBIC_AUTOGEN=1, 跳过状态恢复扫描", flush=True)
+    else:
+        try:
+            from datetime import datetime as _dt_sr
+
+            _restart_ts = _dt_sr.utcnow()
+            _RESTART_MSG = "服务重启中断, 请手动重新提交"
+
+            _stuck_items = BatchItem.query.filter(
+                BatchItem.status.in_(["pending", "processing"])
+            ).all()
+            for _it in _stuck_items:
+                _it.status = "failed"
+                _it.error = _RESTART_MSG
+                _it.finished_at = _restart_ts
+
+            _stuck_refine = BatchItem.query.filter(
+                BatchItem.ai_refine_status.in_(["pending", "processing"])
+            ).all()
+            for _it in _stuck_refine:
+                _it.ai_refine_status = "failed"
+                if not _it.error:
+                    _it.error = _RESTART_MSG
+
+            _stuck_batches = Batch.query.filter(
+                Batch.status.in_(["queued", "running"])
+            ).all()
+            for _b in _stuck_batches:
+                _b.status = "failed"
+
+            if _stuck_items or _stuck_refine or _stuck_batches:
+                db.session.commit()
+                print(
+                    f"[startup-recovery] 标记中断: batches={len(_stuck_batches)}, "
+                    f"items={len(_stuck_items)}, refine_items={len(_stuck_refine)}",
+                    flush=True,
+                )
+            else:
+                print("[startup-recovery] 无中断记录, 干净启动", flush=True)
+        except Exception as _e:
+            import traceback as _tb_sr
+            _tb_sr.print_exc()
+            print(f"[startup-recovery] 扫描中断状态失败: {_e} (跳过, 不阻塞启动)",
+                  flush=True)
+            db.session.rollback()
 
 
 if __name__ == "__main__":

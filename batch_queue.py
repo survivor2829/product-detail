@@ -1,12 +1,27 @@
-"""双资源池任务队列：批量池 + 单品池，互不阻塞。
+"""双资源池任务队列：批量池 + 单品池 + 精修池，互不阻塞。
 
 PRD: PRD_批量生成.md F4 / F7
 
 设计:
-- 两个独立的 ThreadPoolExecutor (默认各 3 worker, env 可配)
-- 状态存内存 dict + threading.Lock,重启全丢 (任务3 才入库)
-- 真实业务函数任务4 接;当前用 mock_processor 做随机 sleep+失败
+- 三个独立的 ThreadPoolExecutor (默认各 3 worker, env 可配)
+- 状态存进程内 dict + threading.Lock (重启丢, 真源数据在 DB 的 Batch/BatchItem)
+- 真实业务函数 batch_processor.process_one_product / refine_processor.refine_one_product
 - 池计数器走 wrapper,不依赖 ThreadPoolExecutor 的私有字段
+
+── 跨 worker 重入 / 并发安全 ───────────────────────────────────────
+本模块的 submit_batch / submit_refine 内部 ValueError 检查是**单 worker 内**防重入,
+不能跨 gunicorn worker (进程之间 _batches 字典互不可见).
+
+真正的"跨 worker 原子 claim"在调用方 (app.py 的路由) 走 DB 条件 UPDATE 实现:
+  /api/batch/<id>/start         → Batch.status uploaded/failed → queued (CAS)
+  /api/batch/<id>/ai-refine-start → BatchItem.ai_refine_status not_requested/failed → queued
+                                    (with_for_update + skip_locked)
+
+两层防线的语义:
+- DB claim: 跨 worker 互斥 (Postgres 行锁 / SQLite 单写). 最主要的一道.
+- 进程内 ValueError: 同 worker 内误重入兜底 (比如 processor_fn 异步回调里意外再次提交).
+
+如果只剩一层 DB claim, 某 worker 线程调栈里双重提交仍能绕过 — 所以保留两层.
 """
 from __future__ import annotations
 
