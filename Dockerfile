@@ -69,10 +69,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simple/ && \
     pip config set global.trusted-host mirrors.cloud.tencent.com
 
-# playwright 下 chromium (150M) 默认走 playwright.azureedge.net, 中国大陆
-# 访问 Azure Edge CDN 经常卡死在首次握手 + 超长 backoff (腾讯云踩过, 单步
-# 40 分钟仍无数据下载). 改走阿里 npmmirror 镜像, 稳定 < 1 分钟完成.
-ENV PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
+# playwright 1.58+ 改用 Chrome for Testing 分发, chromium 150M 二进制默认走
+# playwright.azureedge.net, 中国大陆首次 TLS 握手 + 超长 backoff 能卡到 40 分钟
+# (腾讯云实测). 改走阿里 npmmirror 的 chrome-for-testing 镜像, <1 分钟下完.
+#
+# URL 结构:
+#   HOST/{chrome_version}/linux64/chrome-linux64.zip
+#   HOST/{chrome_version}/linux64/chrome-headless-shell-linux64.zip
+# 两个文件 npmmirror 都有. 我们只用 page.screenshot() 不录视频, 不需要 ffmpeg,
+# 所以单 HOST 覆盖 CfT 就够 (ffmpeg 在 npmmirror 是另一条路径, 单 HOST 覆盖不到).
+ENV PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing
 
 # 系统依赖已在上一步装好，这里只拉浏览器二进制
 RUN pip install --no-cache-dir playwright && \
