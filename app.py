@@ -1372,6 +1372,12 @@ def batch_start_mock(batch_id):
     # 生产拒绝: 这个端点只服务本地开发 / curl 自测, 不应从公网可达
     if os.environ.get("FLASK_ENV", "").lower() == "production":
         return jsonify({"error": "mock 端点在生产环境已禁用"}), 403
+    # 2026-04-22 纵深防御: owner 校验 (POST 严格风格, 同 L1710 real start, legacy 也拒).
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if batch is None:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+    if batch.user_id is None or batch.user_id != current_user.id:
+        return jsonify({"error": "无权访问该批次"}), 403
     batches_root = UPLOAD_DIR / "batches"
     batch_dir = batches_root / batch_id
     if not batch_dir.is_dir():
@@ -1406,6 +1412,13 @@ def batch_start_mock(batch_id):
 @login_required
 def batch_status(batch_id):
     """查询批次进度。"""
+    # 2026-04-22 纵深防御: owner 校验 (GET 宽松风格, 同 L1333/L1348).
+    # legacy user_id=None 批次放过 (阶段六已归档技术债).
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if batch is None:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+    if batch.user_id is not None and batch.user_id != current_user.id:
+        return jsonify({"error": "无权访问该批次"}), 403
     state = batch_queue_mod.get_batch_status(batch_id)
     if state is None:
         return jsonify({"error": f"批次未在内存中: {batch_id}（可能未触发或服务重启过）"}), 404
@@ -2115,6 +2128,9 @@ def batch_ai_refine_estimate(batch_id):
     batch = Batch.query.filter_by(batch_id=batch_id).first()
     if batch is None:
         return jsonify({"error": f"批次未找到: {batch_id}"}), 404
+    # 2026-04-22 纵深防御: owner 校验 (GET 宽松风格, 同 L1333/L1348).
+    if batch.user_id is not None and batch.user_id != current_user.id:
+        return jsonify({"error": "无权访问该批次"}), 403
 
     candidates, skipped, already_done_count = _select_refine_candidates(batch)
     payload = compute_estimate(len(candidates))
