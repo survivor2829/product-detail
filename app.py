@@ -1139,6 +1139,21 @@ def batch_history_page():
     return render_template("batch/history.html", batches=batches)
 
 
+@app.route("/batch/history/<batch_id>", methods=["GET"])
+@login_required
+def batch_history_detail_page(batch_id):
+    """2026-04-22 历史批次详情页 (方向 B): 展示单批所有产品 + HTML/AI 预览缩略 +
+    下载按钮. 复用任务1 lightbox + 任务2 stage-pill + A3 修好的下载端点.
+    磁盘丢失时按钮置灰. 数据拉 /api/batches/<id> (自带 disk_available 字段).
+    """
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if batch is None:
+        abort(404)
+    if batch.user_id is not None and batch.user_id != current_user.id:
+        abort(403)
+    return render_template("batch/history_detail.html", batch=batch)
+
+
 # 任务9: /api/themes 复用已有端点 (app.py:990 get_themes), 返回 themes.json 全量。
 # 前端只读 .themes 数组的 id/name/description 字段, 兼容。
 
@@ -1326,13 +1341,42 @@ def batches_list():
 @app.route("/api/batches/<batch_id>", methods=["GET"])
 @login_required
 def batches_detail(batch_id):
-    """单个批次详情，含全部 items。仅 owner 可读(legacy 无主批次仍开放)。"""
+    """单个批次详情，含全部 items。仅 owner 可读(legacy 无主批次仍开放)。
+
+    2026-04-22 历史批次详情页: 附加 disk_available 字段 + 每个 item 的
+    preview_png_exists / ai_refined_exists, 让前端能置灰"文件已丢失"按钮.
+    """
     batch = Batch.query.filter_by(batch_id=batch_id).first()
     if not batch:
         return jsonify({"error": f"批次不存在: {batch_id}"}), 404
     if batch.user_id is not None and batch.user_id != current_user.id:
         return jsonify({"error": "没有权限查看该批次"}), 403
-    return jsonify(batch.to_dict(with_items=True))
+    data = batch.to_dict(with_items=True)
+    # 磁盘存在性检查 (同批次 items 同目录, 共享 product_dir 查询)
+    total_slots = missing_slots = 0
+    item_by_id = {it.id: it for it in batch.items}
+    for it_data in data.get("items", []):
+        it_obj = item_by_id.get(it_data["id"])
+        if it_obj is None:
+            it_data["preview_png_exists"] = False
+            it_data["ai_refined_exists"] = False
+            total_slots += 2; missing_slots += 2
+            continue
+        prod_dir = _resolve_product_dir_from_result(it_obj, batch_id)
+        png_ok = (prod_dir / "preview.png").is_file()
+        ai_ok  = (prod_dir / "ai_refined.jpg").is_file()
+        it_data["preview_png_exists"] = png_ok
+        it_data["ai_refined_exists"]  = ai_ok
+        total_slots += 2
+        if not png_ok: missing_slots += 1
+        if not ai_ok:  missing_slots += 1
+    if total_slots == 0 or missing_slots == 0:
+        data["disk_available"] = "full"
+    elif missing_slots == total_slots:
+        data["disk_available"] = "missing"
+    else:
+        data["disk_available"] = "partial"
+    return jsonify(data)
 
 
 @app.route("/api/batches/<batch_id>/items/<item_name>", methods=["PATCH"])

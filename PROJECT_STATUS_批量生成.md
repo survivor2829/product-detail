@@ -680,6 +680,39 @@ WHERE bi.status = 'done' AND json_extract(bi.result, '$.preview_png') IS NULL;
 
 ---
 
+### 安全审计 · 多层中间件叠加测试 (2026-04-22 立碑)
+
+**铁律 16 — 多层中间件叠加测试, 必须按顺序验证每一层是否真的跑到**:
+
+装饰器链 `@login_required → @before_request approval → 路由内 owner check` 叠 3 层. 测试 "跨用户访问返 403" 时, 如果测试 user 在前层 (如 approval) 就被拦, owner check 根本没跑到, 但你看到的响应状态也不是 200 或 401 而是**中间件自己渲染的 HTML 审核页 (200)** → 测试看上去"失败了"实际上是"没到那一步".
+
+**踩坑案例** (2026-04-22 批次 API owner 纵深防御 verify):
+- 临时新建 test user id=999 没设 `is_approved=True`
+- 跨用户访问 `/api/batch/<id>/status` → 响应是 200 HTML "等待审核"
+- **误判为 "owner check 失效"**, 差点推翻正确修复
+- debug 加 body dump 才发现是审核中间件先拦
+- 修: 设 `is_approved=True` 绕过审核层 → owner check 生效 → 正确 403
+
+**判定规则**:
+1. 写"某层返 403"测试时, 先列出**所有中间件**顺序 (`@login_required` → `@before_request` hooks → 路由内 check)
+2. 构造 fixture user **跳过前 N-1 层** (is_approved=True, 分组正确, etc), 只让目标层有机会生效
+3. 若响应不是目标状态码, **dump body 前 200 字节** 看是哪个中间件的渲染页
+4. **副防御**: 前层拦截也算安全 (纵深防御), 但不能让自己误以为测试覆盖了目标层
+
+**实施工具**:
+```python
+# 测试时 dump 响应内容, 看响应来自哪一层
+r = client.get(url)
+print(f'status={r.status_code}  body[:200]={r.get_data(as_text=True)[:200]!r}')
+# 200 + HTML "等待审核" 字样 → 审核层拦掉了
+# 302 + Location: /auth/login → @login_required 拦掉了
+# 403 + JSON "无权访问该批次" → 路由内 owner check 生效 (目标)
+```
+
+**延伸**: 任何 "多层防御" 功能 (rate limit / CSRF / auth / owner / rbac), 每层都要独立测试入口, 不能只测最外层通过状态就认为内层也通过.
+
+---
+
 ### 前端陷阱 · 原生 HTML 控件坑
 
 **铁律 13 — 原生 `<dialog>:modal` 有 UA stylesheet 的隐形 max-width, 做尺寸控制必须同时显式设 `width` + `max-width`**:

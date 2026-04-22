@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+{# 2026-04-22 历史批次详情页 (方向 B): 展示单批所有产品 + HTML/AI 预览 + 下载.
+   数据异步拉 /api/batches/<id> (自带 disk_available + exists 字段).
+   Lightbox / stage-pill / toast 复用 design-system.css tokens + 任务1 v3 实现. #}
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ batch.name or batch.raw_name or batch.batch_id }} · 历史批次详情 · 小玺AI</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/design-system.css') }}">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--color-bg-page);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  /* 顶栏 (复用 history.html 风格) */
+  .hd-topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: var(--z-topbar, 100);
+    height: 44px; padding: 0 24px;
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .hd-topbar-brand { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .hd-topbar-brand .dot { width: 8px; height: 8px; background: var(--color-primary); border-radius: 50%; }
+  .hd-topbar-right { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-text-muted); }
+  .hd-topbar-right a, .hd-topbar-right button {
+    color: var(--color-text-muted); text-decoration: none; padding: 6px 12px;
+    border-radius: var(--radius-md); border: none; background: none; cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .hd-topbar-right a:hover, .hd-topbar-right button:hover { color: var(--color-text); background: rgba(0,0,0,0.04); }
+
+  .hd-container { max-width: 1080px; margin: 0 auto; padding: 72px 24px 48px; }
+
+  /* 顶部 header 区 */
+  .hd-back { color: var(--color-text-muted); text-decoration: none; font-size: 13px;
+             display: inline-flex; align-items: center; gap: 4px;
+             padding: 6px 0; margin-bottom: 12px; transition: color var(--transition-fast); }
+  .hd-back:hover { color: var(--color-primary); }
+  .hd-header {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
+  .hd-header-left { flex: 1; min-width: 0; }
+  .hd-title { font-size: 24px; font-weight: 600; color: var(--color-title); margin: 0 0 8px 0; }
+  .hd-meta { display: flex; flex-wrap: wrap; gap: var(--space-4); font-size: 13px; color: var(--color-text-muted); }
+  .hd-meta strong { color: var(--color-text); font-weight: 500; }
+  .hd-btn-zip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 18px; font-size: 14px; font-weight: 500;
+    background: var(--color-primary); color: white;
+    border: 1px solid var(--color-primary); border-radius: var(--radius-md);
+    text-decoration: none;
+    box-shadow: var(--shadow-sm);
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+  .hd-btn-zip:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); box-shadow: 0 3px 8px var(--color-primary-shadow-strong); }
+  .hd-btn-zip.hd-btn-disabled { background: var(--color-text-muted); border-color: var(--color-text-muted); cursor: not-allowed; box-shadow: none; pointer-events: none; }
+
+  /* 磁盘状态 banner */
+  .hd-disk-banner {
+    padding: 10px 14px; margin-bottom: var(--space-4);
+    border-radius: var(--radius-md); font-size: 13px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hd-disk-banner.full    { background: var(--color-success-bg); color: var(--color-success); border: 1px solid var(--color-success); }
+  .hd-disk-banner.partial { background: var(--color-warning-bg); color: var(--color-warning); border: 1px solid var(--color-warning); }
+  .hd-disk-banner.missing { background: var(--color-error-bg);   color: var(--color-error);   border: 1px solid var(--color-error); }
+
+  /* 产品 card */
+  .hd-card {
+    display: grid; grid-template-columns: 220px 1fr 1fr; gap: var(--space-5);
+    padding: var(--space-5); margin-bottom: var(--space-4);
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+    transition: box-shadow var(--transition-base);
+  }
+  .hd-card:hover { box-shadow: var(--shadow-md); }
+  .hd-card-left { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+  .hd-main-thumb {
+    width: 100%; max-width: 200px; aspect-ratio: 1/1; object-fit: contain;
+    background: var(--color-bg-subtle); border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+  }
+  .hd-name { font-size: 15px; font-weight: 600; color: var(--color-title); word-break: break-all; }
+  .hd-thumb-col { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+  .hd-thumb-label { font-size: 12px; color: var(--color-text-muted); letter-spacing: 0.02em; }
+  .hd-thumb {
+    width: 100%; max-width: 280px; aspect-ratio: 3/4; object-fit: cover;
+    background: var(--color-bg-subtle); border-radius: var(--radius-md);
+    border: 1px solid var(--color-border); cursor: zoom-in;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .hd-thumb:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+  .hd-thumb-missing {
+    width: 100%; max-width: 280px; aspect-ratio: 3/4;
+    background: var(--color-bg-subtle); border: 1px dashed var(--color-border-hover);
+    border-radius: var(--radius-md);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; font-size: 13px; color: var(--color-text-muted); text-align: center; padding: 16px;
+  }
+  .hd-thumb-missing-icon { font-size: 24px; }
+  .hd-btn-dl {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 14px; font-size: 13px; font-weight: 500;
+    color: var(--color-primary); background: var(--color-primary-light);
+    border: 1px solid var(--color-primary-border); border-radius: var(--radius-md);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+  .hd-btn-dl:hover { background: var(--color-primary); color: white; border-color: var(--color-primary); }
+  .hd-btn-dl.hd-btn-disabled {
+    color: var(--color-text-muted); background: var(--color-bg-subtle);
+    border-color: var(--color-border); cursor: not-allowed; pointer-events: none;
+  }
+
+  .hd-loading, .hd-empty {
+    padding: 60px 20px; text-align: center; color: var(--color-text-muted);
+  }
+
+  /* Lightbox (复用任务1 v3 实现, 本页内联一份 — design-system.css 暂未提供) */
+  #lightboxDlg {
+    padding: 0; border: none; background: transparent;
+    width: min(85vw, 1200px); max-height: 88vh;
+    max-width: min(85vw, 1200px);
+    overflow: visible; opacity: 1;
+    transition: opacity 180ms ease-out;
+  }
+  #lightboxDlg.closing { opacity: 0; }
+  #lightboxDlg::backdrop {
+    background: rgba(0,0,0,0.78);
+    backdrop-filter: blur(20px) saturate(1.2);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+    animation: lbBackdropIn 180ms ease-out;
+  }
+  #lightboxDlg[open] { animation: lbCardIn 180ms var(--ease-spring); }
+  @keyframes lbBackdropIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes lbCardIn {
+    from { opacity: 0; transform: scale(0.96) translateY(6px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  #lightboxDlg .lb-scroll {
+    max-height: 88vh; overflow-y: auto;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 28px 72px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04);
+    background: #fff; padding: var(--space-4);
+  }
+  #lightboxDlg .lb-scroll img {
+    display: block; max-width: 100%; height: auto; object-fit: contain;
+    border-radius: var(--radius-md);
+  }
+  #lightboxDlg .lb-close {
+    position: absolute; top: -16px; right: -16px;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(255,255,255,0.16);
+    backdrop-filter: blur(16px) saturate(1.2);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid rgba(255,255,255,0.28);
+    color: #fff; font-size: 22px; font-weight: 300; line-height: 1;
+    cursor: pointer; z-index: 2;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  #lightboxDlg .lb-close:hover {
+    background: rgba(255,255,255,0.32); transform: scale(1.08);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+  }
+  #lightboxDlg .lb-caption {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 24px; z-index: 2;
+    padding: 8px 16px; border-radius: var(--radius-full);
+    background: rgba(0,0,0,0.55); color: #fff;
+    font-size: 13px; letter-spacing: 0.02em;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    white-space: nowrap; max-width: 80vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  #lightboxDlg .lb-caption:empty { display: none; }
+
+  /* 响应式: 手机竖排 */
+  @media (max-width: 768px) {
+    .hd-container { padding: 64px 16px 32px; }
+    .hd-header { flex-direction: column; gap: var(--space-3); }
+    .hd-card { grid-template-columns: 1fr; gap: var(--space-3); padding: var(--space-4); }
+    .hd-main-thumb { max-width: 140px; }
+    #lightboxDlg { width: 95vw; max-width: 95vw; max-height: 92vh; }
+    #lightboxDlg .lb-scroll { max-height: 92vh; padding: var(--space-2); }
+    #lightboxDlg .lb-close { top: 10px; right: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hd-topbar">
+  <div class="hd-topbar-brand"><span class="dot"></span>小玺AI · 批次详情</div>
+  <div class="hd-topbar-right">
+    <a href="/batch/history">历史批次</a>
+    <a href="/batch/upload">新建批次</a>
+    <span>{{ current_user.username }}</span>
+    <form method="POST" action="/auth/logout" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">退出</button>
+    </form>
+  </div>
+</div>
+
+<div class="hd-container">
+  <a href="/batch/history" class="hd-back">← 返回列表</a>
+  <div class="hd-header">
+    <div class="hd-header-left">
+      <h1 class="hd-title">{{ batch.name or batch.raw_name or '(未命名)' }}</h1>
+      <div class="hd-meta">
+        <span>创建于 <strong>{{ batch.created_at.strftime('%Y-%m-%d %H:%M') if batch.created_at else '-' }}</strong></span>
+        <span>状态: <strong>{{ batch.status }}</strong></span>
+        <span>产品数: <strong>{{ batch.valid_count or 0 }}/{{ batch.total_count or 0 }}</strong></span>
+      </div>
+    </div>
+    <a id="btnZip" class="hd-btn-zip" href="/api/batch/{{ batch.batch_id }}/download-all">↓ 批量 zip 下载</a>
+  </div>
+  <div class="hd-disk-banner" id="diskBanner" hidden></div>
+  <div id="itemList"><div class="hd-loading">加载中...</div></div>
+</div>
+
+<script>
+  const BATCH_ID = {{ batch.batch_id | tojson }};
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  // ── Lightbox (任务1 v3 实现, 此页独立版) ──────────────────
+  function closeLightbox(dlg) {
+    if (!dlg || !dlg.open) return;
+    dlg.classList.add('closing');
+    setTimeout(() => { dlg.classList.remove('closing'); dlg.close(); }, 180);
+  }
+  function ensureLightboxDlg() {
+    let dlg = document.getElementById('lightboxDlg');
+    if (!dlg) {
+      dlg = document.createElement('dialog');
+      dlg.id = 'lightboxDlg';
+      dlg.innerHTML = `
+        <button type="button" class="lb-close" aria-label="关闭预览">×</button>
+        <div class="lb-scroll"><img alt="预览大图"></div>
+        <div class="lb-caption"></div>`;
+      dlg.addEventListener('click', (e) => { if (e.target === dlg) closeLightbox(dlg); });
+      dlg.querySelector('.lb-close').addEventListener('click', () => closeLightbox(dlg));
+      dlg.addEventListener('cancel', (e) => { e.preventDefault(); closeLightbox(dlg); });
+      document.body.appendChild(dlg);
+    }
+    return dlg;
+  }
+  function openLightbox(src, caption) {
+    const dlg = ensureLightboxDlg();
+    dlg.classList.remove('closing');
+    dlg.querySelector('img').src = src;
+    dlg.querySelector('.lb-caption').textContent = caption || '';
+    dlg.querySelector('.lb-scroll').scrollTop = 0;
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+  }
+  window.openLightbox = openLightbox;
+
+  // ── 渲染 ──────────────────────────────────────────────────
+  function stageLabelFor(item) {
+    if (item.status === 'done')   return { cls: 'stage-done',   label: '✅ 完成' };
+    if (item.status === 'failed') return { cls: 'stage-failed', label: '❌ 失败' };
+    if (item.status === 'processing') return { cls: 'stage-parsing', label: '🔄 处理中' };
+    if (item.status === 'skipped') return { cls: 'stage-pending', label: '⏭️ 跳过' };
+    return { cls: 'stage-pending', label: '⏳ 待处理' };
+  }
+
+  function renderItemCard(item, batchId) {
+    const hasPreview = !!item.preview_png_exists;
+    const hasAI = !!item.ai_refined_exists;
+    const previewUrl = (item.result && item.result.preview_png) || '';
+    const aiUrl = (item.result && item.result.ai_refined_path) || '';
+    const safeName = escapeHtml(item.name || '');
+    const nameEnc = encodeURIComponent(item.name || '');
+    const bidEnc = encodeURIComponent(batchId);
+    const stage = stageLabelFor(item);
+    const mainImg = item.main_image_path
+      ? `<img class="hd-main-thumb" src="${escapeHtml(item.main_image_path)}" alt="" onerror="this.style.display='none'">`
+      : '';
+
+    const htmlCol = hasPreview
+      ? `<img class="hd-thumb" src="${escapeHtml(previewUrl)}" alt=""
+             onclick="openLightbox(${JSON.stringify(previewUrl)}, 'HTML 版 · ' + ${JSON.stringify(item.name || '')})">
+         <a class="hd-btn-dl" href="/api/batch/${bidEnc}/download?name=${nameEnc}&kind=html">↓ HTML版</a>`
+      : `<div class="hd-thumb-missing">
+           <span class="hd-thumb-missing-icon">⚠️</span><span>文件已丢失</span>
+         </div>
+         <span class="hd-btn-dl hd-btn-disabled" title="文件已丢失, 无法下载">↓ HTML版</span>`;
+
+    const aiCol = hasAI
+      ? `<img class="hd-thumb" src="${escapeHtml(aiUrl)}" alt=""
+             onclick="openLightbox(${JSON.stringify(aiUrl)}, 'AI 精修 · ' + ${JSON.stringify(item.name || '')})">
+         <a class="hd-btn-dl" href="/api/batch/${bidEnc}/download?name=${nameEnc}&kind=ai">↓ AI版</a>`
+      : `<div class="hd-thumb-missing">
+           <span class="hd-thumb-missing-icon">⚠️</span>
+           <span>${item.ai_refine_status === 'done' ? '文件已丢失' : '未精修 / 未生成'}</span>
+         </div>
+         <span class="hd-btn-dl hd-btn-disabled" title="文件未生成">↓ AI版</span>`;
+
+    return `
+      <div class="hd-card" data-name="${safeName}" data-item-id="${item.id}">
+        <div class="hd-card-left">
+          ${mainImg}
+          <div class="hd-name">${safeName}</div>
+          <span class="stage-pill ${stage.cls}">${stage.label}</span>
+        </div>
+        <div class="hd-thumb-col">
+          <div class="hd-thumb-label">HTML 版预览</div>
+          ${htmlCol}
+        </div>
+        <div class="hd-thumb-col">
+          <div class="hd-thumb-label">AI 精修版</div>
+          ${aiCol}
+        </div>
+      </div>`;
+  }
+
+  function renderDiskBanner(disk_available) {
+    const banner = document.getElementById('diskBanner');
+    const btnZip = document.getElementById('btnZip');
+    if (!disk_available || disk_available === 'full') {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    banner.className = 'hd-disk-banner ' + disk_available;
+    if (disk_available === 'partial') {
+      banner.innerHTML = '⚠️ 部分产品文件已丢失, 仍可下载在磁盘的部分';
+    } else if (disk_available === 'missing') {
+      banner.innerHTML = '❌ 该批次所有文件已丢失. 通常是容器重启前生成在临时层 (紧急3 前).';
+      btnZip.classList.add('hd-btn-disabled');
+      btnZip.setAttribute('title', '所有文件已丢失, zip 打包无意义');
+    }
+  }
+
+  async function init() {
+    const listEl = document.getElementById('itemList');
+    let data;
+    try {
+      const resp = await fetch('/api/batches/' + encodeURIComponent(BATCH_ID), {
+        credentials: 'same-origin',
+      });
+      if (!resp.ok) {
+        listEl.innerHTML = '<div class="hd-empty">加载失败: HTTP ' + resp.status + '</div>';
+        return;
+      }
+      data = await resp.json();
+    } catch (e) {
+      listEl.innerHTML = '<div class="hd-empty">加载异常: ' + escapeHtml(e.message || String(e)) + '</div>';
+      return;
+    }
+    renderDiskBanner(data.disk_available);
+    const items = (data.items || []).filter(it => it.status !== 'skipped');
+    if (items.length === 0) {
+      listEl.innerHTML = '<div class="hd-empty">该批次没有可展示的产品</div>';
+      return;
+    }
+    listEl.innerHTML = items.map(it => renderItemCard(it, data.batch_id)).join('');
+  }
+
+  init();
+</script>
+</body>
+</html>

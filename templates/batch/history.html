@@ -122,6 +122,20 @@
     white-space: nowrap;
   }
 
+  /* 操作列: "查看详情" + "批量zip" 按钮 (2026-04-22 方向 B) */
+  .action-cell { white-space: nowrap; }
+  .action-btn {
+    display: inline-block; padding: 5px 10px; margin-right: 6px;
+    font-size: 12px; font-weight: 500;
+    color: var(--color-text-muted);
+    background: transparent; border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .action-btn:hover { color: var(--color-text); border-color: var(--color-border-hover); background: #f9f9fb; }
+  .action-btn.action-primary { color: var(--color-primary); border-color: var(--color-primary); }
+  .action-btn.action-primary:hover { color: #fff; background: var(--color-primary); }
+
   .empty {
     padding: 60px 20px; text-align: center; color: var(--color-text-muted);
   }
@@ -176,6 +190,7 @@
             <th>状态</th>
             <th>产品数 (有效 / 跳过)</th>
             <th>创建时间</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -210,6 +225,10 @@
               </td>
               <td class="date-cell">
                 {{ b.created_at.strftime('%Y-%m-%d %H:%M') if b.created_at else '-' }}
+              </td>
+              <td class="action-cell">
+                <a class="action-btn action-primary" href="/batch/history/{{ b.batch_id }}">查看详情</a>
+                <a class="action-btn" href="/api/batch/{{ b.batch_id }}/download-all" title="下载该批次所有产物 zip">批量↓</a>
               </td>
             </tr>
           {% endfor %}
