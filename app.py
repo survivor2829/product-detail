@@ -1902,6 +1902,36 @@ _KIND_TO_FILE = {
 }
 
 
+def _resolve_product_dir_from_result(item, batch_id: str):
+    """2026-04-22 Bug A3 (紧急3 孪生漏洞): 从 item.result JSON 里的 URL 反推磁盘
+    product_dir, 避免硬拼 UPLOAD_DIR/batches/<bid>/<name> 漏掉 zip 顶层子目录
+    (实测 "测试/" 目录导致 /api/batch/.../download 404).
+
+    优先顺序: preview_png → ai_refined_path → parsed_path → cutout_path.
+    任意一条 URL 指向的文件在磁盘上存在 → 取它的 parent 作 product_dir.
+    全都不存在 → 兜底硬拼 (可能不是真目录, 调用方再 is_dir / is_file 判断).
+
+    与紧急3 f613dd2 的 _resolve_path 一致: URL /uploads/ → 磁盘 /static/uploads/.
+    """
+    try:
+        result = _json_mod.loads(item.result or "{}")
+    except _json_mod.JSONDecodeError:
+        result = {}
+    if not isinstance(result, dict):
+        result = {}
+    for key in ("preview_png", "ai_refined_path", "parsed_path", "cutout_path"):
+        url = result.get(key)
+        if not url:
+            continue
+        rel = str(url).lstrip("/")
+        if rel.startswith("uploads/"):
+            rel = "static/" + rel
+        abs_path = BASE_DIR / rel
+        if abs_path.is_file():
+            return abs_path.parent
+    return UPLOAD_DIR / "batches" / batch_id / item.name
+
+
 @app.route("/api/batch/<batch_id>/download", methods=["GET"])
 @login_required
 def batch_download_one(batch_id: str):
@@ -1944,7 +1974,8 @@ def batch_download_one(batch_id: str):
         }), 404
 
     disk_name, pretty_suffix = _KIND_TO_FILE[kind]
-    product_dir = UPLOAD_DIR / "batches" / batch_id / name
+    # 2026-04-22 Bug A3: 用 helper 从 item.result 读真实 product_dir (含 zip 子目录)
+    product_dir = _resolve_product_dir_from_result(item, batch_id)
     file_abs = product_dir / disk_name
     if not file_abs.is_file():
         return jsonify({
@@ -1999,7 +2030,8 @@ def batch_download_all(batch_id: str):
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for item in items:
-            product_dir = batch_root / item.name
+            # 2026-04-22 Bug A3: 从 item.result 读真实路径 (含 zip 顶层子目录, 例"测试/")
+            product_dir = _resolve_product_dir_from_result(item, batch_id)
             if not product_dir.is_dir():
                 skipped.append(f"{item.name} (目录缺失)"); continue
             row_any = False
