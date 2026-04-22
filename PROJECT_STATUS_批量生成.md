@@ -568,6 +568,85 @@ OOM 或其他崩溃后 items 卡 `status=processing`; `app.py:5146-5162` startup
 
 **4C8G 升级后这些参数要同步调**, 详见 阶段七 "4C8G 升级具体步骤"。
 
+### 中国服务器 Chromium Emoji 字体打包 (2026-04-22 紧急3 回归修复立碑)
+
+**铁律 11 — 凡是服务端 headless 浏览器渲染用户可见页面, 镜像必须装 CJK + emoji 字体三件套**:
+
+Docker 官方 Playwright / Python slim 基础镜像**只带英文 + 基础 Latin 字体**。Linux Chromium 遇到字体没有字形的字符 (CJK 汉字 / emoji / 稀有 Unicode) → 渲染为 `.notdef` (空心方块 `❑` / tofu `□`)。
+
+**踩坑案例** (2026-04-22):
+- DeepSeek prompt 指示 `icon_text` 用 emoji (`🔩🧹🪶♻️⚡🧪🌿💧💰🔧⏱✅` 等)
+- Dockerfile 装了 `fonts-noto-cjk` + `fonts-wqy-zenhei` → **CJK OK**
+- 但没装 `fonts-noto-color-emoji` → **所有 emoji 渲染成空心方块**
+- 用户视觉报告: "3个圆形卡片中心空心方块❑" (问题2)
+- 修复: `Dockerfile:13` 追加 `fonts-noto-color-emoji` (apt 单包 <5MB) + 重 build
+- 验证: `docker exec fc-list | grep -i emoji` → `NotoColorEmoji.ttf: Noto Color Emoji`
+
+**上线三件套 (每个新服务端渲染镜像必过)**:
+1. `fonts-noto-cjk` — 中日韩全角字符
+2. `fonts-wqy-zenhei` 或 `fonts-wqy-microhei` — 常用简中黑体 fallback
+3. `fonts-noto-color-emoji` — emoji 必配, 别赌"用户不会用 emoji" (DeepSeek 主动塞)
+
+**判定工具**:
+- `docker exec fc-list | wc -l` — 少于 10 条说明只有英文, 必补
+- `docker exec fc-list | grep -i emoji` — 空就是缺 emoji
+- 直接用 Playwright 打开一个 HTML 写着 `测试 🔋 123` 看截图
+
+**横向教训 (和铁律 1 呼应)**: Linux 容器里 "用户上传的文本能涵盖的全部字形" 是必须在 Dockerfile 就齐的, 不能等"用户报 bug 才补字体"。运行时 fontconfig 没有即没有。
+
+---
+
+### 孤儿产物扫描修复 (2026-04-22 紧急3 回归修复立碑)
+
+**铁律 12 — "磁盘文件存在 + DB 字段 null" 是崩溃/回归的典型残留, 容器启动时要扫描修复**:
+
+当任务4 落盘 `preview.png` 成功但 `_render_product_preview` 在后续步骤抛异常 (历史: Playwright networkidle 超时 / OOM SIGKILL / file:// URL 404), try/except 返回 `(None, None, err)` → DB result JSON `preview_png=null` **但磁盘文件已经写好且没删**。结果: `status=done` + 前端预览列空白 + 用户以为系统没反应。
+
+**踩坑案例** (2026-04-22):
+- batch_20260422_001_3858 的 DZ70X新品1 (id=15): Playwright 首次遇 254MB 透明 PNG networkidle 超时 → `preview_png=null` + 磁盘没有 png
+- 紧急3 patch-1 (wait_until=load) + P0 回归修复 (主图 URL 映射) 部署后, 手动重渲染该产品 → **磁盘 preview.png 生成了 6.5MB**, 但 DB result 字段仍是 null (re-render 脚本没同步 DB)
+- 前端 `upload.html:1231` `previewUrl = result.preview_png || ''` → 空字符串 → 显示 "(渲染失败)"
+- 修复: 单条 SQL `json_set` 把 3 个 key 从 null 写回真实 URL, 其余字段一字不动 (BEFORE/AFTER SELECT 三明治证明)
+
+**启动扫描伪代码 (和 Round 2 僵尸批次自愈合并做)**:
+```python
+# app.py startup hook, 跟在现有 processing→failed 扫描后
+for item in BatchItem.query.filter_by(status="done").all():
+    result = json.loads(item.result or "{}")
+    if not isinstance(result, dict): continue
+    parsed_url = result.get("parsed_path") or ""
+    if not parsed_url: continue
+    prod_dir = _resolve_path(parsed_url, BASE_DIR).parent
+    # 三个文件分别探测, 磁盘有就把 URL 写回 DB
+    for key, fname in [("preview_png", "preview.png"),
+                       ("preview_html", "preview.html"),
+                       ("ai_refined_path", "ai_refined.jpg")]:
+        if result.get(key) is None and (prod_dir / fname).is_file():
+            result[key] = _to_url(prod_dir / fname, BASE_DIR)
+            # 清理对应 error 字段 (如果有)
+    item.result = json.dumps(result, ensure_ascii=False)
+db.session.commit()
+```
+
+**上线清单**:
+- [ ] `app.py:_startup_recovery` 加孤儿扫描 (Round 2 一并做)
+- [ ] 日志打印"修复 N 条孤儿产物"方便运维追
+- [ ] 不自动删磁盘, 只把 DB 对齐 (磁盘数据才是 source of truth)
+- [ ] 管理端点 `POST /api/admin/fix-orphan-products` 手动触发 (兜底)
+
+**判定工具**:
+```sql
+-- 扫描孤儿 (紧急3 修复用的那条, 已验证)
+SELECT bi.id, bi.name, json_extract(bi.result, '$.preview_png') AS png_url,
+       json_extract(bi.result, '$.parsed_path') AS parsed
+FROM batch_items bi
+WHERE bi.status = 'done' AND json_extract(bi.result, '$.preview_png') IS NULL;
+```
+
+**横向教训 (和修 bug 后必问同类问题呼应)**: 每次 worker 失败返回 `(None, ...)` 的分支, 都要问"磁盘侧的中间产物会不会留下来?". 留下来 = 有孤儿 = 启动扫描必须有对应分支。
+
+---
+
 ## 用户偏好
 - 用户能看 JSON 字段对错，但不直接读 Python 代码 → 验证步骤要写"预期看到 X"而不是"运行什么测试"
 - 用户用 curl 验证（但需要登录态时改用 requests.Session 脚本，curl + CSRF 在 PowerShell 里太啰嗦）
