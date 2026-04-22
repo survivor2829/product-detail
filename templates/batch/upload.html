@@ -401,12 +401,17 @@
   }
 
   /* 全屏 lightbox — 原生 <dialog>, a11y / focus-trap / Esc 全免费
-     2026-04-22 任务1 UX 修复: 弹窗从撑满 92vw/92vh 缩到 85vw/88vh,
-     给图外围留呼吸感 + 关闭按钮贴弹窗右上角 + 响应式 <768px → 95vw.
-     动画时长 220→180ms (用户说的 150-200ms 区间). 点击背景/ESC 关闭不变. */
+     2026-04-22 任务1 UX 修复 v2: width 用 min(85vw, 1200px) 硬收.
+     v1 只设 max-width 85vw 无效 — preview.png 固定 1500 宽 < 85vw (1920 屏 1632),
+     max-width 约束从不触发 → dialog 永远等于 img intrinsic 1500 + padding.
+     v2 改 width (非 max-width) 硬性收到 1200px 上限, 大屏上图被等比缩放显示.
+     *** 1200px 是基于当前 preview.png 1500 宽的设计 (750@2x). ***
+     *** 如果将来 block 模板改动导出宽度 (比如 2x→3x 或改成 900 宽), 同步调这里 ***
+     激活断点 1412px 屏宽 (85vw=1200): 之上走 1200, 之下走 85vw.
+     移动端 <768px 走 95vw 仍用 max-width (小屏 img 会被 vw 约束到). */
   #lightboxDlg {
     padding: 0; border: none; background: transparent;
-    max-width: 85vw; max-height: 88vh; width: auto;
+    width: min(85vw, 1200px); max-height: 88vh;
     overflow: visible;
     opacity: 1;
     transition: opacity 180ms ease-out;
@@ -475,9 +480,11 @@
     overflow: hidden; text-overflow: ellipsis;
   }
   #lightboxDlg .lb-caption:empty { display: none; }
-  /* 响应式: 手机屏 <768px 放宽到 95vw, close 按钮回到内侧 (避免被边缘遮) */
+  /* 响应式: 手机屏 <768px 走 95vw, close 按钮回到内侧 (避免被边缘遮).
+     这里可以用 width: 95vw (不是 min) 因为小屏 95vw 必然 < 1500 img 宽,
+     vw 约束一定触发, dialog 等于 95vw. close 按钮 -16px 在小屏会被切, 改 10px 内侧. */
   @media (max-width: 768px) {
-    #lightboxDlg { max-width: 95vw; max-height: 92vh; }
+    #lightboxDlg { width: 95vw; max-height: 92vh; }
     #lightboxDlg .lb-scroll { max-height: 92vh; padding: var(--space-2); }
     #lightboxDlg .lb-close { top: 10px; right: 10px; }
   }
