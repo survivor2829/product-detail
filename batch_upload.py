@@ -221,7 +221,12 @@ def parse_product_folder(folder: Path, project_root: Path) -> dict:
     detail_images = _sort_details([p for p in images if p != main_image])
 
     def _to_url(p: Path) -> str:
-        return "/" + str(p.resolve().relative_to(project_root.resolve())).replace("\\", "/")
+        # 磁盘落在 static/uploads/... 但对外 URL 仍用 /uploads/... (serve_batch_upload 代理).
+        # 这里剥掉 static/ 前缀, 让 DB 里 main_image_path 存的是用户可直接访问的 URL.
+        rel = str(p.resolve().relative_to(project_root.resolve())).replace("\\", "/")
+        if rel.startswith("static/uploads/"):
+            rel = rel[len("static/"):]
+        return "/" + rel
 
     return {
         "status": "ok",

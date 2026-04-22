@@ -80,7 +80,11 @@ def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dic
     if not parsed_url:
         raise ValueError(f"产品 {name} 缺 parsed_json_path (任务4 应已落盘)")
 
-    parsed_path = BASE_DIR / parsed_url.lstrip("/")
+    # URL /uploads/ 映射到磁盘 static/uploads/ (2026-04-22 修容器持久化 bug, 见铁律10)
+    parsed_rel = parsed_url.lstrip("/")
+    if parsed_rel.startswith("uploads/"):
+        parsed_rel = "static/" + parsed_rel
+    parsed_path = BASE_DIR / parsed_rel
     if not parsed_path.is_file():
         raise FileNotFoundError(f"parsed.json 不在: {parsed_path}")
     parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
@@ -149,9 +153,11 @@ def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dic
     compose_elapsed = round(time.time() - t1, 2)
 
     jpg_abs = Path(result["jpg"])
-    ai_refined_url = "/" + jpg_abs.resolve().relative_to(
-        BASE_DIR.resolve()
-    ).as_posix()
+    # 磁盘 static/uploads/ → URL /uploads/ (同 batch_processor._to_url)
+    _rel = jpg_abs.resolve().relative_to(BASE_DIR.resolve()).as_posix()
+    if _rel.startswith("static/uploads/"):
+        _rel = _rel[len("static/"):]
+    ai_refined_url = "/" + _rel
 
     out = {
         "ai_refined_path": ai_refined_url,

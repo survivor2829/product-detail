@@ -32,7 +32,12 @@ from flask_login import login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 
 BASE_DIR = Path(__file__).parent
-UPLOAD_DIR = BASE_DIR / "uploads"
+# 2026-04-22: 磁盘落点从 BASE_DIR/uploads 迁到 BASE_DIR/static/uploads, 与 Docker
+# named volume (uploads -> /app/static/uploads) 对齐, 修复容器重启后文件蒸发的
+# 持久化 bug (见 docs 铁律10). URL 仍用 /uploads/... 经 serve_batch_upload 代理,
+# owner 鉴权保留; URL <-> 磁盘的映射集中在 batch_upload/batch_processor/refine_processor
+# 三处 _to_url/_resolve_path 里统一做 'static/' 前缀增删.
+UPLOAD_DIR = BASE_DIR / "static" / "uploads"
 OUTPUT_DIR = BASE_DIR / "output"
 TEMPLATES_DIR = BASE_DIR / "templates"
 UPLOAD_DIR.mkdir(exist_ok=True)

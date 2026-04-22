@@ -42,13 +42,23 @@ from pathlib import Path
 
 
 def _resolve_path(url_or_path: str, base_dir: Path) -> Path:
-    """把 URL 形式的 /uploads/batches/.../foo.jpg 转成绝对 Path。"""
+    """把 URL 形式的 /uploads/batches/.../foo.jpg 转成绝对 Path。
+
+    磁盘实际落在 static/uploads/... (2026-04-22 修容器持久化 bug), 所以 URL
+    前缀 uploads/ 要补成 static/uploads/ 才能拼出磁盘真实路径。
+    """
     s = str(url_or_path or "").lstrip("/")
+    if s.startswith("uploads/"):
+        s = "static/" + s
     return base_dir / s
 
 
 def _to_url(p: Path, base_dir: Path) -> str:
-    return "/" + str(p.resolve().relative_to(base_dir.resolve())).replace("\\", "/")
+    """磁盘 Path → URL. static/uploads/ 剥成 /uploads/ (对外 URL 不带 static/)."""
+    rel = str(p.resolve().relative_to(base_dir.resolve())).replace("\\", "/")
+    if rel.startswith("static/uploads/"):
+        rel = rel[len("static/"):]
+    return "/" + rel
 
 
 def _cutout_main_image(src_path: Path, dst_path: Path) -> None:
