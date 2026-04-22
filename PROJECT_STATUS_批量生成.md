@@ -268,6 +268,39 @@
 
 (空, 后续观察到的小问题往这里堆, 集中一个版本清)
 
+#### 8.4 视觉 Token 微调 (任务3 美化执行前必做, 2026-04-22 立)
+
+**背景**: 任务1 lightbox 修复期间盘点 `static/css/design-system.css` 的 tokens. 用户审美标定"B 端清洁设备 · 专业可靠科技感 · 避花哨/童趣/过饱和". 对现有 token 有两个"可以更好但本次不改"的点, 记录下来任务3 美化时一起做:
+
+**必做 1 — Primary 主色候选 3 方案对比**:
+现值 `--color-primary: #146ef5` (HSL 217° 92% 52%) 偏 Webflow/互联网向, 饱和度 92%. 相比 Stripe / Linear / Apple 那种"金融级沉稳"仍偏亮. 本次 100+ 处已用了这个 var, 改=重调全品牌, 故不动. 任务3 执行时要出 3 个候选对照:
+- **Stripe 派**: `#635bff` (紫蓝, 互联网感但更深)
+- **Linear 派**: `#5e6ad2` (灰紫, 极克制)
+- **Apple 派**: `#0066cc` / `#2563eb` (纯蓝, 饱和 84%, 深度更足)
+预期: 截图三份 `batch/upload.html` 全局换色对比, 用户投票定一个。
+
+**必做 2 — Status 语义色同步降饱和**:
+现值:
+```
+--color-success: #00d722;   (Material 亮绿, 饱和高)
+--color-warning: #ffae13;   (橙黄, 还好)
+--color-error:   #ee1d36;   (亮红, 饱和高)
+```
+对比 Stripe: `success #00b341` (-8%) / `error #d93545` (-10%) 明显更柔. 任务3 同步调到 B2B 级:
+- `success` → `#00b341` 或 `#10b981` (Tailwind emerald-500)
+- `error`   → `#d93545` 或 `#ef4444` (Tailwind red-500)
+- `warning` → `#f59e0b` (Tailwind amber-500, 比 `#ffae13` 略深)
+
+**执行规则**:
+1. 任务3 启动前**必先验收** 这两项方案, 三色都要用户点头才写代码
+2. 改色只改 `static/css/design-system.css :root`, **不改其他文件** (所有下游都用 var)
+3. 改完跑全站 Playwright 截图 (workspace / upload / history / lightbox) 对比 before/after, 用户视觉确认无偏差再 deploy
+
+**本次不做的理由** (给未来的自己看):
+任务1 是"功能闭环", 任务2 是"实时反馈加能力", 视觉微调混进来 = 一次 PR 动 3 件事 = 难追溯难回滚. 任务3 独立承担视觉改动, 单次可验收。
+
+---
+
 #### 已知物理限制 (不归阶段八修复范围, 问题2 归档)
 
 **问题2: 上传速度慢 (87MB / 3 产品)**
