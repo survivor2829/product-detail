@@ -161,14 +161,23 @@ def _render_product_preview(
 
         # 3) 把 /static/ 和 /uploads/ 的 src/href 改成 file:/// 绝对路径
         # Playwright 走 file:// 协议时,/static/foo.png 会被解析成磁盘根目录,必死。
+        #
+        # 2026-04-22 紧急3回归修复: URL 前缀 /uploads/ 在紧急3(f613dd2) 后对应
+        # 磁盘路径 /app/static/uploads/ (UPLOAD_DIR 迁移). 这里 file:// 替换
+        # 之前直接拼成 /app/uploads/ → 文件 404 → 首屏产品图显示浏览器"加载失败"
+        # 占位符 (用户报的问题3). 修法: /uploads/ 的替换目标加 static/ 前缀.
         base_url_str = str(BASE_DIR).replace("\\", "/")
-        for prefix in ("/static/", "/uploads/"):
+        _URL_TO_DISK = {
+            "/static/": "/static/",               # /static/ URL 直接对应 BASE_DIR/static/
+            "/uploads/": "/static/uploads/",      # /uploads/ URL 映射到 BASE_DIR/static/uploads/
+        }
+        for url_prefix, disk_prefix in _URL_TO_DISK.items():
             html = html.replace(
-                f'src="{prefix}', f'src="file:///{base_url_str}{prefix}'
+                f'src="{url_prefix}', f'src="file:///{base_url_str}{disk_prefix}'
             ).replace(
-                f"src='{prefix}", f"src='file:///{base_url_str}{prefix}"
+                f"src='{url_prefix}", f"src='file:///{base_url_str}{disk_prefix}"
             ).replace(
-                f'href="{prefix}', f'href="file:///{base_url_str}{prefix}'
+                f'href="{url_prefix}', f'href="file:///{base_url_str}{disk_prefix}'
             )
 
         preview_html_path = product_dir / "preview.html"

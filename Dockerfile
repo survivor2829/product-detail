@@ -10,7 +10,7 @@ RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.
 # （Bookworm DEB822 下自动检测会漏包，腾讯云部署已失败过 3 次）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl ca-certificates \
-    fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-cjk \
+    fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-cjk fonts-noto-color-emoji \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \

@@ -1119,7 +1119,10 @@
         if (evt.status === 'done' && evt.name) {
           const row = findRow(evt.name);
           if (row && !row.querySelector('.ai-thumb')) {
-            mountAiThumb(row.querySelector('.refine-cell'), evt.name);
+            // 2026-04-22 紧急3回归修复 (问题6): 传 evt.result.ai_refined_path,
+            // 让 mountAiThumb 用后端给的真实 URL (含 zip 子目录)
+            const aiUrl = evt.result?.ai_refined_path || '';
+            mountAiThumb(row.querySelector('.refine-cell'), evt.name, aiUrl);
           }
         }
         refreshPickedCount();  // 归零后解锁 btnStartRefine
@@ -1190,7 +1193,11 @@
 
   // Step C: 把 AI 精修缩略图 + 下载按钮 挂到 refine-cell 的 .ai-thumb-slot
   // 图片走 /uploads 静态路由 (Step A 修的那条 <path:subpath>), 不是 download 端点
-  function mountAiThumb(refineCell, name) {
+  //
+  // 2026-04-22 紧急3回归修复 (问题6): 接受可选 aiUrl 参数 — 优先用后端传的
+  // 真实 URL (来自 result.ai_refined_path), 避免硬拼 batches/${bid}/${name}/ 漏掉
+  // zip 顶层子目录 (实测 "测试/" 时硬拼 URL 404). aiUrl 缺省时仍回退到老硬拼.
+  function mountAiThumb(refineCell, name, aiUrl) {
     if (!refineCell || !name || !session.batchId) return;
     let slot = refineCell.querySelector('.ai-thumb-slot');
     if (!slot) {
@@ -1199,8 +1206,10 @@
       refineCell.appendChild(slot);
     }
     const safeN = escapeHtml(name);
-    const imgUrl = `/uploads/batches/${encodeURIComponent(session.batchId)}`
-                 + `/${encodeURIComponent(name)}/ai_refined.jpg`;
+    // 优先用后端给的真实 URL (含 zip 子目录); 没传或为空时回退到硬拼 (老行为)
+    const imgUrl = aiUrl
+      || `/uploads/batches/${encodeURIComponent(session.batchId)}`
+         + `/${encodeURIComponent(name)}/ai_refined.jpg`;
     slot.innerHTML = `
       <img class="ai-thumb" src="${imgUrl}"
            alt="AI 精修版 — ${safeN}"
@@ -1271,7 +1280,9 @@
     if (aiStatus === 'done') {
       const refineCell = row.querySelector('.refine-cell');
       if (refineCell && !refineCell.querySelector('.ai-thumb')) {
-        mountAiThumb(refineCell, name);
+        // 2026-04-22 紧急3回归修复 (问题6): 用 result.ai_refined_path 真实 URL
+        const aiUrl = result?.ai_refined_path || '';
+        mountAiThumb(refineCell, name, aiUrl);
       }
     }
 
