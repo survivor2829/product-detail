@@ -149,8 +149,10 @@ def run():
                 for sel, prop, pred, desc in checks:
                     total += 1
                     try:
+                        # getPropertyValue() 支持带短横的属性名 (background-color 等),
+                        # 直接用 .background-color 会被 JS 解析成减法表达式.
                         val = page.evaluate(
-                            f"() => getComputedStyle(document.querySelector({sel!r})).{prop}")
+                            f"() => getComputedStyle(document.querySelector({sel!r})).getPropertyValue({prop!r})")
                     except Exception as e:
                         val = f"ERR:{e}"
                     ok = pred(val) if not str(val).startswith("ERR:") else False
