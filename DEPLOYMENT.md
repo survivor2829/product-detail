@@ -176,12 +176,12 @@ server {
 # 1. 先完成上面 Step 1-4 (建好空 PG + 跑完 alembic upgrade)
 
 # 2. 本地跑 dry-run, 只打报告不改数据
-python scripts/migrate_sqlite_to_pg.py \
+python scripts/archive/one_shot/migrate_sqlite_to_pg.py \
     --sqlite instance/wubaoyun.db \
     --pg "postgresql+psycopg2://xiaoxi:<POSTGRES_PASSWORD>@<server>:5432/xiaoxi"
 
 # 3. 确认报告 OK → 加 --commit 真跑
-python scripts/migrate_sqlite_to_pg.py \
+python scripts/archive/one_shot/migrate_sqlite_to_pg.py \
     --sqlite instance/wubaoyun.db \
     --pg "postgresql+psycopg2://xiaoxi:<POSTGRES_PASSWORD>@<server>:5432/xiaoxi" \
     --commit
@@ -199,10 +199,10 @@ python scripts/migrate_sqlite_to_pg.py \
 
 ```bash
 # 1. 先在本地 / CI 跑通 4 个 smoke, 有一个红就别推
-python scripts/smoke_stage_a.py
-python scripts/smoke_task6_history.py
-python scripts/smoke_task7_csrf.py
-python scripts/smoke_task8_concurrency.py
+python scripts/archive/one_shot/smoke_stage_a.py
+python scripts/archive/one_shot/smoke_task6_history.py
+python scripts/archive/one_shot/smoke_task7_csrf.py
+python scripts/archive/one_shot/smoke_task8_concurrency.py
 
 # 2. 推到远端
 git push origin main

@@ -47,7 +47,7 @@
   - 精修启动走 `with_for_update(skip_locked=True)` 行锁（跨 worker 原子 claim）
 - [x] `pubsub/` 抽象层：内存 backend（单 worker dev）/ Redis backend（多 worker prod，pattern-subscribe）
 - [x] Alembic 接入：`flask db upgrade` 维护 schema；`create_all()` 保留为 SQLite 开发兜底
-- [x] SQLite → Postgres 迁移脚本 `scripts/migrate_sqlite_to_pg.py`（dry-run 默认 + `--commit` 实际执行，幂等，可重跑）
+- [x] SQLite → Postgres 迁移脚本 `scripts/archive/one_shot/migrate_sqlite_to_pg.py`（dry-run 默认 + `--commit` 实际执行，幂等，可重跑）
 - [x] `/batch/history` 最简历史页：按 created_at 倒序，LIMIT 50，分页 v2 加
 - [x] `/api/batches` 跨用户泄露修复（之前 `SELECT *` 无 user_id 过滤，任意登录用户可见全库批次元数据）
 
@@ -160,7 +160,7 @@
 - [ ] **Postgres 接入**：
   - `.env` 改 `DATABASE_URL=postgresql://xiaoxi:<pwd>@db:5432/xiaoxi`
   - `docker compose --profile full up -d`
-  - `python scripts/migrate_sqlite_to_pg.py --commit` 把现有 SQLite 数据迁移
+  - `python scripts/archive/one_shot/migrate_sqlite_to_pg.py --commit` 把现有 SQLite 数据迁移
   - `flask db upgrade`（`with_for_update(skip_locked=True)` 这时才真正跨 worker 生效）
 - [ ] **Redis 接入**：
   - `.env` 改 `PUBSUB_BACKEND=redis` + `REDIS_URL=redis://:<pwd>@redis:6379/0`
@@ -446,7 +446,7 @@ with app.app_context():
 
 **未来防御**：
 1. 新增 worker 代码 PR 里必须 grep 检查 `url_for|render_template|current_app`
-2. 单元测试用真 `ThreadPoolExecutor` 跑一次 worker（参考 scripts/verify_refine_worker_context.py 模式）
+2. 单元测试用真 `ThreadPoolExecutor` 跑一次 worker（参考 scripts/archive/one_shot/verify_refine_worker_context.py 模式）
 3. 异常不要静默塞 result JSON；worker 抛出 → 标记产品 `status=failed`，别让前端看到假 done
 
 ### 修 bug 后必问同类问题 (2026-04-20 漏网复盘)
@@ -463,7 +463,7 @@ with app.app_context():
 1. 归纳 bug 的本质模式（e.g. "worker 线程里摸 Flask context"）
 2. 用 grep 搜同类模式（`ThreadPoolExecutor|threading.Thread` 交叉 `render_template|url_for|current_app`）
 3. 每一处都检查是否有同样缺陷，不放过任何一处
-4. 写一个 `verify_*.py` 把这个不变量锁死（参考 `scripts/verify_refine_worker_context.py` 模式）
+4. 写一个 `verify_*.py` 把这个不变量锁死（参考 `scripts/archive/one_shot/verify_refine_worker_context.py` 模式）
 
 **反例**（永远不要再犯）：修完一处就 commit 收工，不做全局扫描 → 等同一 bug 第二次爆炸。
 
@@ -765,7 +765,7 @@ w = page.evaluate('() => getComputedStyle(document.getElementById(\"x\")).width'
 ### 延后到阶段七（2026-04-21 生产上线时主动延后，不属于"忘记做"）
 
 - **sshd PasswordAuthentication 收紧**：当前 `PasswordAuthentication yes`，密钥登录已 work 但密码通道仍开着。改动窗口需要在白天 + 保持一个 ssh 会话活着防锁门。详见 `docs/2026-04-21_踩坑复盘_生产上线.md` → "坑 4 (遗留)"。
-- **PG + Redis 上大机**：当前 2C2G 撑不起全栈，SQLite + memory pub/sub 单机已满足个人测试。升 4C8G 后执行 `docker compose --profile full up -d` + `scripts/migrate_sqlite_to_pg.py`。
+- **PG + Redis 上大机**：当前 2C2G 撑不起全栈，SQLite + memory pub/sub 单机已满足个人测试。升 4C8G 后执行 `docker compose --profile full up -d` + `scripts/archive/one_shot/migrate_sqlite_to_pg.py`。
 - **`db.create_all()` 生产路径关闭**：app.py 启动时的 `db.create_all()` 仅保留 `FLASK_ENV=development` 分支，防止未来 migration 和 `create_all` 打架。
 - **DEPLOYMENT.md 正式整理**：当前部署经验落在 `docs/2026-04-21_踩坑复盘_生产上线.md`，后续整理成带"首次部署 + 滚动升级 + 回滚"三部分的独立文档。
 - **🆕 僵尸批次自愈** (2026-04-21 OOM 事故暴露)：OOM / worker SIGKILL 后 items 卡 `status=processing`, 当前 startup-recovery 仅在容器完整重启时跑, worker 个别被杀后 gunicorn 自动 respawn 不触发。前端用户只能等下次容器重启。详见"技术债 → 容器资源限额 + 僵尸批次自愈"; TODO: try/finally 兜底 + `/api/batch/<id>/reset-stuck-items` + UI reset 按钮。
