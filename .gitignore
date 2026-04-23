@@ -25,6 +25,7 @@ static/设备类/ref_*.png
 # 根目录临时图片/截图
 *.png
 *.jpg
+*.zip
 
 # 允许通用场景图片 (scene_bank 含子目录 water/pipeline/industrial/commercial)
 !static/scenes/*.jpg
