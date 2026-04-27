@@ -423,9 +423,10 @@ class TestV2SafetyValve(unittest.TestCase):
         seen: dict = {}
 
         def _capture(task_id, product_text, product_image_url,
-                     product_title, deepseek_key, gpt_image_key):
+                     product_title, deepseek_key, gpt_image_key, mode="v1"):
             seen["ds"] = deepseek_key
             seen["gpt"] = gpt_image_key
+            seen["mode"] = mode
 
         with mock.patch.object(pipeline_runner, "_worker", side_effect=_capture):
             tid = pipeline_runner.start_task(
@@ -449,9 +450,10 @@ class TestV2SafetyValve(unittest.TestCase):
         seen: dict = {}
 
         def _capture(task_id, product_text, product_image_url,
-                     product_title, deepseek_key, gpt_image_key):
+                     product_title, deepseek_key, gpt_image_key, mode="v1"):
             seen["ds"] = deepseek_key
             seen["gpt"] = gpt_image_key
+            seen["mode"] = mode
 
         with mock.patch.object(pipeline_runner, "_worker", side_effect=_capture):
             tid = pipeline_runner.start_task(

@@ -538,3 +538,259 @@ def generate(
 
     result.total_elapsed_s = round(time.time() - t_start, 2)
     return result
+
+
+# ──────────────────────────────────────────────────────────────────
+# v2 (PRD §阶段二·任务 2.1, 2026-04-27): gpt-image-2 直出整屏
+# ──────────────────────────────────────────────────────────────────
+# generate_v2() 跟老 generate() 同文件并存:
+#   - 老 generate (v1 schema, selling_points + visual_type 三选一) — 60 单测保护
+#   - 新 generate_v2 (v2 schema, screens[] + 导演 prompt) — plan_v2 直接喂进来
+#
+# 共用基础设施 (不重写):
+#   - _http_post_json / _http_get_json / _submit_image_task / _poll_image_task
+#     / _default_api_call / _to_data_url
+#   - BlockResult / GenerationResult / HeroFailure
+#   - 并发 / 重试 / cost tracking 模式
+#
+# v2 区别:
+#   - 不 _build_blocks 按 visual_type 分流, 不 _render_prompt_for_block 渲染模板
+#   - 直接用 plan_v2 给的 screens[i].prompt (已是导演视角完整 prompt)
+#   - size 固定 "3:4" (1536×2048 @ 2k), 不是 v1 的 "1:1"
+#   - 第 1 屏 (idx=1) 严格视为 hero (整单 fail), 其他屏 SP best-effort
+
+_V2_SIZE_DEFAULT = "3:4"  # PRD §阶段二: 1536×2048 锁定
+
+
+def _build_blocks_v2(planning_v2: dict) -> list[dict]:
+    """v2 schema 的 screens[] → 内部 block dict 列表.
+
+    跟 _build_blocks (v1) 不同, 不查 selling_points / visual_type, 直接用 screens[i].
+    第 1 屏 (idx=1) 严格视为 hero (PRD §7 整单 fail 锚点).
+    """
+    screens = planning_v2.get("screens") or []
+    blocks: list[dict] = []
+    for s in screens:
+        if not isinstance(s, dict):
+            continue
+        idx = s.get("idx")
+        role = (s.get("role") or "").strip() or "screen"
+        # block_id 用 idx + role 组合, 易识别 + 唯一 (assembler / pipeline_runner 引用按它)
+        if isinstance(idx, int):
+            bid = f"screen_{idx:02d}_{role}"
+        else:
+            bid = f"screen_{role}"
+        blocks.append({
+            "block_id": bid,
+            "visual_type": role,        # role 填 visual_type 字段 (v2 不分 in_scene/closeup/concept)
+            "is_hero": (idx == 1),       # 第 1 屏 (idx=1) 严格视为 hero
+            "prompt": s.get("prompt") or "",
+            "title": s.get("title") or "",
+        })
+    return blocks
+
+
+def _generate_one_block_v2(
+    block: dict,
+    product_cutout_url: Optional[str],
+    api_key: str,
+    api_call_fn: ApiCallFn,
+    max_retries: int,
+    thinking: str,
+    size: str,
+) -> tuple[BlockResult, float]:
+    """v2 单 block 生成. prompt 直接用 plan_v2 已渲染好的, 不再模板化.
+
+    成功 → BlockResult(image_url=<url>, placeholder=False), cost = _COST_PER_CALL_RMB
+    重试耗尽 → BlockResult(image_url=None, error=<reason>, placeholder=False).
+              placeholder 标记由 generate_v2 打 (Hero raise, SP best-effort).
+
+    block.prompt 必须非空 (plan_v2 _validate_schema_v2 已守门 ≥200 字符).
+    """
+    bid = block["block_id"]
+    vt = block.get("visual_type", "screen")
+    prompt = block.get("prompt") or ""
+    if not prompt.strip():
+        return (
+            BlockResult(
+                block_id=bid, visual_type=vt,
+                prompt="(empty prompt from planning_v2)",
+                image_url=None,
+                error="block.prompt 为空 (plan_v2 schema 校验失效?)",
+                placeholder=False,
+            ),
+            0.0,
+        )
+
+    # 参考图 (可选): plan_v2 不要求 product_cutout_url, 给了就喂作 image_urls hint
+    image_data_url: Optional[str] = None
+    if product_cutout_url:
+        try:
+            image_data_url = _to_data_url(product_cutout_url)
+        except Exception as e:
+            print(f"[gen_v2][{bid}] 参考图转 data URL 失败, 降级纯文生: {e}")
+
+    last_err = None
+    attempts = 0
+    while attempts <= max_retries:
+        try:
+            url = api_call_fn(prompt, image_data_url, api_key, thinking, size)
+            return (
+                BlockResult(
+                    block_id=bid, visual_type=vt,
+                    prompt=prompt, image_url=url,
+                    error=None, placeholder=False,
+                ),
+                _COST_PER_CALL_RMB,
+            )
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            attempts += 1
+            if attempts <= max_retries:
+                print(f"[gen_v2][{bid}] attempt {attempts} 失败, 重试: {last_err}")
+                time.sleep(1)
+                continue
+            break
+
+    return (
+        BlockResult(
+            block_id=bid, visual_type=vt,
+            prompt=prompt, image_url=None,
+            error=f"重试 {max_retries} 次后仍失败: {last_err}",
+            placeholder=False,
+        ),
+        0.0,
+    )
+
+
+def generate_v2(
+    planning_v2: dict,
+    product_cutout_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    thinking: str = "medium",
+    size: str = _V2_SIZE_DEFAULT,
+    concurrency: int = 3,
+    max_retries_hero: int = 2,
+    max_retries_sp: int = 1,
+    api_call_fn: Optional[ApiCallFn] = None,
+    cost_per_call_rmb: float = _COST_PER_CALL_RMB,
+) -> GenerationResult:
+    """v2 schema (plan_v2 输出) → 一组 1536×2048 gpt-image-2 PNG.
+
+    跟 v1 generate() 的核心区别:
+      - 接收 v2 schema (planning_v2["screens"]), 不用 selling_points + visual_type
+      - 不渲染 prompt, 直接用 screens[i].prompt (导演视角完整 prompt)
+      - size 默认 "3:4" (1536×2048 @ 2k)
+
+    保持跟 v1 一致:
+      - HeroFailure 整单 fail (PRD §7), max_retries_hero 重试上限
+      - SP best-effort, max_retries_sp + placeholder 降级
+      - 并发 3, ThreadPool, 结果按 screens.idx 顺序
+      - cost_per_call_rmb (默认 ¥0.70/张)
+
+    Args:
+        planning_v2: ai_refine_v2.refine_planner.plan_v2() 返回 dict (含 screens[])
+        product_cutout_url: 产品参考图 URL/path (可选, 给了就喂 image_urls hint)
+        api_key: APIMart key, None 从 env GPT_IMAGE_API_KEY 读
+        api_call_fn: 单测注入点, 生产用 _default_api_call (submit + poll)
+        其他参数: 同 v1 generate()
+
+    Returns:
+        GenerationResult, blocks 按 screens.idx 顺序排序
+
+    Raises:
+        ValueError: planning_v2 不合规 / screens 为空 / 未配 key 也没 mock
+        HeroFailure: 第 1 屏 (hero) 重试 max_retries_hero 次后仍失败
+    """
+    if not planning_v2 or not isinstance(planning_v2, dict):
+        raise ValueError("planning_v2 必须是非空 dict")
+    if "screens" not in planning_v2 or not isinstance(planning_v2["screens"], list):
+        raise ValueError("planning_v2 缺 'screens' 字段或不是 list (期望 v2 schema)")
+
+    use_key = api_key or os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    if not use_key and api_call_fn is None:
+        raise ValueError(
+            "未配置 GPT_IMAGE_API_KEY (传参或设 env var); 测试场景注入 api_call_fn 也可"
+        )
+
+    call_fn: ApiCallFn = api_call_fn or _default_api_call
+
+    result = GenerationResult()
+    t_start = time.time()
+
+    blocks = _build_blocks_v2(planning_v2)
+    if not blocks:
+        raise ValueError("planning_v2.screens 展开后为空, 无屏可生成")
+
+    # cost 缩放 (跟 v1 一致的 trick: _generate_one_block 内部用常量 _COST_PER_CALL_RMB,
+    # 这里用 cost_per_call_rmb / _COST_PER_CALL_RMB 做缩放)
+    scale = cost_per_call_rmb / _COST_PER_CALL_RMB if _COST_PER_CALL_RMB else 0.0
+
+    # ── Step 1: 第 1 屏 (Hero) 同步 + 重试 ────────
+    hero_block = blocks[0]
+    print(f"[gen_v2] Hero ({hero_block['block_id']}) 开始, 重试上限 {max_retries_hero}...")
+    hero_res, hero_cost = _generate_one_block_v2(
+        hero_block, product_cutout_url, use_key, call_fn,
+        max_retries_hero, thinking, size,
+    )
+    result.blocks.append(hero_res)
+    result.total_cost_rmb += hero_cost * scale
+
+    if hero_res.image_url is None:
+        result.errors.append(f"hero ({hero_block['block_id']}): {hero_res.error}")
+        result.total_elapsed_s = round(time.time() - t_start, 2)
+        raise HeroFailure(
+            f"v2 Hero 重试 {max_retries_hero} 次后仍失败: {hero_res.error}. "
+            f"PRD §7: 整单 fail, 已生成的其他屏不保留."
+        )
+
+    result.hero_success = True
+    print(f"[gen_v2] Hero OK · url={str(hero_res.image_url)[:60]}...")
+
+    # ── Step 2: 其他屏 (SP) 并发 + 分层重试 ───────
+    sp_blocks = blocks[1:]
+    if not sp_blocks:
+        result.total_elapsed_s = round(time.time() - t_start, 2)
+        return result
+
+    print(f"[gen_v2] 其他屏 × {len(sp_blocks)}, 并发度 {concurrency}...")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = {
+            pool.submit(
+                _generate_one_block_v2,
+                b, product_cutout_url, use_key, call_fn,
+                max_retries_sp, thinking, size,
+            ): b
+            for b in sp_blocks
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            b = futures[fut]
+            try:
+                br, cost = fut.result()
+            except Exception as e:
+                # ThreadPool 本身异常 (内部已捕获, 这里防御)
+                br = BlockResult(
+                    block_id=b["block_id"],
+                    visual_type=b.get("visual_type", "screen"),
+                    prompt=b.get("prompt", "(executor error)"),
+                    image_url=None,
+                    error=f"{type(e).__name__}: {e}",
+                    placeholder=True,
+                )
+                cost = 0.0
+
+            # SP 失败 → placeholder=True (PRD §7 best-effort 降级)
+            if br.image_url is None:
+                br.placeholder = True
+                result.errors.append(f"{br.block_id}: {br.error}")
+
+            result.blocks.append(br)
+            result.total_cost_rmb += cost * scale
+
+    # 按 screens.idx 顺序重排 (ThreadPool 完成顺序乱)
+    order_map = {b["block_id"]: i for i, b in enumerate(blocks)}
+    result.blocks.sort(key=lambda br: order_map.get(br.block_id, 10_000))
+
+    result.total_elapsed_s = round(time.time() - t_start, 2)
+    return result

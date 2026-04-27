@@ -4490,6 +4490,10 @@ def ai_refine_v2_execute():
     from ai_refine_v2 import pipeline_runner
     deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     gpt_image_key = os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    # PRD §阶段二·任务 2.2: 前端可显式传 schema_mode='v2' 走新路径; 默认 'v1' 兼容.
+    schema_mode = (data.get("schema_mode") or "v1").strip().lower()
+    if schema_mode not in ("v1", "v2"):
+        return jsonify({"error": f"schema_mode 必须 'v1' 或 'v2', 实际 {schema_mode!r}"}), 400
 
     task_id = pipeline_runner.start_task(
         product_text=product_text,
@@ -4497,6 +4501,7 @@ def ai_refine_v2_execute():
         product_title=product_title,
         deepseek_key=deepseek_key,
         gpt_image_key=gpt_image_key,
+        mode=schema_mode,
     )
     mode = pipeline_runner._detect_mode(deepseek_key, gpt_image_key)
     return jsonify({

@@ -197,6 +197,88 @@ def _copy_mock_images(task_dir: Path) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────
+# v2 mock helpers (PRD §阶段二·任务 2.2): 缺 key 时走 v2 mock 路径
+# ─────────────────────────────────────────────────────────────
+def _load_mock_planning_v2(product_text: str, product_title: str) -> dict:
+    """v2 schema mock planning. 6 屏最小合规 dict (满足 _validate_schema_v2).
+
+    每屏 prompt ≥200 字符, 让 generate_v2 不会因空 prompt 跳过.
+    第一版用硬编码 fallback; 未来可选从 stage1_eval_output/ 加载真样本.
+    """
+    name = product_title or "MockProduct 测试产品"
+    base_prompt = (
+        "Mock planning v2 screen prompt with cinematic low-angle shot, "
+        "industrial yellow body anchored at center-right, bold white display "
+        "headline reading 「" + name + "」 at upper-left with generous negative "
+        "space, cool steel-blue rim light, magazine-cover composition. "
+        "All Chinese characters render sharp, accurate, no typos."
+    )
+    roles = ["hero", "feature_wall", "scenario", "vs_compare",
+             "spec_table", "brand_quality"]
+    screens = []
+    for i, role in enumerate(roles, start=1):
+        screens.append({
+            "idx": i,
+            "role": role,
+            "title": f"屏 {i} · {role}",
+            "prompt": f"Screen {i} ({role}): {base_prompt}",
+        })
+    return {
+        "product_meta": {
+            "name": name,
+            "category": "设备类",
+            "primary_color": "industrial yellow",
+            "key_visual_parts": ["body", "wheels", "sensor"],
+        },
+        "style_dna": {
+            "color_palette": "mock palette with multiple tones for dev",
+            "lighting": "mock lighting from upper-left with cool fill",
+            "composition_style": "mock asymmetric editorial layout dev",
+            "mood": "mock dev confident",
+            "typography_hint": "mock sans-serif",
+        },
+        "screen_count": 6,
+        "screens": screens,
+    }
+
+
+def _copy_mock_images_v2(task_dir: Path, n: int) -> list[dict]:
+    """复制 N 张 4/23 占位图到 task_dir, 返回 v2 风格 blocks.
+
+    n 屏 (6-10), 4/23 demo 只有 6 张, 不够时循环复用.
+    block_id 用 'screen_<NN>_<role>' 格式 (跟 generate_v2 一致).
+    """
+    task_dir.mkdir(parents=True, exist_ok=True)
+    mock_files = sorted(_MOCK_IMAGES_DIR.glob("block_*.jpg"))
+    if not mock_files:
+        raise RuntimeError(
+            f"Mock images 一张都没找到. 请先跑过 4/23 demo 生成 "
+            f"{_MOCK_IMAGES_DIR}/block_*.jpg"
+        )
+    roles = ["hero", "feature_wall", "scenario", "vs_compare",
+             "spec_table", "brand_quality", "value_story", "detail_zoom",
+             "feature_wall", "scenario"][:n]
+    blocks: list[dict] = []
+    for i, role in enumerate(roles, start=1):
+        src = mock_files[(i - 1) % len(mock_files)]
+        bid = f"screen_{i:02d}_{role}"
+        dst_name = f"block_{i:02d}_{bid}.jpg"
+        dst = task_dir / dst_name
+        shutil.copy2(src, dst)
+        blocks.append({
+            "block_id": bid,
+            "visual_type": role,
+            "is_hero": (i == 1),
+            "file": dst_name,
+            "image_url": f"/static/ai_refine_v2/{task_dir.name}/{dst_name}",
+            "raw_url": "",  # mock 没有 APIMart 原始 URL
+            "success": True,
+            "placeholder": True,  # 占位图 badge
+        })
+    return blocks
+
+
+# ─────────────────────────────────────────────────────────────
 # 真 Generator (GPT_IMAGE_API_KEY 已配时)
 # ─────────────────────────────────────────────────────────────
 def _build_noproxy_opener():
@@ -325,6 +407,95 @@ def _run_real_generator(planning: dict, product_image_url: str,
 
 
 # ─────────────────────────────────────────────────────────────
+# v2 真 Generator (PRD §阶段二·任务 2.2): 4 刀 A/B/D guard 复用
+# ─────────────────────────────────────────────────────────────
+def _run_real_generator_v2(planning_v2: dict, product_image_url: str,
+                            gpt_image_key: str, task_dir: Path,
+                            progress_cb) -> tuple[list[dict], float]:
+    """调 refine_generator.generate_v2() 真调 APIMart, 下载图到 task_dir.
+
+    跟 _run_real_generator (v1) 完全等价的 4 刀 guard 模式, 只是调 generate_v2:
+      A 刀: _build_noproxy_opener + _download_image (下载绕代理, 共享 v1 实现)
+      B 刀: dl_errors 汇总 raise (下载失败 raise, 不静默 placeholder)
+      D 刀: blocks[i].raw_url 保留 APIMart CDN URL (下载挂掉时救图用)
+
+    E 刀 (assembled.png 太小) 在 _run_assembler_v2 里独立守门.
+    """
+    from ai_refine_v2 import refine_generator
+
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    # v2 总屏数从 screens 数组算 (跟 _run_real_generator 用 block_order 等价)
+    screens = planning_v2.get("screens") or []
+    total = len(screens) or 6
+
+    completed = {"count": 0}
+
+    def wrapped_api_call(prompt, image_data_url, api_key, thinking, size):
+        url = refine_generator._default_api_call(
+            prompt, image_data_url, api_key, thinking=thinking, size=size,
+        )
+        completed["count"] += 1
+        # 进度窗口 20-80 (前 20 给 planner, 后 20 给 assembler)
+        pct = 20 + int(completed["count"] / max(total, 1) * 60)
+        progress_cb(min(pct, 80),
+                    f"AI 精修 v2 中 {completed['count']}/{total}")
+        return url
+
+    result = refine_generator.generate_v2(
+        planning_v2=planning_v2,
+        product_cutout_url=product_image_url,
+        api_key=gpt_image_key,
+        api_call_fn=wrapped_api_call,
+        concurrency=3,
+        max_retries_hero=2,
+        max_retries_sp=1,
+    )
+
+    # A 刀: 下载绕代理, 复用 v1 的 opener 实现
+    opener = _build_noproxy_opener()
+    blocks: list[dict] = []
+    dl_errors: list[str] = []
+    for idx, br in enumerate(result.blocks):
+        # block_id 已是 "screen_NN_role" (generate_v2 给的), 文件系统安全
+        safe_bid = str(br.block_id).replace("/", "_").replace("\\", "_")
+        fn = f"block_{idx + 1:02d}_{safe_bid}.jpg"
+        dst = task_dir / fn
+        raw_url = br.image_url or ""
+
+        download_ok = False
+        if raw_url and not br.placeholder:
+            try:
+                # B 刀: _download_image 失败重试耗尽会 raise (不静默)
+                _download_image(raw_url, dst, retries=2, opener=opener)
+                download_ok = True
+            except Exception as e:
+                dl_errors.append(f"{br.block_id}: {e}")
+                print(f"[pipeline_v2] 下载 block_{br.block_id} 失败: {e}")
+
+        blocks.append({
+            "block_id": br.block_id,
+            "visual_type": br.visual_type,
+            "is_hero": (idx == 0),  # v2 第 1 屏 (idx 0) 严格视为 hero
+            "file": fn,
+            "image_url": f"/static/ai_refine_v2/{task_dir.name}/{fn}",
+            # D 刀: 原始 APIMart CDN URL 持久化 (代理炸了可手动救图)
+            "raw_url": raw_url,
+            "success": download_ok,
+            "placeholder": (not download_ok),
+        })
+
+    # B 刀: 任何下载失败汇总抛 RuntimeError, 让 _worker_v2 走 failed 分支
+    if dl_errors:
+        raise RuntimeError(
+            f"v2 下载 {len(dl_errors)}/{len(blocks)} 张图失败 (绕代理后仍挂): "
+            f"{dl_errors}. 原始 APIMart URL 已存 raw_url 字段供救图."
+        )
+
+    return blocks, result.total_cost_rmb
+
+
+# ─────────────────────────────────────────────────────────────
 # Assembler (Jinja + Playwright 截图)
 # ─────────────────────────────────────────────────────────────
 def _validate_assembled_png(path: Path, min_bytes: int = 100_000) -> None:
@@ -419,11 +590,76 @@ def _run_assembler(task_dir: Path, blocks: list[dict],
 
 
 # ─────────────────────────────────────────────────────────────
+# v2 Assembler (PRD §阶段二·任务 2.2 stub, PRD §阶段三正式实现 PIL 拼接)
+# ─────────────────────────────────────────────────────────────
+def _run_assembler_v2(task_dir: Path, blocks: list[dict]) -> str:
+    """v2 临时 assembler: PIL 纵向拼接成功的 N 张图为 1 张长 PNG.
+
+    跟 v1 _run_assembler 的区别:
+      - 不起 Flask app, 不渲染 Jinja 模板, 不调 Playwright 截图
+      - 纯 PIL 操作, 几百毫秒级 (vs v1 60-90s 启动 Chromium)
+    4 刀 E (_validate_assembled_png) 同样守门, 太小 PNG 会 raise.
+
+    PRD §阶段三正式实现完整 PIL 拼接 (含 1536 宽度校准 / 间隙 / 元数据 / etc).
+    """
+    from PIL import Image
+
+    images = []
+    for b in blocks:
+        if not b.get("success"):
+            continue  # 跳过失败的 block, 不进拼接
+        path = task_dir / b["file"]
+        if path.is_file():
+            images.append(Image.open(path))
+
+    if not images:
+        # 0 张能拼 → 直接 raise (反向 E 刀: 没图也算 fail)
+        raise RuntimeError("v2 assembler: 无可用 block 图, 无法拼接")
+
+    total_h = sum(im.height for im in images)
+    max_w = max(im.width for im in images)
+
+    canvas = Image.new("RGB", (max_w, total_h), (255, 255, 255))
+    y = 0
+    for im in images:
+        canvas.paste(im, (0, y))
+        y += im.height
+
+    out_png = task_dir / "assembled.png"
+    canvas.save(out_png, "PNG")
+
+    # E 刀: 资产完整性 guard, < 100KB 视作纯白 PNG fail (跟 v1 共用阈值)
+    _validate_assembled_png(out_png)
+
+    return f"/static/ai_refine_v2/{task_dir.name}/assembled.png"
+
+
+# ─────────────────────────────────────────────────────────────
 # 后台线程 worker
 # ─────────────────────────────────────────────────────────────
 def _worker(task_id: str, product_text: str, product_image_url: str,
-            product_title: str, deepseek_key: str, gpt_image_key: str):
-    """3-5 分钟的管线在后台跑, 进度写回 _TASKS[task_id]."""
+            product_title: str, deepseek_key: str, gpt_image_key: str,
+            mode: str = "v1"):
+    """Dispatcher: 按 mode 分发到 _worker_v1 / _worker_v2.
+
+    mode='v1' (默认, 兼容直调 _worker 的 4 个老单测): plan + generate + Jinja+Playwright
+    mode='v2' (PRD §阶段二·任务 2.2): plan_v2 + generate_v2 + PIL stub assembler
+    """
+    if mode == "v2":
+        _worker_v2(task_id, product_text, product_image_url,
+                   product_title, deepseek_key, gpt_image_key)
+        return
+    if mode != "v1":
+        _set(task_id, status="failed",
+             error=f"无效 mode={mode!r}, 必须 'v1' 或 'v2'")
+        return
+    _worker_v1(task_id, product_text, product_image_url,
+               product_title, deepseek_key, gpt_image_key)
+
+
+def _worker_v1(task_id: str, product_text: str, product_image_url: str,
+               product_title: str, deepseek_key: str, gpt_image_key: str):
+    """v1 路径 (一字不动的老逻辑, 60 单测保护)."""
     mode = _detect_mode(deepseek_key, gpt_image_key)
     _set(task_id, mode=mode, status="running_planner",
          progress_pct=5, progress_msg="准备输入...")
@@ -504,17 +740,107 @@ def _worker(task_id: str, product_text: str, product_image_url: str,
              progress_msg=f"失败: {e}")
 
 
+def _worker_v2(task_id: str, product_text: str, product_image_url: str,
+               product_title: str, deepseek_key: str, gpt_image_key: str):
+    """v2 路径: plan_v2 + generate_v2 + PIL stub assembler.
+
+    跟 _worker_v1 镜像结构, 调 v2 函数. 4 刀 guard 复用:
+      A 绕代理 / B 失败 raise / D raw_url   → _run_real_generator_v2 内部
+      E assembled.png 太小 raise            → _run_assembler_v2 内部
+    """
+    actual_mode = _detect_mode(deepseek_key, gpt_image_key)
+    _set(task_id, mode=actual_mode, status="running_planner",
+         progress_pct=5, progress_msg="准备输入...")
+
+    task_dir = _OUTPUT_BASE / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # ── Stage 1: Planner (plan_v2) ──
+        if deepseek_key:
+            _set(task_id, progress_msg="DeepSeek (v2) 分析产品文案...", progress_pct=10)
+            from ai_refine_v2 import refine_planner
+            planning = refine_planner.plan_v2(
+                product_text=product_text,
+                product_image_url=product_image_url,
+                product_title=product_title,
+                api_key=deepseek_key,
+            )
+        else:
+            _set(task_id, progress_msg="[v2 mock] 加载预置 planning_v2", progress_pct=10)
+            planning = _load_mock_planning_v2(product_text, product_title)
+            time.sleep(0.5)
+
+        _set(task_id, planning=planning, progress_pct=20,
+             progress_msg="planning_v2 已生成")
+        (task_dir / "_planning.json").write_text(
+            json.dumps(planning, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # ── Stage 2: Generator (generate_v2) ──
+        n_screens = len(planning.get("screens") or [])
+        _set(task_id, status="running_generator", progress_pct=25,
+             progress_msg=f"开始生成 {n_screens} 张 v2 AI 精修图...")
+
+        if gpt_image_key:
+            def prog(pct, msg):
+                _set(task_id, progress_pct=pct, progress_msg=msg)
+            blocks, cost = _run_real_generator_v2(
+                planning, product_image_url, gpt_image_key, task_dir, prog,
+            )
+        else:
+            _set(task_id, progress_msg="[v2 mock] 复用 4/23 demo 占位图", progress_pct=70)
+            blocks = _copy_mock_images_v2(task_dir, n=n_screens or 6)
+            cost = 0.0
+            time.sleep(1.0)
+
+        # D 刀: raw_url 存 TaskState (v1/v2 共用机制)
+        raw_urls = [b.get("raw_url", "") for b in blocks]
+        _set(task_id, blocks=blocks, cost_rmb=cost, raw_urls=raw_urls,
+             progress_pct=80,
+             progress_msg=f"{len(blocks)} 张图就绪, 开始 PIL 拼接...")
+
+        summary = {
+            "product": planning.get("product_meta", {}).get("name", ""),
+            "mode": actual_mode,
+            "schema_mode": "v2",
+            "total_cost_rmb": cost,
+            "raw_urls": raw_urls,
+            "blocks": blocks,
+        }
+        (task_dir / "_summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # ── Stage 3: Assembler (PIL stub, PRD §阶段三正式) ──
+        _set(task_id, status="running_assembler", progress_pct=85,
+             progress_msg="PIL 拼接长图中...")
+        assembled_url = _run_assembler_v2(task_dir, blocks)
+
+        _set(task_id, status="success", progress_pct=100,
+             progress_msg="完成", assembled_url=assembled_url)
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[pipeline_v2] task {task_id} failed:\n{tb}")
+        _set(task_id, status="failed", error=str(e), error_trace=tb,
+             progress_msg=f"失败: {e}")
+
+
 # ─────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────
 def start_task(product_text: str, product_image_url: str,
                product_title: str, deepseek_key: str,
-               gpt_image_key: str) -> str:
+               gpt_image_key: str, mode: str = "v1") -> str:
     """启动后台管线任务, 立即返回 task_id.
+
+    mode='v1' (默认, 向后兼容): plan + generate + Jinja+Playwright
+    mode='v2' (PRD §阶段二·任务 2.2 起): plan_v2 + generate_v2 + PIL stub assembler
 
     安全阀: V2_ALLOW_REAL_API!=true 时强制清空 keys, _worker 自动走 mock 路径.
     生产唯一入口经过这里, 所以任何 UI 误点都被截断在烧 API 前.
     """
+    if mode not in ("v1", "v2"):
+        raise ValueError(f"mode 必须 'v1' 或 'v2', 实际 {mode!r}")
     deepseek_key, gpt_image_key = _apply_safety_valve(deepseek_key, gpt_image_key)
     task_id = f"v2_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
     with _TASKS_LOCK:
@@ -522,7 +848,7 @@ def start_task(product_text: str, product_image_url: str,
     t = threading.Thread(
         target=_worker, daemon=True,
         args=(task_id, product_text, product_image_url, product_title,
-              deepseek_key, gpt_image_key),
+              deepseek_key, gpt_image_key, mode),
     )
     t.start()
     return task_id
