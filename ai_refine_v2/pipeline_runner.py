@@ -236,6 +236,7 @@ def _load_mock_planning_v2(product_text: str, product_title: str) -> dict:
             "composition_style": "mock asymmetric editorial layout dev",
             "mood": "mock dev confident",
             "typography_hint": "mock sans-serif",
+            "unified_visual_treatment": "mock documentary photo-realism dominant base for dev testing",
         },
         "screen_count": 6,
         "screens": screens,
@@ -282,14 +283,27 @@ def _copy_mock_images_v2(task_dir: Path, n: int) -> list[dict]:
 # 真 Generator (GPT_IMAGE_API_KEY 已配时)
 # ─────────────────────────────────────────────────────────────
 def _build_noproxy_opener():
-    """独立 opener, ProxyHandler({}) 显式空掉 env 里的 HTTP(S)_PROXY.
+    """独立 opener: 绕代理 (ProxyHandler({})) + 设浏览器 UA (防 CDN 403).
 
-    Why: APIMart 的图 URL 在国外 CDN, 但 Flask 进程可能继承了 shell 里的
-    Clash 代理 (127.0.0.1:7890); 默认的 urllib.request.urlretrieve 会自动读 env,
-    走代理后挂/超时 (见 2026-04-24 那次 ¥3.50 白烧). 这里做全局旁路.
+    [绕代理 — 4 刀 A 原由] APIMart 的图 URL 在国外 CDN, Flask 进程可能继承
+    shell 里的 Clash 代理 (127.0.0.1:7890); urllib 默认会读 env, 走代理后挂/
+    超时 (见 2026-04-24 那次 ¥3.50 白烧). ProxyHandler({}) 显式空掉
+    HTTP(S)_PROXY env, 直走外网.
+
+    [浏览器 UA — 2026-04-27 阶段五第 1 关验证补加] APIMart upload.apimart.ai
+    CDN 拒绝 urllib 默认 UA 'Python-urllib/3.x', 直接 HTTP 403 Forbidden
+    (见 stage5 step1 真测: ¥0.70 出图成功但下载挂; curl -A Mozilla 试下来
+    200 OK 验证根因). 用 Chrome desktop UA 模拟浏览器请求, 通过 CDN 反爬虫.
     """
     import urllib.request
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener.addheaders = [
+        ("User-Agent",
+         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+         "AppleWebKit/537.36 (KHTML, like Gecko) "
+         "Chrome/120.0.0.0 Safari/537.36"),
+    ]
+    return opener
 
 
 def _download_image(url: str, dst: Path, retries: int = 2,

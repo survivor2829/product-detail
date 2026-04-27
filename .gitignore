@@ -55,6 +55,11 @@ static/ai_refine_v2/
 # 含 _planning_v2.json / _meta.json / _input_text.txt / _summary.md — 重跑可重新生成)
 stage1_eval_output/
 
+# 阶段五真测产物 (PRD §阶段五三关阶梯式真测烧 ¥12.66 累计的输出, 含 step1/step2/step2v2_real
+# /step3_v4plan/step3_v4real/step3_full/step3_specfix 等子目录, 每个含 jpg + meta.json
+# + raw_url 救图链接 + assembled.png. 是阶段五一次性真测产物, 不进仓库, 重做要重新烧钱)
+stage5_real_test/
+
 # 系统文件
 .DS_Store
 Thumbs.db

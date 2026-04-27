@@ -342,6 +342,7 @@ def _validate_schema_v2(parsed: dict) -> list[str]:
         "composition_style": 20,
         "mood": 12,
         "typography_hint": 8,
+        "unified_visual_treatment": 30,  # 跨屏视觉处理方式 (准则 2 平衡示范), 长阈值因要"有针对性"
     }
     dna = parsed.get("style_dna")
     if not isinstance(dna, dict):

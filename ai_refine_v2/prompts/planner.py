@@ -190,6 +190,28 @@ elegant serif headlines (e.g. Didone display), thin italic body, gilded letterfo
 
 style_dna 必须跟"产品的真实形态和应用场景"匹配, 不是抄上方示范的颜色组合.
 
+[新增 style_dna 字段 — 跨屏视觉一致性] unified_visual_treatment
+全 N 屏共享的"视觉处理方式" (摄影 vs CG vs editorial), 让 hero / detail_zoom /
+value_story 看起来出自同一个视觉团队 — 即使屏型差异大.
+
+⚠️ 平衡: 不是要让所有屏长得一模一样. 规定 dominant visual base + 跨屏共享的
+color grading / typography family, 屏型内容差异 (远景/特写/数据可视化) 保留.
+
+✗ 一刀切 (退回重写):
+"all screens are documentary photography"
+(会让 value_story 的 HUD 屏失去信息密度优势)
+
+✓ 平衡 (合格):
+"Documentary photo-realism as dominant visual base; data visualization screens
+(HUD/charts) overlay onto photo-realistic backgrounds not floating on flat CG
+canvases; close-ups treated as studio product photography with overlay
+annotation cards (data labels / part callouts), maintaining same muted
+color grading; all screens share the same film-grain texture, same color
+grading palette, same typography family"
+
+2026-04-27 stage5 step2 验证: 不加 → hero 是纪实摄影 / detail_zoom 是摄影棚
+/ value_story 是 HUD 仪表板, 放一起会有"风格分段"感.
+
 【准则 3: 6-10 屏自由组合, 但要有商业叙事】
 屏数和屏型由你判断. 典型组合 (仅参考, 不强制):
   hero (首屏抓眼球) → feature_wall (卖点墙) → scenario (多场景) →
@@ -217,6 +239,82 @@ below. All Chinese characters must render sharp, accurate, no typos."
 - 在含文字的句子加 "render sharp / accurate / no typos" 类强调
 - 不写"标题写 X / 副标题写 Y" 这种叙事口吻 (AI 会当描述, 不画出来)
 
+【准则 5: 每屏 prompt 末尾必须含明确 negative phrase 禁画 logo】
+2026-04-27 stage5 step2 验证: 即便 SYSTEM_PROMPT 告诉你"不要要求画 logo",
+gpt-image-2 仍会脑补加 logo / 品牌字 / 商标 (工业产品默认带 brand 是 vision
+model 训练偏见). hero 屏出现"船身上德威莱克 + 三角 logo", detail_zoom 屏
+出现"产品左上角圆形小标签". 必须显式 negative 直接告诉 AI "不要画".
+
+✗ 反例 (只 SYSTEM_PROMPT 约束, prompt 末尾没 negative):
+"...DZ600M in safety yellow on water surface. All Chinese text render sharp."
+
+✓ 正例 (prompt 末尾显式 negative phrase, 划清"哪些字该画 / 不该画"边界):
+"...DZ600M in safety yellow on muddy water.
+NO brand logo anywhere, NO company name on product body,
+NO trademark text on product surfaces, NO printed labels,
+NO model badge text on chassis, unmarked plain product surfaces,
+NO Chinese or English brand text outside of 「」-quoted headlines.
+All Chinese text render sharp, no typos."
+
+每屏 prompt 末尾必须含完整 negative phrase 块 (上方 ✓ 正例的 4 行).
+关键句: "NO Chinese or English brand text outside of 「」-quoted headlines"
+明确划清"哪些字该画 (「」标题/副标题) vs 不该画 (品牌/商标/标签)" 的边界.
+
+【准则 6: 每屏 (除 hero) prompt 必须含 ≥ 3 个具体"信息单元"】
+2026-04-27 stage5 step2 实测发现: gpt-image-2 默认倾向于"单图占满整屏"
+(产品摄影 + 简短标题, 信息密度低, 像艺术摄影不像电商详情页). 必须显式
+要求每屏含多个信息单元, 让画面信息饱满.
+
+信息单元类型 (每屏选 ≥ 3 个):
+- 数据卡: 含具体数字 + 单位 + 标注 (如「2400 ㎡/h · 清洁效率」)
+- 卖点 icon + 短文字 (如盾牌 icon + 「IP68 防护」)
+- 对比表 / 参数列 (如「OLD vs NEW」、「人工 vs 机器」)
+- 图标网格 (4-6 个 icon 矩阵)
+- 进度条 / 性能 chart (如「80% 成本节约」bar)
+- 应用场景缩略图组 (3-4 个小场景)
+- spec chip / 技术标签 (如「5G/4G」「2K 分辨率」)
+
+特例:
+- hero 屏不强求 (单一聚焦镜头, 信息密度低是 OK 的)
+- spec_table 屏不限上限 (参数表本来就密集, 6+ 数据行也合理)
+
+✗ 反例 (信息密度低, 退回):
+"...DZ600M robot in muddy water. Headline 「全地形检测作业机器人」
+upper-left. Cinematic mood. NO brand logo... All Chinese text render sharp."
+
+✓ 正例 (3 信息单元):
+"...DZ600M robot in muddy water. Headline 「全地形检测作业机器人」
+upper-left.
+Data card bottom-right: 「IP68 防护级别」 with shield icon.
+Data card bottom-left: 「续航 8 小时」 with battery icon.
+Performance chip top-right: 「成本降低 80%」 in safety yellow.
+Cinematic mood. NO brand logo... All Chinese text render sharp."
+
+【准则 7: 屏型 → layout 类型映射 (动态版面, 不一刀切)】
+不同屏型必须用不同 layout 类型, 让 8 屏放一起有节奏感而不是同质.
+DeepSeek 按下表选 layout, 不要自己创造新的 layout 类型.
+
+| 屏 role         | layout 类型      | 关键 prompt 词汇 (至少含 1 个) |
+|-----------------|------------------|----------------------------|
+| hero            | 聚焦镜头         | "single focal point" / "centered hero shot" |
+| feature_wall    | 拼贴 (网格)      | "grid layout" / "card arrangement" / "tile mosaic" |
+| scenario        | 拼贴 (三联)      | "triptych" / "split-panel composition" / "side-by-side scenes" |
+| vs_compare      | 拼贴 (对比)      | "split-screen comparison" / "left-right divided layout" |
+| detail_zoom     | 混合 (特写+卡)   | "macro close-up overlaid with annotation cards" / "zoom + callouts" |
+| spec_table      | 拼贴 (参数)      | "structured data table" / "spec list grid" |
+| value_story     | 混合 (数据+背景) | "HUD overlays on photo background" / "data viz layered on documentary" |
+| brand_quality   | 聚焦镜头         | "single focal point" / "heroic centered composition" |
+
+每屏 prompt 必须显式含上表对应 role 的 layout 关键词 (至少 1 个), 让
+gpt-image-2 知道版面类型.
+
+✗ 反例 (feature_wall 用聚焦镜头 layout, 跟 hero 同质):
+"Feature wall: cinematic single shot of DZ600M with headline above..."
+
+✓ 正例 (feature_wall 用拼贴 layout, 跟 hero 区分):
+"Feature wall: 2x3 grid card arrangement on slate gray background, each card
+has icon + 「具体卖点」 + short subtitle, tile mosaic style..."
+
 ==== 输出 JSON Schema (严格遵循) ====
 
 直接输出 JSON, 不要 ```json``` 围栏, 不要任何说明文字:
@@ -233,7 +331,8 @@ below. All Chinese characters must render sharp, accurate, no typos."
     "lighting": "string, 镜头光线方向/质感/色温, > 20 字符",
     "composition_style": "string, 构图原则/版式/留白, > 20 字符",
     "mood": "string, 画面情绪/品牌调性, > 12 字符",
-    "typography_hint": "string, 字体风格 hint, > 8 字符"
+    "typography_hint": "string, 字体风格 hint, > 8 字符",
+    "unified_visual_treatment": "string, > 30 字符. 跨屏视觉处理方式 (摄影/CG/editorial 平衡), 既统一基调又允许屏型差异. 见准则 2 平衡示范"
   }},
   "screen_count": <int, 6-10>,
   "screens": [
@@ -241,7 +340,7 @@ below. All Chinese characters must render sharp, accurate, no typos."
       "idx": <int, 从 1 起依次>,
       "role": "string, hero/feature_wall/vs_compare/scenario/detail_zoom/spec_table/value_story/brand_quality (or your own)",
       "title": "string, 中文短标题, 给前端展示, < 16 字",
-      "prompt": "string, 完整 800-2000 字符的 gpt-image-2 prompt, 导演视角自然语言, 贯穿 style_dna + 该屏具体内容"
+      "prompt": "string, 完整 800-2000 字符的 gpt-image-2 prompt, 导演视角自然语言, 贯穿 style_dna + 该屏具体内容. 末尾必须含 negative phrase 禁 logo (准则 5). 必须含 ≥ 3 信息单元 (准则 6, hero 除外). 必须含 role 对应的 layout 关键词 (准则 7)"
     }}
   ]
 }}
@@ -255,6 +354,20 @@ below. All Chinese characters must render sharp, accurate, no typos."
 - product_meta.category 必须是 设备类 / 耗材类 / 工具类 三选一
 - screens[i].prompt 中**绝不**能要求画任何品牌 logo / 公司商标 / 产品商标 —
   AI 画品牌字符有 5%-10% 失真风险不可接受, logo 由客户后期程序合成
+- screens[i].prompt 末尾必须含完整 negative phrase 块 (准则 5):
+  "NO brand logo anywhere, NO company name on product body,
+   NO trademark text on product surfaces, NO printed labels,
+   NO model badge text on chassis, unmarked plain product surfaces,
+   NO Chinese or English brand text outside of 「」-quoted headlines"
+  2026-04-27 stage5 step2 验证: 不显式禁 gpt-image-2 会脑补 logo / 品牌字.
+  关键句"NO Chinese or English brand text outside of 「」-quoted headlines"
+  划清"哪些字该画 vs 不该画"边界, 不可省.
+- style_dna.unified_visual_treatment 必填, > 30 字符 (准则 2 平衡示范). 描述
+  跨屏视觉处理方式 (摄影/CG/editorial), 既统一基调又允许屏型差异.
+- screens[i].prompt 中除 hero 外必须含 ≥ 3 个具体信息单元 (准则 6 列表),
+  spec_table 不限上限. hero 不强求.
+- screens[i].prompt 必须含跟 role 对应的 layout 关键词 (准则 7 映射表),
+  不要把 feature_wall 写成 hero 那种单焦点构图.
 - 输出纯 JSON 一次性给完, 不分段, 不要中文注释
 """
 

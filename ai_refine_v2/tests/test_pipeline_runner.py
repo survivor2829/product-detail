@@ -81,6 +81,32 @@ class TestDownloadProxyBypass(unittest.TestCase):
         self.assertNotIn("urlretrieve(br.image_url", self.src,
                          "仍残留老的 urlretrieve 调用, 不会绕代理")
 
+    def test_noproxy_opener_addheaders_contains_browser_user_agent(self):
+        """A 刀延伸: opener 必须设浏览器 UA, 防 APIMart CDN 403.
+
+        2026-04-27 stage5 step1 真测验证: urllib 默认 'Python-urllib/3.x' UA
+        被 upload.apimart.ai 直接 403; curl -A Mozilla 试下来 200 OK.
+        修法: _build_noproxy_opener 在 build_opener 后调 .addheaders 设 UA.
+        """
+        opener = pipeline_runner._build_noproxy_opener()
+        headers = dict(opener.addheaders)
+        self.assertIn("User-Agent", headers,
+                      "opener 必须通过 addheaders 设 User-Agent (默认 UA 会被 CDN 挡)")
+        ua = headers["User-Agent"]
+        self.assertIn("Mozilla", ua, f"UA 必须像浏览器, 实际 {ua!r}")
+        self.assertNotIn("Python-urllib", ua,
+                         "UA 不能是 urllib 默认 'Python-urllib/3.x' (会被 APIMart CDN 403)")
+
+    def test_source_documents_browser_ua_rationale(self):
+        """A 刀延伸: 源码注释必须解释 UA 选择 (防未来误删 addheaders 那行).
+
+        Mozilla / CDN 关键词同时出现 = 注释里说清楚了"为啥要 UA + 不设会被 CDN 挡".
+        """
+        self.assertIn("Mozilla", self.src,
+                      "_build_noproxy_opener 源码应含 Mozilla UA 字符串")
+        self.assertIn("CDN", self.src,
+                      "源码注释应解释 'CDN 拒绝 urllib 默认 UA' 用意")
+
 
 # ────────────────────────────────────────────────────────────────
 # B: 下载失败 → RuntimeError, 不再 placeholder 静默

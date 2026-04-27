@@ -63,6 +63,7 @@ def _v2_sample(screen_count: int = 7) -> dict:
             "composition_style": "asymmetric editorial layout with large negative space top-left",
             "mood": "confident B2B premium industrial mood",
             "typography_hint": "modern condensed sans-serif headlines",
+            "unified_visual_treatment": "documentary photo-realism dominant; HUD overlays on photo backgrounds; shared film grain + color grading + typography family",
         },
         "screen_count": screen_count,
         "screens": screens,
@@ -140,7 +141,8 @@ class TestValidateSchemaV2StyleDna(unittest.TestCase):
         self.assertTrue(any("mood 过短" in x for x in w))
 
     def test_each_field_required(self):
-        for k in ("color_palette", "lighting", "composition_style", "mood", "typography_hint"):
+        for k in ("color_palette", "lighting", "composition_style", "mood",
+                  "typography_hint", "unified_visual_treatment"):
             with self.subTest(field=k):
                 d = _v2_sample()
                 d["style_dna"].pop(k)
@@ -149,6 +151,26 @@ class TestValidateSchemaV2StyleDna(unittest.TestCase):
                     any(k in x and "缺失" in x for x in w),
                     f"删除 style_dna.{k} 应触发 '缺失' 警告, 实际 warnings={w}",
                 )
+
+    def test_unified_visual_treatment_required(self):
+        """v2 PRD §阶段五·step2 修补: unified_visual_treatment 必填 (准则 2)."""
+        d = _v2_sample()
+        d["style_dna"].pop("unified_visual_treatment")
+        w = _validate_schema_v2(d)
+        self.assertTrue(
+            any("unified_visual_treatment" in x and "缺失" in x for x in w),
+            f"删除 unified_visual_treatment 应触发 '缺失' 警告, warnings={w}",
+        )
+
+    def test_unified_visual_treatment_too_short(self):
+        """unified_visual_treatment 阈值 30 字符 (比 typography_hint 8 严, 强制有针对性)."""
+        d = _v2_sample()
+        d["style_dna"]["unified_visual_treatment"] = "short text"  # 10 < 30
+        w = _validate_schema_v2(d)
+        self.assertTrue(
+            any("unified_visual_treatment" in x and "过短" in x for x in w),
+            f"unified_visual_treatment < 30 应触发 '过短' 警告, warnings={w}",
+        )
 
 
 class TestValidateSchemaV2Screens(unittest.TestCase):
@@ -276,6 +298,28 @@ class TestPlanV2HappyPath(unittest.TestCase):
             len(hits) >= 2,
             f"SYSTEM_PROMPT_V2 至少应含 2 个清晰度关键词, 实际命中 {hits}",
         )
+
+    def test_system_prompt_v2_includes_information_density_rule(self):
+        """准则 6: 信息密度规则必须在 (2026-04-27 stage5 step2 修补)."""
+        from ai_refine_v2.prompts.planner import SYSTEM_PROMPT_V2
+        self.assertIn("信息单元", SYSTEM_PROMPT_V2)
+        self.assertIn("数据卡", SYSTEM_PROMPT_V2)
+        self.assertIn("spec chip", SYSTEM_PROMPT_V2)
+        # hero 是特例必须明说 (不强求)
+        self.assertIn("hero 屏不强求", SYSTEM_PROMPT_V2)
+
+    def test_system_prompt_v2_includes_layout_mapping_table(self):
+        """准则 7: 屏型 → layout 类型映射表必须在 (2026-04-27 stage5 step2 修补)."""
+        from ai_refine_v2.prompts.planner import SYSTEM_PROMPT_V2
+        # 3 类 layout 类型关键词 (中文)
+        self.assertIn("聚焦镜头", SYSTEM_PROMPT_V2)
+        self.assertIn("拼贴", SYSTEM_PROMPT_V2)
+        self.assertIn("混合", SYSTEM_PROMPT_V2)
+        # 关键 prompt 词汇 (英文, 防 DeepSeek 写成中文)
+        self.assertIn("triptych", SYSTEM_PROMPT_V2)                  # scenario
+        self.assertIn("split-screen comparison", SYSTEM_PROMPT_V2)   # vs_compare
+        self.assertIn("HUD overlays", SYSTEM_PROMPT_V2)              # value_story
+        self.assertIn("grid layout", SYSTEM_PROMPT_V2)               # feature_wall
 
 
 class TestPlanV2InputValidation(unittest.TestCase):
