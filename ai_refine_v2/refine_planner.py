@@ -35,7 +35,12 @@ import urllib.error
 import urllib.request
 from typing import Callable, Optional
 
-from ai_refine_v2.prompts.planner import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from ai_refine_v2.prompts.planner import (
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_V2,
+    USER_PROMPT_TEMPLATE,
+    USER_PROMPT_TEMPLATE_V2,
+)
 
 
 # ── 常量 ────────────────────────────────────────────────────────
@@ -280,6 +285,204 @@ def plan(
             raise PlannerError(f"API/解析失败 (重试 {max_retries} 次后): {last_err}") from e
 
     # 逻辑上不可达
+    raise PlannerError(f"unreachable: last_err={last_err}")
+
+
+# ──────────────────────────────────────────────────────────────────
+# v2 (PRD §阶段一·任务 1.1, 2026-04-27): style_dna + N 屏导演 prompt
+# ──────────────────────────────────────────────────────────────────
+# 跟老 plan() 完全独立, 共用 _http_post_deepseek + _extract_json + PlannerError.
+# 老 plan() 仍服务现有 pipeline_runner + generator (60 单测保护). PRD §阶段二
+# generator 重写后, pipeline_runner._worker 切到 plan_v2(), 那时再下架老的.
+# pipeline_runner 阶段一不切, 不动其他下游, mock 模式仍能跑.
+
+_TEMPERATURE_V2 = 0.7  # 比 v1 的 0.1 高, 让 style_dna 有创意 (不再是抽取任务)
+_MAX_TOKENS_V2 = 8192  # 6-10 屏 × 800-2000 字符 prompt → 估 6000-15000 token
+_MIN_PROMPT_LEN_V2 = 200  # screens[i].prompt 短于此即"SEO 列表非导演视角"
+_MIN_SCREEN_COUNT_V2 = 6
+_MAX_SCREEN_COUNT_V2 = 10
+
+
+def _validate_schema_v2(parsed: dict) -> list[str]:
+    """v2 schema 校验. 返回 warning list (空 = 合规, 非空 = 触发重试).
+
+    必检字段:
+      product_meta: name / category(三选一) / primary_color / key_visual_parts
+      style_dna:    color_palette / lighting / composition_style / mood / typography_hint
+                    (每个非空字符串, 各自最小长度阈值见 schema 文档)
+      screen_count: int 6-10
+      screens:      list, len == screen_count, 每项 idx/role/title/prompt 齐
+                    且 prompt ≥ 200 字符
+    """
+    w: list[str] = []
+    if not isinstance(parsed, dict):
+        return ["data 不是 dict"]
+
+    # product_meta
+    pm = parsed.get("product_meta")
+    if not isinstance(pm, dict):
+        w.append("product_meta 缺失或非 dict")
+    else:
+        for k in ("name", "primary_color"):
+            if not pm.get(k) or not isinstance(pm.get(k), str):
+                w.append(f"product_meta.{k} 缺失或非字符串")
+        cat = pm.get("category")
+        if cat not in _VALID_CATEGORIES:
+            w.append(f"product_meta.category 非法 (必须 设备类/耗材类/工具类): {cat!r}")
+        kvp = pm.get("key_visual_parts")
+        if not isinstance(kvp, list) or not kvp:
+            w.append("product_meta.key_visual_parts 缺失或空列表")
+        elif not all(isinstance(x, str) and x.strip() for x in kvp):
+            w.append("product_meta.key_visual_parts 含空/非字符串项")
+
+    # style_dna (5 个必填维度 + 各自最小长度)
+    dna_min_len = {
+        "color_palette": 20,
+        "lighting": 20,
+        "composition_style": 20,
+        "mood": 12,
+        "typography_hint": 8,
+    }
+    dna = parsed.get("style_dna")
+    if not isinstance(dna, dict):
+        w.append("style_dna 缺失或非 dict")
+    else:
+        for k, min_len in dna_min_len.items():
+            v = dna.get(k)
+            if not v or not isinstance(v, str):
+                w.append(f"style_dna.{k} 缺失或非字符串")
+            elif len(v.strip()) < min_len:
+                w.append(
+                    f"style_dna.{k} 过短 ({len(v.strip())} < {min_len} 字符), 疑似平庸描述"
+                )
+
+    # screen_count
+    sc = parsed.get("screen_count")
+    if not isinstance(sc, int) or not (_MIN_SCREEN_COUNT_V2 <= sc <= _MAX_SCREEN_COUNT_V2):
+        w.append(
+            f"screen_count 必须为 [{_MIN_SCREEN_COUNT_V2},{_MAX_SCREEN_COUNT_V2}] 整数, "
+            f"实际 {sc!r}"
+        )
+
+    # screens
+    screens = parsed.get("screens")
+    if not isinstance(screens, list):
+        w.append("screens 缺失或非 list")
+    else:
+        if isinstance(sc, int) and len(screens) != sc:
+            w.append(f"screens 长度 ({len(screens)}) 与 screen_count ({sc}) 不一致")
+        if not (_MIN_SCREEN_COUNT_V2 <= len(screens) <= _MAX_SCREEN_COUNT_V2):
+            w.append(
+                f"screens 长度 {len(screens)} 不在 "
+                f"[{_MIN_SCREEN_COUNT_V2},{_MAX_SCREEN_COUNT_V2}]"
+            )
+        for i, s in enumerate(screens):
+            if not isinstance(s, dict):
+                w.append(f"screens[{i}] 非 dict")
+                continue
+            idx = s.get("idx")
+            if not isinstance(idx, int) or idx != i + 1:
+                w.append(f"screens[{i}].idx 应为 {i + 1}, 实际 {idx!r}")
+            for k in ("role", "title"):
+                v = s.get(k)
+                if not v or not isinstance(v, str):
+                    w.append(f"screens[{i}].{k} 缺失或非字符串")
+            p = s.get("prompt")
+            if not p or not isinstance(p, str):
+                w.append(f"screens[{i}].prompt 缺失或非字符串")
+            elif len(p) < _MIN_PROMPT_LEN_V2:
+                w.append(
+                    f"screens[{i}].prompt 过短 ({len(p)} < {_MIN_PROMPT_LEN_V2} 字符), "
+                    "疑非导演视角"
+                )
+
+    return w
+
+
+def plan_v2(
+    product_text: str,
+    product_image_url: Optional[str] = None,
+    product_title: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: str = _MODEL_DEFAULT,
+    max_retries: int = 1,
+    http_fn: Optional[Callable[[dict, str], dict]] = None,
+    temperature: float = _TEMPERATURE_V2,
+) -> dict:
+    """v2 schema: 产品文案 → DeepSeek 规划 (style_dna + N 屏导演 prompt).
+
+    Args:
+        product_text:       产品文案原文 (不能空)
+        product_image_url:  产品图 URL, 可选 (DeepSeek 看 URL 文本作 hint)
+        product_title:      产品标题, 可选 (UI 上的标题字段)
+        api_key:            DeepSeek key, None 时从 env DEEPSEEK_API_KEY 读
+        model:              DeepSeek 模型名, 默认 deepseek-chat
+        max_retries:        API/解析/schema 失败重试次数
+        http_fn:            注入点, 测试传 mock; 生产走默认 _http_post_deepseek
+        temperature:        默认 0.7 (创意), 比 v1 的 0.1 高
+
+    Returns:
+        dict, 符合 v2 schema:
+          product_meta / style_dna (5 维) / screen_count / screens (N 屏)
+          screens[i] 含 idx / role / title / prompt(≥200 字符导演视角)
+
+    Raises:
+        PlannerError: 参数非法 / API 网络挂 / JSON 解析失败 / schema 不合规
+                      超过 max_retries 仍失败
+    """
+    if not product_text or not product_text.strip():
+        raise PlannerError("product_text 不能为空")
+
+    use_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not use_key:
+        raise PlannerError("未配置 DEEPSEEK_API_KEY (传参或设 env var)")
+
+    user_prompt = USER_PROMPT_TEMPLATE_V2.format(
+        product_text=product_text.strip(),
+        product_title_hint=(product_title or "(未填, 从文案推断)").strip(),
+        product_image_hint=(product_image_url or "(暂无, 从文案+品类推断视觉特征)"),
+    )
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT_V2},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": _MAX_TOKENS_V2,
+    }
+
+    post_fn = http_fn or _http_post_deepseek
+    last_err = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            resp = post_fn(payload, use_key)
+            raw_content = resp["choices"][0]["message"]["content"]
+            parsed = _extract_json(raw_content)
+            schema_warnings = _validate_schema_v2(parsed)
+            if schema_warnings:
+                last_err = f"v2 schema 不合规: {schema_warnings}"
+                if attempt < max_retries:
+                    print(f"[planner_v2] attempt {attempt + 1} schema 失败, 重试: {last_err}")
+                    time.sleep(0.5)
+                    continue
+                raise PlannerError(last_err)
+
+            return parsed
+
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError,
+                KeyError, TypeError) as e:
+            last_err = f"{type(e).__name__}: {e}"
+            if attempt < max_retries:
+                print(f"[planner_v2] attempt {attempt + 1} 失败, 重试: {last_err}")
+                time.sleep(1)
+                continue
+            raise PlannerError(
+                f"v2 API/解析失败 (重试 {max_retries} 次后): {last_err}"
+            ) from e
+
     raise PlannerError(f"unreachable: last_err={last_err}")
 
 

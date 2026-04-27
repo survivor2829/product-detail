@@ -11,4 +11,8 @@
   - 本模块**不依赖** refine_processor.py (W1 不动旧管线)
   - 仅负责"规划层" (DeepSeek), 不做 gpt-image-2 生图 (W2 再说)
 """
-from ai_refine_v2.refine_planner import plan, PlannerError  # noqa: F401
+from ai_refine_v2.refine_planner import (  # noqa: F401
+    plan,
+    plan_v2,
+    PlannerError,
+)
