@@ -108,6 +108,41 @@ class TestPrimaryColorExtraction(unittest.TestCase):
             self.assertGreater(anchor.confidence, 0.95,
                                f"纯色产品 confidence 应近 1.0, 实际 {anchor.confidence:.3f}")
 
+    def test_he180_gray_white_not_yellow(self):
+        """HE180 染黄 bug 直接钉死回归保护:
+        浅白底 + 灰色机身的产品图, primary_hex 必须在灰色区间, 绝不能被算成黄色.
+        """
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            p = Path(td) / "he180_simulation.png"
+            # 模拟 HE180: 200x200, 中央 60% 是灰色机身 #6B7280, 四周白底
+            img = Image.new("RGBA", (200, 200), (255, 255, 255, 255))
+            for y in range(40, 160):
+                for x in range(40, 160):
+                    img.putpixel((x, y), (107, 114, 128, 255))  # #6B7280
+            img.save(p, format="PNG")
+            anchor = extract_color_anchor(p)
+            self.assertIsNotNone(anchor, "HE180 模拟图应能算出主色")
+
+            # primary 必须在灰色区间 (R≈G≈B 且 都不接近 255)
+            r = int(anchor.primary_hex[1:3], 16)
+            g = int(anchor.primary_hex[3:5], 16)
+            b = int(anchor.primary_hex[5:7], 16)
+
+            # 钉死 bug: 黄色定义 = R和G都高 而 B低. 反向断言不能是黄色.
+            is_yellow_ish = (r > 200 and g > 200 and b < 150)
+            self.assertFalse(is_yellow_ish,
+                             f"primary {anchor.primary_hex} 不应被算成黄色 (HE180 染黄 bug 回归保护)")
+
+            # 正向断言: 应在灰色区间 (R, G, B 接近 + 都不极亮)
+            max_channel = max(r, g, b)
+            min_channel = min(r, g, b)
+            spread = max_channel - min_channel
+            self.assertLess(spread, 50,
+                            f"primary {anchor.primary_hex} 应在灰色区间 (R≈G≈B), 实际 spread={spread}")
+            self.assertLess(max_channel, 200,
+                            f"primary {anchor.primary_hex} 不应极亮 (机身灰应在中等亮度)")
+
 
 if __name__ == "__main__":
     unittest.main()

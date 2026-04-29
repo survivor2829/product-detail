@@ -33,12 +33,29 @@ class ColorAnchor:
 def _filter_background_pixels(img: Image.Image) -> list[tuple[int, int, int]]:
     """返回非背景像素的 RGB 列表.
 
-    PNG with alpha: alpha < 128 排除
+    PNG with alpha: alpha < 128 排除, 同时过滤白底 (V > 240/255 且 S < 0.05)
     其他模式 (JPG): 转 HSV, V > 240/255 且 S < 0.05 视为白背景排除
     """
     if img.mode == "RGBA":
+        # RGBA 路径: 先过滤 alpha, 再过滤白底
         rgba_pixels = list(img.getdata())
-        return [(r, g, b) for r, g, b, a in rgba_pixels if a >= 128]
+        rgb_with_alpha = [(r, g, b) for r, g, b, a in rgba_pixels if a >= 128]
+
+        # 对保留的 RGB 像素再做白底过滤 (转 HSV)
+        if not rgb_with_alpha:
+            return []
+        temp_img = Image.new("RGB", (len(rgb_with_alpha), 1))
+        temp_img.putdata(rgb_with_alpha)
+        hsv_img = temp_img.convert("HSV")
+        hsv_pixels = list(hsv_img.getdata())
+
+        out = []
+        for (r, g, b), (h, s, v) in zip(rgb_with_alpha, hsv_pixels):
+            # V > 240/255 且 S < 0.05 视为白背景 (S 范围 0-255, 0.05 * 255 ≈ 13)
+            if v > 240 and s < 13:
+                continue
+            out.append((r, g, b))
+        return out
 
     # JPG / RGB 路径: 用 HSV 滤白背景
     rgb_img = img.convert("RGB") if img.mode != "RGB" else img
