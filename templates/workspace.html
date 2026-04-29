@@ -1349,11 +1349,32 @@
         : '⚠️ 全占位 (服务端未配置 key, UI 自检模式)';
 
       // 2. 轮询 /status (2s/次, 最多 6 分钟)
+      // 容错: 如果 status 端点返回 404 / 5xx (gunicorn 多 worker _TASKS 不共享
+      // 可能命中没有该任务的 worker), 视为 transient 跳过本轮, 下一轮重试.
+      // 本是 2026-04-29 现场踩坑诊断后加的防御层.
       const maxIter = 180;
       let finalState = null;
+      let consecutiveNotFound = 0;
       for (let i = 0; i < maxIter; i++) {
         await new Promise(r => setTimeout(r, 2000));
-        const state = await fetch(`/api/ai-refine-v2/status/${taskId}`).then(r => r.json());
+        let state;
+        try {
+          const resp = await fetch(`/api/ai-refine-v2/status/${taskId}`);
+          if (resp.status === 404) {
+            consecutiveNotFound++;
+            if (consecutiveNotFound > 30) {  // 连续 1 分钟拿不到 = 真挂了
+              throw new Error(`task ${taskId} 在所有 worker 都查不到 (连续 ${consecutiveNotFound} 次 404)`);
+            }
+            continue;
+          }
+          if (!resp.ok) continue;  // 5xx / 网络错 → 下一轮
+          state = await resp.json();
+          consecutiveNotFound = 0;
+        } catch (err) {
+          // JSON parse / network — transient, 下一轮重试
+          if (err.message && err.message.includes('在所有 worker 都查不到')) throw err;
+          continue;
+        }
         bar.style.width = (state.progress_pct || 0) + '%';
         if (subText) subText.textContent = `${modeBadge} · ${state.progress_msg || state.status}`;
         if (state.status === 'success' || state.status === 'failed') {
