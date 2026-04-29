@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ai_refine_v2.prompts.generator import render
+from ai_refine_v2.refine_planner import _VALID_ROLES_V2
 
 
 # ── 常量 ────────────────────────────────────────────────────────
@@ -577,6 +578,11 @@ _INJECTION_PREFIX_V3 = (
     "hue exactly. "
 )
 
+# v3.iter2 默认喂图白名单: 12 个 role 中除 FAQ 外全喂.
+# 从 _VALID_ROLES_V2 单一来源派生, 避免 13th 屏型加入时手动同步漂移.
+# (Scott 改动 4 修正版: spec_table / lifestyle_demo 都改回喂图)
+_DEFAULT_CUTOUT_WHITELIST_V3 = _VALID_ROLES_V2 - {"FAQ"}
+
 
 def _build_blocks_v2(planning_v2: dict) -> list[dict]:
     """v2 schema 的 screens[] → 内部 block dict 列表.
@@ -608,7 +614,7 @@ def _build_blocks_v2(planning_v2: dict) -> list[dict]:
 
 def _generate_one_block_v2(
     block: dict,
-    product_cutout_url: Optional[str],
+    image_data_url: Optional[str],
     api_key: str,
     api_call_fn: ApiCallFn,
     max_retries: int,
@@ -622,6 +628,8 @@ def _generate_one_block_v2(
               placeholder 标记由 generate_v2 打 (Hero raise, SP best-effort).
 
     block.prompt 必须非空 (plan_v2 _validate_schema_v2 已守门 ≥200 字符).
+    image_data_url: 已转好的 data:image/...;base64,... 字符串, None = 不喂图.
+    (v3.2 simplify: 由 generate_v2 在循环外一次性转好, 避免 N 次重复 base64).
     """
     bid = block["block_id"]
     vt = block.get("visual_type", "screen")
@@ -637,14 +645,6 @@ def _generate_one_block_v2(
             ),
             0.0,
         )
-
-    # 参考图 (可选): plan_v2 不要求 product_cutout_url, 给了就喂作 image_urls hint
-    image_data_url: Optional[str] = None
-    if product_cutout_url:
-        try:
-            image_data_url = _to_data_url(product_cutout_url)
-        except Exception as e:
-            print(f"[gen_v2][{bid}] 参考图转 data URL 失败, 降级纯文生: {e}")
 
     # v3 (PRD AI_refine_v3.1 §5.2): 喂图屏 prompt 开头注入 INJECTION_PREFIX,
     # 让 gpt-image-2 把 image_urls[0] 当形态锚点而非装饰品.
@@ -719,7 +719,7 @@ def generate_v2(
         api_call_fn: 单测注入点, 生产用 _default_api_call (submit + poll)
         cutout_whitelist: v3 (PRD AI_refine_v3.1) per-screen 喂图控制.
             屏型 role 集合, 仅这些 role 喂参考图.
-            None (默认) = PRD v3 默认 (除 spec_table / FAQ 外全喂).
+            None (默认) = PRD v3.iter2 默认 (除 FAQ 外全喂, spec_table 改回喂图).
             空 set() = 全不喂. 自定义 set = 仅指定 role 喂.
         其他参数: 同 v1 generate()
 
@@ -743,29 +743,27 @@ def generate_v2(
 
     call_fn: ApiCallFn = api_call_fn or _default_api_call
 
-    # v3 (PRD AI_refine_v3.1): 计算 effective cutout whitelist
-    # 默认行为 (cutout_whitelist=None): 除 spec_table / FAQ 外全喂图
-    # PRD 5.1 默认白名单: hero, feature_wall, scenario, scenario_grid_2x3,
-    #                    vs_compare, detail_zoom, icon_grid_radial, value_story,
-    #                    brand_quality, lifestyle_demo (v3.iter2 新增)
-    # v3.iter2 (Scott 改动 1): feature_wall 仍喂图但 prompt 准则 10 限制 icon 卡下面不能再放产品图;
-    #                          spec_table 改回喂图 (Scott 改动 4 修正: 上半部 1 张产品图 + 下方参数)
+    # v3.iter2 默认 cutout_whitelist: 除 FAQ 外全喂 (spec_table / lifestyle_demo 都喂图).
+    # 从 _VALID_ROLES_V2 单一来源派生 (_DEFAULT_CUTOUT_WHITELIST_V3), 13th 屏型加入时不需手动同步.
     if cutout_whitelist is None:
-        effective_whitelist: frozenset[str] = frozenset({
-            "hero", "feature_wall", "scenario", "scenario_grid_2x3",
-            "vs_compare", "detail_zoom", "icon_grid_radial",
-            "value_story", "brand_quality", "lifestyle_demo",
-            "spec_table",  # v3.iter2: 改回喂图 (Scott 修正: 上半部产品图)
-        })
+        effective_whitelist: frozenset[str] = _DEFAULT_CUTOUT_WHITELIST_V3
     else:
         effective_whitelist = frozenset(cutout_whitelist)
 
+    # v3.2 simplify: hoist _to_data_url 出循环, 避免 N 次重复 base64 同一文件.
+    # 转换失败 → 全部 block 走纯文生 (跟旧行为一致, 单 block 失败 print warning 即可).
+    base_image_data_url: Optional[str] = None
+    if product_cutout_url:
+        try:
+            base_image_data_url = _to_data_url(product_cutout_url)
+        except Exception as e:
+            print(f"[gen_v2] 参考图转 data URL 失败, 全部 block 降级纯文生: {e}")
+
     def _cutout_for(block: dict) -> Optional[str]:
-        """v3: 根据 block role 决定该屏是否喂 product_cutout_url."""
-        if not product_cutout_url:
+        """v3: 根据 block role 决定该屏是否喂 cutout. 返回已转好的 data URL 或 None."""
+        if base_image_data_url is None:
             return None
-        role = block.get("visual_type", "")
-        return product_cutout_url if role in effective_whitelist else None
+        return base_image_data_url if block.get("visual_type", "") in effective_whitelist else None
 
     result = GenerationResult()
     t_start = time.time()

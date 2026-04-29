@@ -478,59 +478,28 @@ class TestCutoutWhitelistV3(unittest.TestCase):
         # idx 8 (FAQ) 不应喂 — v3.iter2 准则 10 硬约束: FAQ 0 次产品图
         self.assertFalse(seen[8], "idx 8 FAQ 不在默认白名单, 不应喂图")
 
-    def test_default_whitelist_includes_spec_table_iter2(self):
-        """v3.iter2 (Scott 改动 4): spec_table 改回默认白名单 (上半部产品图 + 下方参数)."""
-        from ai_refine_v2.refine_generator import generate_v2
-        # 单独构造 9 屏 fixture, 第 9 屏=spec_table
+    def _planning_with_extra_role(self, role: str, prompt_text: str) -> dict:
+        """复用 _v3_planning_with_real_roles 8 屏 + 追加第 9 屏 (指定 role)."""
         planning = _v3_planning_with_real_roles()
         planning["screens"].append({
             "idx": 9,
-            "role": "spec_table",
+            "role": role,
             "title": "屏 9",
-            "prompt": "Screen 9 industrial spec sheet with product hero shot top half. " * 4,
+            "prompt": f"Screen 9 {prompt_text}. " * 4,
         })
         planning["screen_count"] = 9
-        seen: dict[int, bool] = {}
+        return planning
 
-        def _fn(prompt, image_data_url, key, thinking, size):
-            import re
-            m = re.search(r"Screen (\d+) ", prompt)
-            idx = int(m.group(1)) if m else 99
-            seen[idx] = bool(image_data_url)
-            return f"https://fake/{idx}.png"
-
-        generate_v2(
-            planning, product_cutout_url="data:image/png;base64,iVBORw0KGgo=",
-            api_key="dummy", api_call_fn=_fn, concurrency=4,
-            max_retries_hero=0, max_retries_sp=0,
-        )
+    def test_default_whitelist_includes_spec_table_iter2(self):
+        """v3.iter2 (Scott 改动 4): spec_table 改回默认白名单 (上半部产品图 + 下方参数)."""
+        seen = self._capture(self._planning_with_extra_role(
+            "spec_table", "industrial spec sheet with product hero shot top half"))
         self.assertTrue(seen[9], "v3.iter2: spec_table 改回默认白名单, idx 9 应喂图")
 
     def test_default_whitelist_includes_lifestyle_demo_iter2(self):
         """v3.iter2 (Scott 改动 3): lifestyle_demo 在默认白名单 (真人 + 产品)."""
-        from ai_refine_v2.refine_generator import generate_v2
-        planning = _v3_planning_with_real_roles()
-        planning["screens"].append({
-            "idx": 9,
-            "role": "lifestyle_demo",
-            "title": "屏 9",
-            "prompt": "Screen 9 engineer using product in scene with warm natural light. " * 4,
-        })
-        planning["screen_count"] = 9
-        seen: dict[int, bool] = {}
-
-        def _fn(prompt, image_data_url, key, thinking, size):
-            import re
-            m = re.search(r"Screen (\d+) ", prompt)
-            idx = int(m.group(1)) if m else 99
-            seen[idx] = bool(image_data_url)
-            return f"https://fake/{idx}.png"
-
-        generate_v2(
-            planning, product_cutout_url="data:image/png;base64,iVBORw0KGgo=",
-            api_key="dummy", api_call_fn=_fn, concurrency=4,
-            max_retries_hero=0, max_retries_sp=0,
-        )
+        seen = self._capture(self._planning_with_extra_role(
+            "lifestyle_demo", "engineer using product in scene with cool studio lighting"))
         self.assertTrue(seen[9], "v3.iter2: lifestyle_demo 在默认白名单, idx 9 应喂图")
 
     def test_whitelist_only_hero(self):

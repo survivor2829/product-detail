@@ -33,6 +33,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from typing import Callable, Optional
 
 from ai_refine_v2.prompts.planner import (
@@ -452,7 +453,6 @@ def _validate_schema_v2(parsed: dict) -> list[str]:
             if isinstance(r, str) and r in _VALID_ROLES_V2
         ]
         if len(set(valid_roles_list)) != len(valid_roles_list):
-            from collections import Counter
             dup = sorted(
                 role for role, n in Counter(valid_roles_list).items() if n > 1
             )
