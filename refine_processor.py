@@ -1,175 +1,225 @@
-"""任务11 单产品 AI 精修处理器。
+"""任务11 单产品 AI 精修处理器 (v3.2 大疆风高级灰路线 — 2026-04-29 切换).
 
-PRD F6: 调豆包 Seedream 生成 6 屏 AI 背景 → HTML/CSS 合成 → Playwright 截图 → 落 ai_refined.jpg
+历史:
+  v1 (PRD F6 初版): 调豆包 Seedream 生成 6 屏 AI 背景 → HTML/CSS 合成
+                    → Playwright 截图 → 落 ai_refined.jpg
+  v3.2 (本版): 切换到 ai_refine_v2 pipeline (DeepSeek plan_v2 + APIMart
+              gpt-image-2 + PIL 拼接), 12 屏大疆风高级灰 + lifestyle_demo
+              + 商业承诺合规. ARK_API_KEY 不再使用 (保留 ark_api_key 参数
+              兼容 batch_queue 调用约定但内部忽略).
+
+切换原因:
+  - 用户要求"批量生成的 AI 精修接通 v3.2"
+  - v1 ARK 路径生成的 6 屏背景跟 v3.2 12 屏方案不同代差太大
+  - 让批量入口也享受 v3.2 路线 (色保真 / 屏型唯一 / 法律合规)
+
+成本/时延对比:
+  v1 ARK 路径: ~30s/产品 + ~¥1-2/产品 (主要烧豆包 + Playwright)
+  v3.2 v2 路径: ~4-5min/产品 + ~¥8.4/产品 (主要烧 APIMart gpt-image-2 12 屏)
+  → 批量请求务必谨慎, 10 产品 = ¥84 + 50min
 
 与任务4 `batch_processor.process_one_product` 的关系:
-  - 任务4 出 preview.png (HTML 版底图, 纯 CSS + 产品图, 无 AI 背景)
-  - 任务11 出 ai_refined.jpg (专业精修, 用 Seedream 6 屏 AI 背景)
-  - 任务11 复用任务4 已落盘的 parsed.json / product_cut.png, 不重跑 DeepSeek / rembg
-
-与 /api/generate-ai-detail-html 的关系:
-  - 路由层做 HTTP 请求调度 + 单次精修
-  - 本模块做 worker 线程内的同样逻辑, 跳过 Flask 路由但复用底层链:
-    ai_bg_cache.generate_backgrounds + _build_ctxs_from_parsed + ai_compose_pipeline
+  - 任务4 仍出 preview.png (HTML 版底图, 纯 CSS, 不变)
+  - 任务11 v3.2 出 ai_refined.jpg (12 屏 v3.2 v2 长图)
+  - 复用任务4 已落盘的 parsed.json / product_cut.png
 
 覆盖语义:
-  - 文件 product_dir/ai_refined.jpg — Pillow 保存自动覆盖
-  - 重跑 done 的产品 → 旧文件永久丢失, 这是 PRD F6 "确认后覆盖重扣费" 的承诺
+  - 文件 product_dir/ai_refined.jpg — 自动覆盖 (兼容旧版语义)
 """
 from __future__ import annotations
 
 import json
+import shutil
 import time
 import traceback
 from pathlib import Path
 
 
+def _reconstruct_product_text(parsed: dict, name: str) -> str:
+    """从 parsed.json 重建 plan_v2 喂的原始文案.
+
+    parsed.json 是任务4 已 DeepSeek 解析过的结构化数据 (brand/main_title/
+    selling_points/specs/...). v2 plan_v2 要的是非结构化原文, 我们把结构
+    化字段重新拼成段落让 DeepSeek 第 2 阶段重新规划成 v2 schema.
+    """
+    parts: list[str] = []
+    title = (parsed.get("main_title") or parsed.get("product_name")
+             or parsed.get("model") or name).strip()
+    if title:
+        parts.append(f"产品名称：{title}")
+    sub = (parsed.get("subtitle") or parsed.get("sub_title") or "").strip()
+    if sub:
+        parts.append(sub)
+    sps = parsed.get("selling_points") or []
+    if isinstance(sps, list) and sps:
+        sp_lines = []
+        for sp in sps:
+            if isinstance(sp, dict):
+                t = (sp.get("text") or sp.get("title") or "").strip()
+                if t:
+                    sp_lines.append(t)
+            elif isinstance(sp, str):
+                sp_lines.append(sp.strip())
+        if sp_lines:
+            parts.append("核心卖点：")
+            parts.extend(f"- {x}" for x in sp_lines if x)
+    specs = parsed.get("specs") or parsed.get("spec_table") or []
+    if isinstance(specs, list) and specs:
+        spec_lines = []
+        for s in specs:
+            if isinstance(s, dict):
+                k = (s.get("key") or s.get("name") or "").strip()
+                v = (s.get("value") or "").strip()
+                if k and v:
+                    spec_lines.append(f"{k}: {v}")
+        if spec_lines:
+            parts.append("技术参数：")
+            parts.extend(spec_lines)
+    return "\n".join(parts).strip() or title or name
+
+
 def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dict:
-    """对单个 BatchItem 执行 AI 精修, 产出最终 ai_refined.jpg。
+    """对单个 BatchItem 执行 AI 精修, 产出 ai_refined.jpg (v3.2 v2 path).
 
-    scope_id: batch_id (batch_queue.submit_refine 透传, 主要用于日志前缀)
-    payload:
-        {
-            "name":                "产品A",
-            "main_image_path":     "/uploads/.../产品A/product.jpg",   # URL
-            "cutout_path":         "/uploads/.../产品A/product_cut.png",  # 可空
-            "parsed_json_path":    "/uploads/.../产品A/parsed.json",   # 必填
-            "resolved_theme_id":   "tech-blue",                         # 任务9 已算好
-            "product_category":    "设备类",
-        }
-    ark_api_key: 用户豆包 Key (从 POST body 里拿, 由端点闭包绑定)
+    scope_id: batch_id (日志前缀)
+    payload: 同 v1 兼容字段 (name / main_image_path / cutout_path /
+             parsed_json_path / resolved_theme_id / product_category)
+    ark_api_key: v3.2 已不使用, 保留参数兼容 batch_queue 调用约定. v3.2 用
+                 服务端 env DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY.
 
-    raises: 任何异常上抛 (batch_queue._submit_one 会兜成 status=failed)
-        - ValueError: payload 必填缺失 / parsed.json 不存在
-        - FileNotFoundError: 主图路径不存在
-        - 其它: ai_bg_cache / ai_compose_pipeline 内部抛的
+    raises: 任何异常上抛 (batch_queue._submit_one 兜成 status=failed)
 
     returns:
         {
-            "ai_refined_path":  "/uploads/.../产品A/ai_refined.jpg",  # URL
-            "ai_refined_at":    1712345678,                           # unix 秒
-            "segments_count":   7,                                    # 合成的屏数
-            "total_elapsed":    13.5,                                 # 秒
-            "bg_cache_hits":    ...,  # 调试用, 命中了几个缓存
+            "ai_refined_path": "/uploads/.../产品A/ai_refined.jpg",  # URL
+            "ai_refined_at":   1712345678,
+            "segments_count":  12,                                    # v3.2 默认 12 屏
+            "total_elapsed":   265.3,
+            "task_id":         "v2_..._abc123",                       # v3.2 新增
+            "mode":            "real",                                # v3.2 新增
         }
     """
-    # app: 注入 Flask app context — 本模块跑在 ThreadPoolExecutor worker 里,
-    # 默认没有 request/app context; _build_ctxs_from_parsed 走 _match_scene_image
-    # 会调 url_for('static', ...),没上下文直接抛 "Working outside of application context".
-    # 用 with app.app_context(): 包住所有调用 url_for 的链路 — 修复 2026-04-20 线上事故.
-    from app import (
-        app,
-        BASE_DIR,
-        _build_ctxs_from_parsed,
-        _resolve_asset_urls_in_ctx,
-    )
-    import ai_bg_cache
-    import ai_compose_pipeline
+    from app import app, BASE_DIR
+    from ai_refine_v2 import pipeline_runner
 
     name = payload.get("name") or "unknown"
     main_url = (payload.get("main_image_path") or "").strip()
     cutout_url = (payload.get("cutout_path") or "").strip()
     parsed_url = (payload.get("parsed_json_path") or "").strip()
-    theme_id = (payload.get("resolved_theme_id") or "classic-red").strip()
-    product_category = (payload.get("product_category") or "设备类").strip()
-
-    if not (ark_api_key or "").strip():
-        raise ValueError(f"产品 {name} 缺 ark_api_key")
     if not main_url:
         raise ValueError(f"产品 {name} 缺 main_image_path")
     if not parsed_url:
-        raise ValueError(f"产品 {name} 缺 parsed_json_path (任务4 应已落盘)")
+        raise ValueError(f"产品 {name} 缺 parsed_json_path")
 
-    # URL /uploads/ 映射到磁盘 static/uploads/ (2026-04-22 修容器持久化 bug, 见铁律10)
-    parsed_rel = parsed_url.lstrip("/")
-    if parsed_rel.startswith("uploads/"):
-        parsed_rel = "static/" + parsed_rel
-    parsed_path = BASE_DIR / parsed_rel
+    # URL /uploads/... → 磁盘 static/uploads/... (容器持久化铁律, 见 2026-04-22)
+    def _url_to_fs(u: str) -> Path:
+        rel = u.lstrip("/")
+        if rel.startswith("uploads/"):
+            rel = "static/" + rel
+        elif rel.startswith("static/"):
+            pass
+        return BASE_DIR / rel
+
+    parsed_path = _url_to_fs(parsed_url)
     if not parsed_path.is_file():
         raise FileNotFoundError(f"parsed.json 不在: {parsed_path}")
     parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
     product_dir = parsed_path.parent
 
-    # 产品图优先用抠图版 (没有就用原图) — 跟 batch_processor._render_product_preview 一致
-    product_image_url = cutout_url or main_url
+    # 喂给 v2: 优先用抠图 (cutout_path), 没有就原图 (main_image_path)
+    image_fs_path = _url_to_fs(cutout_url) if cutout_url else _url_to_fs(main_url)
+    if not image_fs_path.is_file():
+        raise FileNotFoundError(f"产品图不存在: {image_fs_path}")
 
-    brand = str(parsed.get("brand") or "").strip()
-    product_name = str(
-        parsed.get("product_name") or parsed.get("model")
-        or parsed.get("main_title") or name
-    ).strip()
+    product_text = _reconstruct_product_text(parsed, name)
+    product_title = (parsed.get("main_title") or parsed.get("product_name")
+                     or parsed.get("model") or name).strip()
 
-    print(f"[refine] {scope_id}/{name} → 生成 6 屏 AI 背景 "
-          f"(theme={theme_id} brand={brand!r})", flush=True)
+    # v3.2 双 key 从 env 读 (生产 .env 已注入, 见 2026-04-29 部署日志)
+    import os as _os
+    deepseek_key = _os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    gpt_image_key = _os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    if not deepseek_key or not gpt_image_key:
+        raise RuntimeError(
+            "v3.2 v2 path 需要 DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY 都配上 "
+            f"(deepseek={bool(deepseek_key)}, gpt={bool(gpt_image_key)}). "
+            "在生产 .env 加这两个 key 后 docker compose up -d --force-recreate web."
+        )
+
+    print(f"[refine-v3.2] {scope_id}/{name} → 启动 v2 pipeline (12 屏大疆风, ~4-5min, ~¥8.4)",
+          flush=True)
     t0 = time.time()
-    try:
-        backgrounds = ai_bg_cache.generate_backgrounds(
-            theme_id=theme_id,
-            product_category=product_category,
-            brand=brand,
-            api_key=ark_api_key,
-            product_name=product_name,
-            reference_image_url="",   # 批次场景无场景参考图,用 theme_id 即可
-        )
-    except Exception as e:
-        # 让 ai_bg_cache 内部的失败逻辑已经打过 traceback,这里再打一次防吞掉
-        traceback.print_exc()
-        raise RuntimeError(f"AI 背景生成失败: {type(e).__name__}: {e}") from e
-    bg_elapsed = round(time.time() - t0, 2)
-    print(f"[refine] {scope_id}/{name} → 背景就绪 ({len(backgrounds)}/6 成功, "
-          f"{bg_elapsed}s)", flush=True)
-
-    # 构建 ctxs — 必须在 test_request_context 里跑:
-    #   _match_scene_image 调 url_for('static', ...), 光 app_context 不够,
-    #   url_for 还需要 request context (或 SERVER_NAME 配置) 才能推导 URL scheme.
-    #   test_request_context() 注入一个假请求环境, 让 url_for('static', ...) 能输出
-    #   /static/scene_bank/xxx 这种相对路径 — 足够 compose 用 _to_file_uri_if_local 转.
-    #   修复 2026-04-20 事故: worker 线程之前既没 app context 也没 request context.
-    with app.test_request_context():
-        ctxs = _build_ctxs_from_parsed(
-            parsed, product_image_url, theme_id,
-            backgrounds=backgrounds,
-            scene_image_url="", effect_image_url="", qr_image_url="",
-        )
-        if not ctxs:
-            raise ValueError(f"parsed 空 ctxs, 无可渲染屏 (至少要 main_title)")
-
-        resolved_ctxs = {
-            k: _resolve_asset_urls_in_ctx(v) for k, v in ctxs.items()
-            if isinstance(v, dict)
-        }
-    order = ai_compose_pipeline.DEFAULT_ORDER
-
-    print(f"[refine] {scope_id}/{name} → 合成长图 (order={order})", flush=True)
-    t1 = time.time()
-    result = ai_compose_pipeline.compose_detail_page(
-        ctxs=resolved_ctxs,
-        order=order,
-        out_dir=product_dir,            # 落产品目录, 跟 preview.png 同家
-        out_jpg_name="ai_refined.jpg",  # 覆盖语义: 原地重写
-        jpg_quality=90,
-        verbose=False,
+    task_id = pipeline_runner.start_task(
+        product_text=product_text,
+        product_image_url=str(image_fs_path),  # fs path, 让 _to_data_url 直接读
+        product_title=product_title,
+        deepseek_key=deepseek_key,
+        gpt_image_key=gpt_image_key,
+        mode="v2",
     )
-    compose_elapsed = round(time.time() - t1, 2)
 
-    jpg_abs = Path(result["jpg"])
-    # 磁盘 static/uploads/ → URL /uploads/ (同 batch_processor._to_url)
-    _rel = jpg_abs.resolve().relative_to(BASE_DIR.resolve()).as_posix()
-    if _rel.startswith("static/uploads/"):
-        _rel = _rel[len("static/"):]
-    ai_refined_url = "/" + _rel
+    # 同步等待 v2 task 完成 (轮询 _TASKS, 6 分钟超时上限).
+    timeout_s = 360
+    poll_interval = 3.0
+    elapsed = 0.0
+    last_msg = ""
+    while elapsed < timeout_s:
+        time.sleep(poll_interval)
+        elapsed = time.time() - t0
+        state = pipeline_runner.get_task_status(task_id)
+        if state is None:
+            raise RuntimeError(f"task_id {task_id} 在 _TASKS 里消失")
+        msg = f"{state.get('status')} · {state.get('progress_pct',0)}% · {state.get('progress_msg','')}"
+        if msg != last_msg:
+            print(f"[refine-v3.2] {scope_id}/{name} ← {msg}", flush=True)
+            last_msg = msg
+        if state.get("status") == "success":
+            break
+        if state.get("status") == "failed":
+            raise RuntimeError(
+                f"v2 task 失败: {state.get('error','')} | trace: {state.get('error_trace','')[:500]}"
+            )
+    else:
+        raise TimeoutError(f"v2 task {task_id} 超过 {timeout_s}s 仍未完成")
 
+    # 拷贝 v2 产物 assembled.{png,jpg} → product_dir/ai_refined.jpg
+    v2_task_dir = BASE_DIR / "static" / "ai_refine_v2" / task_id
+    src_candidates = [
+        v2_task_dir / "assembled.jpg",
+        v2_task_dir / "assembled.png",
+    ]
+    src = next((p for p in src_candidates if p.is_file()), None)
+    if src is None:
+        raise FileNotFoundError(
+            f"v2 task {task_id} 完成但 assembled.{{jpg,png}} 不存在 "
+            f"(in {v2_task_dir})"
+        )
+    dst = product_dir / "ai_refined.jpg"
+    if src.suffix.lower() == ".png":
+        # PNG → JPG: 用 Pillow 转 (v2 默认输出 PNG, batch 历史 API 期望 JPG)
+        from PIL import Image
+        img = Image.open(src).convert("RGB")
+        img.save(dst, format="JPEG", quality=90, optimize=True)
+    else:
+        shutil.copy2(src, dst)
+
+    # 磁盘 static/uploads/ → URL /uploads/ (跟 v1 同款映射)
+    rel = dst.resolve().relative_to(BASE_DIR.resolve()).as_posix()
+    if rel.startswith("static/uploads/"):
+        rel = rel[len("static/"):]
+    ai_refined_url = "/" + rel
+
+    final_state = pipeline_runner.get_task_status(task_id) or {}
     out = {
         "ai_refined_path": ai_refined_url,
         "ai_refined_at":   int(time.time()),
-        "segments_count":  len(result.get("segments") or []),
-        "total_elapsed":   round(bg_elapsed + compose_elapsed, 2),
-        "bg_elapsed":      bg_elapsed,
-        "compose_elapsed": compose_elapsed,
-        "theme_id":        theme_id,
-        "width":           result.get("width"),
-        "height":          result.get("height"),
+        "segments_count":  len(final_state.get("blocks") or []),
+        "total_elapsed":   round(time.time() - t0, 2),
+        "task_id":         task_id,
+        "mode":            final_state.get("mode", "real"),
+        "cost_rmb":        final_state.get("cost_rmb", 0.0),
     }
-    print(f"[refine] {scope_id}/{name} → 完成 {ai_refined_url} "
-          f"({out['total_elapsed']}s, {out['segments_count']} 屏)", flush=True)
+    print(f"[refine-v3.2] {scope_id}/{name} → 完成 {ai_refined_url} "
+          f"({out['total_elapsed']}s, {out['segments_count']} 屏, ¥{out['cost_rmb']:.2f})",
+          flush=True)
     return out
