@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image, UnidentifiedImageError
+
 
 @dataclass(frozen=True)
 class ColorAnchor:
@@ -26,6 +28,30 @@ class ColorAnchor:
     palette_hex: list[str]
     confidence: float
     swatch_png_bytes: bytes
+
+
+def _filter_background_pixels(img: Image.Image) -> list[tuple[int, int, int]]:
+    """返回非背景像素的 RGB 列表.
+
+    PNG with alpha: alpha < 128 排除
+    其他模式 (JPG): 转 HSV, V > 240/255 且 S < 0.05 视为白背景排除
+    """
+    if img.mode == "RGBA":
+        rgba_pixels = list(img.getdata())
+        return [(r, g, b) for r, g, b, a in rgba_pixels if a >= 128]
+
+    # JPG / RGB 路径: 用 HSV 滤白背景
+    rgb_img = img.convert("RGB") if img.mode != "RGB" else img
+    hsv_img = rgb_img.convert("HSV")
+    rgb_pixels = list(rgb_img.getdata())
+    hsv_pixels = list(hsv_img.getdata())
+    out = []
+    for (r, g, b), (h, s, v) in zip(rgb_pixels, hsv_pixels):
+        # V > 240/255 且 S < 0.05 视为白背景 (S 范围 0-255, 0.05 * 255 ≈ 13)
+        if v > 240 and s < 13:
+            continue
+        out.append((r, g, b))
+    return out
 
 
 def extract_color_anchor(
@@ -44,4 +70,21 @@ def extract_color_anchor(
       - 主簇 confidence < min_confidence (产品多色无主导)
       - quantize 内部异常
     """
-    return None  # 骨架: 后续 Task 逐步实现
+    p = Path(cutout_path)
+    if not p.is_file():
+        return None
+    try:
+        img = Image.open(p)
+        # 下采样加速 quantize
+        if max(img.size) > downsample_to:
+            ratio = downsample_to / max(img.size)
+            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
+        non_bg = _filter_background_pixels(img)
+        if len(non_bg) < min_non_bg_pixels:
+            return None
+    except (UnidentifiedImageError, OSError, Exception):
+        return None
+
+    # Task 3 在这里加 quantize 算主色, 暂时仍返 None
+    return None

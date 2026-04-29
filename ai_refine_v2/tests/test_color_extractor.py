@@ -39,5 +39,31 @@ class TestColorAnchorDataclass(unittest.TestCase):
         self.assertTrue(anchor.swatch_png_bytes.startswith(b"\x89PNG"))
 
 
+class TestBackgroundFilter(unittest.TestCase):
+    """验非背景像素过滤. PNG alpha + JPG 白底两条路径."""
+
+    def test_fully_transparent_png_returns_none(self):
+        """完全透明的 PNG → 无非背景像素 → None (不应崩)."""
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as td:
+            p = Path(td) / "fully_transparent.png"
+            img = Image.new("RGBA", (100, 100), (255, 0, 0, 0))  # 红色 + alpha=0
+            img.save(p, format="PNG")
+            anchor = extract_color_anchor(p)
+            self.assertIsNone(anchor, "全透明 PNG 应返 None, 不应识别红色")
+
+    def test_pure_white_jpg_returns_none(self):
+        """纯白 JPG → 全是背景 → None."""
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as td:
+            p = Path(td) / "pure_white.jpg"
+            img = Image.new("RGB", (100, 100), (255, 255, 255))
+            img.save(p, format="JPEG", quality=90)
+            anchor = extract_color_anchor(p)
+            self.assertIsNone(anchor, "纯白 JPG 应返 None (产品像素被全部当背景滤掉)")
+
+
 if __name__ == "__main__":
     unittest.main()
