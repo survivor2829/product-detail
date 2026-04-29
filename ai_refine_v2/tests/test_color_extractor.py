@@ -143,6 +143,39 @@ class TestPrimaryColorExtraction(unittest.TestCase):
             self.assertLess(max_channel, 200,
                             f"primary {anchor.primary_hex} 不应极亮 (机身灰应在中等亮度)")
 
+    def test_multicolor_yellow_body_black_wheels(self):
+        """80% 黄机身 + 20% 黑轮: primary='yellow' tier, palette 含 black."""
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            p = Path(td) / "yellow_black.png"
+            # 200x200 RGBA, 80% 黄 (#FFC107) + 20% 黑 (#1A1A1A) + 透明背景
+            img = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+            for y in range(0, 160):
+                for x in range(0, 200):
+                    img.putpixel((x, y), (255, 193, 7, 255))  # 黄
+            for y in range(160, 200):
+                for x in range(0, 200):
+                    img.putpixel((x, y), (26, 26, 26, 255))  # 黑
+            img.save(p, format="PNG")
+            anchor = extract_color_anchor(p)
+            self.assertIsNotNone(anchor)
+
+            # primary 应在黄区间 (R高 G高 B低)
+            r = int(anchor.primary_hex[1:3], 16)
+            g = int(anchor.primary_hex[3:5], 16)
+            b = int(anchor.primary_hex[5:7], 16)
+            self.assertGreater(r, 200, f"primary {anchor.primary_hex} R 通道应高 (黄)")
+            self.assertGreater(g, 150, f"primary {anchor.primary_hex} G 通道应高 (黄)")
+            self.assertLess(b, 100, f"primary {anchor.primary_hex} B 通道应低 (黄)")
+
+            # palette 应含一个黑色簇 (R, G, B 都 < 80)
+            has_black_in_palette = any(
+                int(h[1:3], 16) < 80 and int(h[3:5], 16) < 80 and int(h[5:7], 16) < 80
+                for h in anchor.palette_hex
+            )
+            self.assertTrue(has_black_in_palette,
+                            f"palette {anchor.palette_hex} 应含黑色 secondary (轮子)")
+
 
 if __name__ == "__main__":
     unittest.main()
