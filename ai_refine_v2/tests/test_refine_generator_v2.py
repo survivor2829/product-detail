@@ -612,5 +612,92 @@ class TestInjectionPrefixV3(unittest.TestCase):
                 )
 
 
+class TestColorAnchorDualImage(unittest.TestCase):
+    """v3.2.2 双图 + ENV 三档开关.
+
+    color_anchor 注入路径:
+      ENV=on (默认)  + anchor 成功 → 双图 + TEMPLATE prefix (含 hex)
+      ENV=b1_only   + anchor 成功 → 单图 + TEMPLATE prefix (含 hex)
+      ENV=off       + color 任何 → 单图 + LEGACY prefix (无 hex)
+      ENV 任何       + anchor 失败 → 单图 + LEGACY prefix (跟 v3.2.1 一致)
+    """
+
+    def _make_anchor(self) -> "ColorAnchor":
+        from ai_refine_v2.color_extractor import ColorAnchor
+        return ColorAnchor(
+            primary_hex="#6B7280",
+            palette_hex=["#6B7280", "#3A3D42", "#D8D8D8"],
+            confidence=0.85,
+            swatch_png_bytes=b"\x89PNG\r\n\x1a\n_FAKE_SWATCH_BYTES_",
+        )
+
+    @mock.patch.dict("os.environ", {"COLOR_ANCHOR_DUAL_IMAGE": "on"})
+    def test_env_on_dual_image_with_hex(self):
+        from ai_refine_v2.refine_generator import _generate_one_block_v2
+        block = {"block_id": "test", "visual_type": "hero", "is_hero": True,
+                 "prompt": "test prompt " * 20, "title": "t"}
+        captured = []
+
+        def fake_call(prompt, img_url, api_key, thinking, size):
+            captured.append((prompt, img_url))
+            return "https://example.com/result.png"
+
+        _generate_one_block_v2(
+            block, "data:image/png;base64,FAKE_CUTOUT", "key", fake_call,
+            max_retries=0, thinking="medium", size="3:4",
+            color_anchor=self._make_anchor(),
+        )
+
+        prompt, img_url = captured[0]
+        self.assertIn("#6B7280", prompt, "ENV=on 时 prompt 应含 primary_hex")
+        self.assertIn("Image 2 is a pure-color reference swatch", prompt)
+        self.assertIsInstance(img_url, list, "ENV=on 应双图 list")
+        self.assertEqual(len(img_url), 2)
+
+    @mock.patch.dict("os.environ", {"COLOR_ANCHOR_DUAL_IMAGE": "b1_only"})
+    def test_env_b1_only_single_image_with_hex(self):
+        from ai_refine_v2.refine_generator import _generate_one_block_v2
+        block = {"block_id": "test", "visual_type": "hero", "is_hero": True,
+                 "prompt": "test prompt " * 20, "title": "t"}
+        captured = []
+
+        def fake_call(prompt, img_url, api_key, thinking, size):
+            captured.append((prompt, img_url))
+            return "https://example.com/result.png"
+
+        _generate_one_block_v2(
+            block, "data:image/png;base64,FAKE_CUTOUT", "key", fake_call,
+            max_retries=0, thinking="medium", size="3:4",
+            color_anchor=self._make_anchor(),
+        )
+
+        prompt, img_url = captured[0]
+        self.assertIn("#6B7280", prompt, "ENV=b1_only 时 prompt 仍应含 hex")
+        # b1_only 是字符串 (str) 不是 list
+        self.assertIsInstance(img_url, str, "ENV=b1_only 应单图 str")
+
+    @mock.patch.dict("os.environ", {"COLOR_ANCHOR_DUAL_IMAGE": "off"})
+    def test_env_off_falls_back_to_legacy(self):
+        from ai_refine_v2.refine_generator import _generate_one_block_v2
+        block = {"block_id": "test", "visual_type": "hero", "is_hero": True,
+                 "prompt": "test prompt " * 20, "title": "t"}
+        captured = []
+
+        def fake_call(prompt, img_url, api_key, thinking, size):
+            captured.append((prompt, img_url))
+            return "https://example.com/result.png"
+
+        _generate_one_block_v2(
+            block, "data:image/png;base64,FAKE_CUTOUT", "key", fake_call,
+            max_retries=0, thinking="medium", size="3:4",
+            color_anchor=self._make_anchor(),
+        )
+
+        prompt, img_url = captured[0]
+        self.assertNotIn("#6B7280", prompt, "ENV=off 时 prompt 不应含 hex")
+        self.assertNotIn("Image 2", prompt, "ENV=off 时不应提 Image 2")
+        self.assertIsInstance(img_url, str, "ENV=off 应单图 str")
+
+
 if __name__ == "__main__":
     unittest.main()
