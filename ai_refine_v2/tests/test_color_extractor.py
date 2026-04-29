@@ -1,0 +1,43 @@
+"""color_extractor 单测.
+
+所有 fixture 用 PIL 程序生成, 绝不依赖任何真实产品图 (避免硬编码具体产品).
+"""
+from __future__ import annotations
+
+import io
+import unittest
+from pathlib import Path
+
+from PIL import Image
+
+from ai_refine_v2.color_extractor import ColorAnchor, extract_color_anchor
+
+
+def _make_solid_png(rgb: tuple[int, int, int], size: int = 100, alpha: bool = False) -> bytes:
+    """生成纯色 PNG bytes (in-memory). alpha=True 加 alpha=255."""
+    mode = "RGBA" if alpha else "RGB"
+    color = (*rgb, 255) if alpha else rgb
+    img = Image.new(mode, (size, size), color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestColorAnchorDataclass(unittest.TestCase):
+    """验 ColorAnchor dataclass 的 schema 跟 spec §4.1 一致."""
+
+    def test_color_anchor_fields(self):
+        anchor = ColorAnchor(
+            primary_hex="#FF0000",
+            palette_hex=["#FF0000", "#00FF00", "#0000FF"],
+            confidence=0.85,
+            swatch_png_bytes=b"\x89PNG\r\n\x1a\n",
+        )
+        self.assertEqual(anchor.primary_hex, "#FF0000")
+        self.assertEqual(len(anchor.palette_hex), 3)
+        self.assertAlmostEqual(anchor.confidence, 0.85)
+        self.assertTrue(anchor.swatch_png_bytes.startswith(b"\x89PNG"))
+
+
+if __name__ == "__main__":
+    unittest.main()
