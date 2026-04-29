@@ -30,6 +30,23 @@ class ColorAnchor:
     swatch_png_bytes: bytes
 
 
+def _apply_hsv_white_filter(
+    rgb_pixels: list[tuple[int, int, int]],
+    hsv_pixels: list[tuple[int, int, int]],
+) -> list[tuple[int, int, int]]:
+    """从 rgb_pixels 中过滤白底 (V > 240/255 且 S < 0.05).
+
+    HSV 阈值: V > 240, S < 13 (S 范围 0-255, 0.05 * 255 ≈ 13).
+    rgb_pixels 和 hsv_pixels 必须等长且一一对应.
+    """
+    out: list[tuple[int, int, int]] = []
+    for (r, g, b), (h, s, v) in zip(rgb_pixels, hsv_pixels):
+        if v > 240 and s < 13:
+            continue
+        out.append((r, g, b))
+    return out
+
+
 def _filter_background_pixels(img: Image.Image) -> list[tuple[int, int, int]]:
     """返回非背景像素的 RGB 列表.
 
@@ -44,31 +61,21 @@ def _filter_background_pixels(img: Image.Image) -> list[tuple[int, int, int]]:
         # 对保留的 RGB 像素再做白底过滤 (转 HSV)
         if not rgb_with_alpha:
             return []
+        # Build 1×N RGB temp image for efficient batch HSV conversion
+        # (避免 pixel-by-pixel RGB→HSV 数学)
         temp_img = Image.new("RGB", (len(rgb_with_alpha), 1))
         temp_img.putdata(rgb_with_alpha)
         hsv_img = temp_img.convert("HSV")
         hsv_pixels = list(hsv_img.getdata())
 
-        out = []
-        for (r, g, b), (h, s, v) in zip(rgb_with_alpha, hsv_pixels):
-            # V > 240/255 且 S < 0.05 视为白背景 (S 范围 0-255, 0.05 * 255 ≈ 13)
-            if v > 240 and s < 13:
-                continue
-            out.append((r, g, b))
-        return out
+        return _apply_hsv_white_filter(rgb_with_alpha, hsv_pixels)
 
     # JPG / RGB 路径: 用 HSV 滤白背景
     rgb_img = img.convert("RGB") if img.mode != "RGB" else img
     hsv_img = rgb_img.convert("HSV")
     rgb_pixels = list(rgb_img.getdata())
     hsv_pixels = list(hsv_img.getdata())
-    out = []
-    for (r, g, b), (h, s, v) in zip(rgb_pixels, hsv_pixels):
-        # V > 240/255 且 S < 0.05 视为白背景 (S 范围 0-255, 0.05 * 255 ≈ 13)
-        if v > 240 and s < 13:
-            continue
-        out.append((r, g, b))
-    return out
+    return _apply_hsv_white_filter(rgb_pixels, hsv_pixels)
 
 
 def _kmeans_via_quantize(
