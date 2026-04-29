@@ -566,16 +566,19 @@ _V2_SIZE_DEFAULT = "3:4"  # PRD §阶段二: 1536×2048 锁定
 # 知道 image_urls[0] 是产品参考图, 必须保留产品 silhouette / 主色 / 关键部件.
 # 不喂图屏不注入 (没 image_urls, 注入这句反而误导模型). 跟 cutout_whitelist 联动.
 #
-# v3.2 (2026-04-29 deliberate_iron_rule_5_break_2nd): 强化版,
-# 加 "EXACT original color WITHOUT ambient color shifting", 因为
-# DZ70X (黑色产品) 用 v3.iter2 INJECTION_PREFIX 仍被暖色阳光环境染金色 —
-# 必须显式禁掉 ambient color shifting 才能保黑色产品的颜色.
+# v3.2.1 (2026-04-29 vision-first 转向, 用户实测 HE180/10 浅白灰被染浅灰黄):
+# 之前的版本仍写 "preserve primary color" 但 prompt 文本里 DeepSeek 还会写
+# "the product is industrial blue-gray" 这种颜色字面值, gpt-image-2 看到
+# 文字描述跟自己 vision bias (清洗车 = 黄) 撕扯, 结果按 bias 走染黄.
+# 修法: 把 Image 1 立成"颜色权威", 显式告诉模型: 文字里写的颜色不算数,
+# 看图为准. 反向锚定 vision-first 而不是 text-first.
 _INJECTION_PREFIX_V3 = (
-    "Image 1 is the reference product cutout. Preserve the product's "
-    "EXACT original color WITHOUT ambient color shifting. The product's "
-    "primary color must remain unchanged regardless of lighting or "
-    "background. Preserve silhouette, key visual parts, and original "
-    "hue exactly. "
+    "Image 1 is the AUTHORITATIVE source for the product's color, "
+    "silhouette, and key parts. Match Image 1 exactly. If the text below "
+    "mentions a color that conflicts with Image 1, IGNORE the text — "
+    "Image 1 always wins. Do not substitute the product's color based on "
+    "training data or category conventions; use only the exact RGB hue "
+    "shown in Image 1. Preserve silhouette, parts, and proportions exactly. "
 )
 
 # v3.iter2 默认喂图白名单: 12 个 role 中除 FAQ 外全喂.

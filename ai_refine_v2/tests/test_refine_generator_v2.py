@@ -582,7 +582,7 @@ class TestInjectionPrefixV3(unittest.TestCase):
                 prompt, fed = captured[idx]
                 self.assertTrue(fed, f"idx {idx} 应喂图")
                 self.assertTrue(
-                    prompt.startswith("Image 1 is the reference product cutout"),
+                    prompt.startswith("Image 1 is the AUTHORITATIVE source"),
                     f"idx {idx} 喂图屏 prompt 必须以注入语开头, 实际开头 100 字符: {prompt[:100]!r}",
                 )
 
@@ -593,7 +593,7 @@ class TestInjectionPrefixV3(unittest.TestCase):
         prompt, fed = captured[8]
         self.assertFalse(fed, "FAQ 不应喂图")
         self.assertNotIn(
-            "Image 1 is the reference product cutout", prompt,
+            "Image 1 is the AUTHORITATIVE source", prompt,
             "FAQ 不喂图屏不应有注入语 prefix",
         )
 
@@ -607,7 +607,7 @@ class TestInjectionPrefixV3(unittest.TestCase):
                 prompt, fed = captured[idx]
                 self.assertFalse(fed, f"cutout=None 下 idx {idx} 不应喂图")
                 self.assertNotIn(
-                    "Image 1 is the reference product cutout", prompt,
+                    "Image 1 is the AUTHORITATIVE source", prompt,
                     f"idx {idx} 无 cutout 时不应有注入语",
                 )
 
