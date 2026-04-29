@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
 from ai_refine_v2.color_extractor import ColorAnchor, extract_color_anchor  # v3.2.2
 from ai_refine_v2.prompts.generator import render
@@ -256,7 +256,6 @@ def _to_data_url(path_or_url: str) -> str:
 
 def _to_data_url_from_bytes(png_bytes: bytes, mime: str = "image/png") -> str:
     """把 PNG bytes 转 data URL (色卡用, 全程内存)."""
-    import base64
     b64 = base64.b64encode(png_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}"
 
@@ -683,7 +682,7 @@ def _generate_one_block_v2(
     #   anchor 成功 + ENV=b1_only   → TEMPLATE (单图 + hex 文字锚)
     #   anchor 失败 / ENV=off       → LEGACY (v3.2.1 单图无 hex)
     effective_prompt = prompt
-    effective_image_urls: Optional[object] = image_data_url  # str | list[str] | None
+    effective_image_urls: Optional[Union[str, list[str]]] = image_data_url
 
     if image_data_url:
         env_mode = os.getenv("COLOR_ANCHOR_DUAL_IMAGE", "on").strip().lower()
@@ -879,7 +878,7 @@ def generate_v2(
                 _generate_one_block_v2,
                 b, _cutout_for(b), use_key, call_fn,
                 max_retries_sp, thinking, size,
-                color_anchor,
+                color_anchor=color_anchor,
             ): b
             for b in sp_blocks
         }
