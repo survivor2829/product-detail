@@ -236,12 +236,19 @@ ApiCallFn = Callable[[str, Optional[str], str, str, str], str]
 
 
 # ── 工具: 产品图 → data URL ────────────────────────────────────
-def _to_data_url(path_or_url: str) -> str:
+def _to_data_url(
+    path_or_url: str,
+    *,
+    max_bytes: int = 5_000_000,
+    max_dim: int = 1024,
+) -> str:
     """路径/URL 规范化到可喂 APIMart 的字符串.
 
     - data:... → 原样返回
     - http(s):// → 原样返回 (APIMart 支持远程 URL)
     - 本地路径 → 读文件, base64 编码为 data URL
+      文件 > max_bytes 时 Pillow resize 到 max_dim 长边重压 (防 APIMart 413 / 超时).
+      实测案例: HE150-60 透图 33MB → 480KB (2026-04-30).
     """
     if path_or_url.startswith(("data:", "http://", "https://")):
         return path_or_url
@@ -250,6 +257,29 @@ def _to_data_url(path_or_url: str) -> str:
     mime, _ = mimetypes.guess_type(p.name)
     if not mime:
         mime = "image/png"
+
+    if len(raw) > max_bytes:
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(raw))
+            if max(img.size) > max_dim:
+                ratio = max_dim / max(img.size)
+                img = img.resize(
+                    (int(img.size[0] * ratio), int(img.size[1] * ratio)),
+                    Image.LANCZOS,
+                )
+            buf = io.BytesIO()
+            if img.mode == "RGBA":
+                img.save(buf, format="PNG", optimize=True)
+                mime = "image/png"
+            else:
+                img.convert("RGB").save(buf, format="JPEG", optimize=True, quality=88)
+                mime = "image/jpeg"
+            raw = buf.getvalue()
+        except Exception:
+            pass  # resize 失败仍用原 raw, 让 API 自己拒
+
     b64 = base64.b64encode(raw).decode("ascii")
     return f"data:{mime};base64,{b64}"
 

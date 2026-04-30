@@ -699,5 +699,60 @@ class TestColorAnchorDualImage(unittest.TestCase):
         self.assertIsInstance(img_url, str, "ENV=off 应单图 str")
 
 
+class TestToDataUrlResize(unittest.TestCase):
+    """_to_data_url 文件兜底: 过大文件 resize 防 APIMart 413/超时.
+
+    实测案例: HE150-60 透图 33MB cutout 直接 base64 → 45MB data URL → API 拒.
+    Patch 后: max_bytes=5MB 触发 Pillow resize 到 max_dim=1024 长边重压.
+    """
+
+    def test_passthrough_remote_url_unchanged(self):
+        """http(s):// + data:... 直接返回, 不读盘不 resize."""
+        from ai_refine_v2.refine_generator import _to_data_url
+        for url in ("https://example.com/x.png", "data:image/png;base64,abc"):
+            self.assertEqual(_to_data_url(url), url, f"{url!r} 应原样返回")
+
+    def test_small_file_no_resize(self):
+        """文件 < max_bytes 时原样 base64, 不调 PIL."""
+        from ai_refine_v2.refine_generator import _to_data_url
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from PIL import Image
+        import base64
+
+        with TemporaryDirectory() as td:
+            p = Path(td) / "small.png"
+            Image.new("RGB", (100, 100), (50, 100, 200)).save(p, "PNG")
+            url = _to_data_url(str(p))
+            self.assertTrue(url.startswith("data:image/png;base64,"))
+            decoded = base64.b64decode(url.split(",", 1)[1])
+            self.assertEqual(decoded, p.read_bytes(),
+                "小文件应原样 base64, 不重压")
+
+    def test_oversize_file_resized(self):
+        """文件 > max_bytes 触发 resize, 长边 ≤ max_dim, 仍是合法图."""
+        from ai_refine_v2.refine_generator import _to_data_url
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from PIL import Image
+        import base64
+        import io
+
+        with TemporaryDirectory() as td:
+            p = Path(td) / "big.png"
+            # 2000x1500 RGB, 用低 max_bytes=100 强制触发 resize
+            Image.new("RGB", (2000, 1500), (180, 90, 30)).save(p, "PNG")
+
+            url = _to_data_url(str(p), max_bytes=100, max_dim=512)
+            self.assertTrue(url.startswith(("data:image/png;base64,",
+                                            "data:image/jpeg;base64,")))
+            decoded = base64.b64decode(url.split(",", 1)[1])
+            img = Image.open(io.BytesIO(decoded))
+            self.assertLessEqual(max(img.size), 512,
+                f"长边应 ≤ max_dim=512, 实际 {img.size}")
+            self.assertLess(len(decoded), p.stat().st_size,
+                "resize 后体积应小于原图")
+
+
 if __name__ == "__main__":
     unittest.main()
