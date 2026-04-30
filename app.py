@@ -1756,6 +1756,59 @@ def batch_ai_refine_start(batch_id):
     })
 
 
+# ── v3.3 单屏 reroll 锁字典 (per-process, gthread worker 共享) ──
+_REGEN_LOCKS: dict[str, threading.Lock] = {}
+_REGEN_LOCKS_GUARD = threading.Lock()
+
+
+def _get_regen_lock(item_pk: int, block_index: int) -> threading.Lock:
+    key = f"{item_pk}:{block_index}"
+    with _REGEN_LOCKS_GUARD:
+        lk = _REGEN_LOCKS.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _REGEN_LOCKS[key] = lk
+        return lk
+
+
+@app.route(
+    "/api/batch/<batch_id>/items/<int:item_pk>/regenerate-screen",
+    methods=["POST"],
+)
+@login_required
+def batch_item_regenerate_screen(batch_id, item_pk):
+    """v3.3 单屏 reroll. spec: 2026-04-30-regenerate-screen-design.md"""
+    batch = Batch.query.filter_by(batch_id=batch_id).first()
+    if batch is None:
+        return jsonify({"error": f"批次不存在: {batch_id}"}), 404
+    # owner 校验严格度跟 /ai-refine-start 拉齐 (app.py:1631):
+    # "user_id is None or != current_user.id" — 拒绝 NULL owner (legacy 数据安全).
+    # 不能写成 "is not None and !=" — 那样 NULL owner 任何人都能 reroll → 跨用户扣费漏洞.
+    if batch.user_id is None or batch.user_id != current_user.id:
+        return jsonify({"error": "只有批次上传者可以重生"}), 403
+
+    item = BatchItem.query.filter_by(id=item_pk, batch_pk=batch.id).first()
+    if item is None:
+        return jsonify({"error": f"产品不存在: {item_pk}"}), 404
+
+    if item.ai_refine_status != "done":
+        return jsonify({
+            "error": "仅完成的产品可 reroll",
+            "current_status": item.ai_refine_status,
+        }), 409
+
+    data = request.get_json(silent=True) or {}
+    if "block_index" not in data:
+        return jsonify({"error": "block_index 必填"}), 400
+    try:
+        block_index = int(data["block_index"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "block_index 必须是整数"}), 400
+
+    # Task 6 补: 锁 + 真实调用 + WS publish
+    return jsonify({"todo": "task6"}), 501
+
+
 @app.route("/api/batch/<batch_id>/start", methods=["POST"])
 @login_required
 def batch_start_real(batch_id):
