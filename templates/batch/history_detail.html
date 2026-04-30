@@ -124,6 +124,23 @@
     border-color: var(--color-border); cursor: not-allowed; pointer-events: none;
   }
 
+  /* split-view toggle (Task 7) */
+  .hd-view-toggle { display: flex; gap: 8px; margin: 12px 0; }
+  .btn-toggle {
+    padding: 6px 14px; border: 1px solid var(--color-border);
+    background: var(--color-bg-card, var(--color-bg)); cursor: pointer;
+    border-radius: var(--radius-sm); font-size: 12px;
+    transition: all var(--transition-fast);
+  }
+  .btn-toggle.btn-active {
+    background: var(--color-primary); color: white;
+    border-color: var(--color-primary);
+  }
+  .hd-split-loading {
+    padding: 40px 20px; text-align: center;
+    color: var(--color-text-muted); font-size: 13px;
+  }
+
   .hd-loading, .hd-empty {
     padding: 60px 20px; text-align: center; color: var(--color-text-muted);
   }
@@ -303,7 +320,7 @@
          </div>
          <span class="hd-btn-dl hd-btn-disabled" title="文件已丢失, 无法下载">↓ HTML版</span>`;
 
-    const aiCol = hasAI
+    const aiImgInner = hasAI
       ? `<img class="hd-thumb" src="${escapeHtml(aiUrl)}" alt=""
              onclick="openLightbox(${JSON.stringify(aiUrl)}, 'AI 精修 · ' + ${JSON.stringify(item.name || '')})">
          <a class="hd-btn-dl" href="/api/batch/${bidEnc}/download?name=${nameEnc}&kind=ai">↓ AI版</a>`
@@ -312,6 +329,18 @@
            <span>${item.ai_refine_status === 'done' ? '文件已丢失' : '未精修 / 未生成'}</span>
          </div>
          <span class="hd-btn-dl hd-btn-disabled" title="文件未生成">↓ AI版</span>`;
+
+    const aiCol = `
+      <div class="hd-view-toggle" data-item-id="${item.id}">
+        <button type="button" class="btn-toggle btn-active" data-mode="full">长图视图</button>
+        <button type="button" class="btn-toggle" data-mode="split">分屏视图 (12 屏)</button>
+      </div>
+      <div class="hd-view-full">
+        ${aiImgInner}
+      </div>
+      <div class="hd-view-split" style="display:none;">
+        <div class="hd-split-loading">加载分屏中...</div>
+      </div>`;
 
     return `
       <div class="hd-card" data-name="${safeName}" data-item-id="${item.id}">
@@ -373,6 +402,17 @@
     }
     listEl.innerHTML = items.map(it => renderItemCard(it, data.batch_id)).join('');
   }
+
+  // ── split-view toggle (Task 7) ────────────────────────────
+  document.addEventListener('click', (e) => {
+    if (!e.target.classList.contains('btn-toggle')) return;
+    const wrap = e.target.closest('.hd-view-toggle').parentElement;
+    const mode = e.target.dataset.mode;
+    wrap.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('btn-active'));
+    e.target.classList.add('btn-active');
+    wrap.querySelector('.hd-view-full').style.display = mode === 'full' ? '' : 'none';
+    wrap.querySelector('.hd-view-split').style.display = mode === 'split' ? '' : 'none';
+  });
 
   init();
 </script>
