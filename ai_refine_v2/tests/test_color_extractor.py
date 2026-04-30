@@ -143,6 +143,32 @@ class TestPrimaryColorExtraction(unittest.TestCase):
             self.assertLess(max_channel, 200,
                             f"primary {anchor.primary_hex} 不应极亮 (机身灰应在中等亮度)")
 
+    def test_he180_real_world_dispersed_grays(self):
+        """5 灰阶分散 fixture (主簇 ~30%) 必须进双图锚定路径, 不被当多色无主导丢弃."""
+        from tempfile import TemporaryDirectory
+        from ai_refine_v2.color_extractor import _hex_to_rgb
+        with TemporaryDirectory() as td:
+            p = Path(td) / "he180_dispersed.png"
+            img = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
+            grays = [(128, 131, 134), (67, 67, 70), (18, 18, 19),
+                     (224, 224, 224), (235, 234, 234)]
+            band_heights = [30, 25, 20, 15, 10]  # sum=100, 各簇占非背景 ~30/25/20/15/10%
+            y_start = 0
+            for h, gray in zip(band_heights, grays):
+                img.paste(Image.new("RGBA", (60, h), (*gray, 255)), (20, y_start))
+                y_start += h
+            img.save(p, format="PNG")
+            anchor = extract_color_anchor(p)
+            self.assertIsNotNone(anchor,
+                "5 灰阶分散主簇 ~30% 应能进双图锚定路径 (反对症 fallback)")
+
+            r, g, b = _hex_to_rgb(anchor.primary_hex)
+            self.assertLess(max(r, g, b) - min(r, g, b), 20,
+                f"primary {anchor.primary_hex} 必须在灰阶, 实际 spread={max(r,g,b)-min(r,g,b)}")
+            is_yellow_ish = (r > 200 and g > 200 and b < 150)
+            self.assertFalse(is_yellow_ish,
+                f"分散灰阶 primary {anchor.primary_hex} 不应染黄")
+
     def test_multicolor_yellow_body_black_wheels(self):
         """80% 黄机身 + 20% 黑轮: primary='yellow' tier, palette 含 black."""
         from tempfile import TemporaryDirectory

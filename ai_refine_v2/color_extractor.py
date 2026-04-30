@@ -109,6 +109,12 @@ def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     return "#{:02X}{:02X}{:02X}".format(*rgb)
 
 
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """'#RRGGBB' / 'RRGGBB' → (r, g, b). 大小写不敏感."""
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
 def _render_swatch_png(hex_color: str, size: int = 512) -> bytes:
     """渲染纯色色卡 PNG bytes (in-memory).
 
@@ -116,10 +122,7 @@ def _render_swatch_png(hex_color: str, size: int = 512) -> bytes:
     PNG 在写盘前不落盘, 全程 io.BytesIO.
     """
     import io
-    r = int(hex_color[1:3], 16)
-    g = int(hex_color[3:5], 16)
-    b = int(hex_color[5:7], 16)
-    img = Image.new("RGB", (size, size), (r, g, b))
+    img = Image.new("RGB", (size, size), _hex_to_rgb(hex_color))
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -130,7 +133,7 @@ def extract_color_anchor(
     *,
     downsample_to: int = 200,
     min_non_bg_pixels: int = 100,
-    min_confidence: float = 0.30,
+    min_confidence: float = 0.25,
     swatch_size: int = 512,
 ) -> Optional[ColorAnchor]:
     """从 cutout 算主色 hex 锚, 失败返 None (调用方走 fallback).
