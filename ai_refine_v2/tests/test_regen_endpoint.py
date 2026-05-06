@@ -12,29 +12,12 @@ from unittest import mock
 
 from app import app, db
 from models import User, Batch, BatchItem
+from ai_refine_v2.tests.conftest import cleanup_user as _cleanup_user
 
 
 def _uid(prefix: str) -> str:
     """返回跨 session 唯一的字符串 ID，避免与其他测试文件的 batch_id / username 冲突."""
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
-
-
-def _cleanup_user(username: str) -> None:
-    """在 app context 里删除指定用户及其关联 Batch 行（幂等）。
-
-    Batch.user_id FK 没有 ondelete=CASCADE，所以必须先手动删 Batch
-    （Batch→BatchItem 有 cascade，会连带删除）再删 User。
-    """
-    with app.app_context():
-        u = User.query.filter_by(username=username).first()
-        if u is None:
-            return
-        # 先删关联 Batch 行（BatchItem 由 ORM cascade 跟删）
-        for b in Batch.query.filter_by(user_id=u.id).all():
-            db.session.delete(b)
-        db.session.flush()
-        db.session.delete(u)
-        db.session.commit()
 
 
 def _make_authed_client(test_instance: unittest.TestCase, username="testuser"):

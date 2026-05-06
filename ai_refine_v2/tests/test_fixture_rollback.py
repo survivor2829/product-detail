@@ -1,60 +1,56 @@
-"""P0 僵尸清理 — 验证 addCleanup teardown 机制真正防止残留行.
+"""验证 addCleanup 模式真在 test 结束后清理 User row.
 
-这两个测试必须按顺序执行且都绿才算 fixture 有效:
-  test_a: 在 DB 里创建 fixture_test_a 用户
-  test_b: 断言 fixture_test_a 已被清除（因为 test_a 注册了 addCleanup）
-
-逻辑上 test_b 是 test_a 的"事后验尸"。
-pytest 默认按字母序执行同文件内的方法，a < b 保证顺序正确。
+不依赖 pytest 测试方法收集顺序 (避免 pytest-randomly / xdist 时变绿).
+单测内部驱动 unittest.TestCase 的完整生命周期来证 cleanup 真触发.
 """
 from __future__ import annotations
 
 import unittest
 
 from app import app, db
-from models import User, Batch
+from models import User
+from ai_refine_v2.tests.conftest import cleanup_user
 
 
-def _cleanup_user(username: str) -> None:
-    """在 app context 里删除指定用户及关联 Batch 行（幂等）。
+class _InnerTest(unittest.TestCase):
+    """内嵌一个 fake test 用于让外层测试驱动其 lifecycle."""
 
-    Batch.user_id FK 没有 ondelete=CASCADE，必须先删 Batch 再删 User。
-    """
-    with app.app_context():
-        u = User.query.filter_by(username=username).first()
-        if u is None:
-            return
-        for b in Batch.query.filter_by(user_id=u.id).all():
-            db.session.delete(b)
-        db.session.flush()
-        db.session.delete(u)
-        db.session.commit()
+    def runTest(self):
+        with app.app_context():
+            u = User(username="fixture_rollback_inner_user")
+            u.set_password("x")
+            db.session.add(u)
+            db.session.commit()
+        # 注册 cleanup; runTest() 完后 unittest 自动调
+        self.addCleanup(cleanup_user, "fixture_rollback_inner_user")
 
 
-class TestAddCleanupPattern(unittest.TestCase):
-    """验证 addCleanup 能防止僵尸用户残留."""
+class TestAddCleanupActuallyFires(unittest.TestCase):
+    """断言 addCleanup 真触发 + 真清掉 row, 不依赖外部测试顺序."""
 
     def setUp(self):
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
 
-    def test_a_create_user_with_cleanup(self):
-        """创建用户并注册 addCleanup——测试结束后行应被删除."""
-        username = "fixture_test_a"
-        # 注册清理钩子（在 test_a 结束时执行）
-        self.addCleanup(_cleanup_user, username)
+    def test_cleanup_fires_after_test_completes(self):
+        # 跑内层 fake test 一次; unittest.TestCase.run() 会自动调所有 addCleanup
+        result = unittest.TestResult()
+        _InnerTest().run(result)
 
+        # 断言 fake test 自身没崩
+        self.assertEqual(len(result.errors), 0,
+                         f"内层 test 报错: {result.errors}")
+        self.assertEqual(len(result.failures), 0,
+                         f"内层 test 失败: {result.failures}")
+
+        # 真正断言: 那个 user 已经被 cleanup 了
         with app.app_context():
-            u = User(username=username, is_approved=True, is_paid=True)
-            u.set_password("x")
-            db.session.add(u)
-            db.session.commit()
-            found = User.query.filter_by(username=username).first()
+            found = User.query.filter_by(
+                username="fixture_rollback_inner_user").first()
+            self.assertIsNone(found,
+                              "addCleanup 没真触发, fixture_rollback_inner_user 还在 DB")
 
-        self.assertIsNotNone(found, "用户应在 test_a 里可见")
-
-    def test_b_user_from_test_a_is_gone(self):
-        """test_a 的 addCleanup 执行后，fixture_test_a 行应已消失."""
-        with app.app_context():
-            found = User.query.filter_by(username="fixture_test_a").first()
-        self.assertIsNone(found, "fixture_test_a 没被 addCleanup 清除, 是个 bug")
+    def test_cleanup_with_no_existing_user_is_noop(self):
+        """边界: cleanup_user 调用一个不存在的 username 不应报错."""
+        cleanup_user("definitely_does_not_exist_xyz_12345")
+        # 不抛异常 = 通过
