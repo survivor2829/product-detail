@@ -84,7 +84,7 @@ if not _db_url.startswith("sqlite"):
     }
 
 # ── 初始化扩展 ──
-from extensions import db, login_manager, migrate
+from extensions import db, login_manager, migrate, limiter
 from models import User, GenerationLog, Batch, BatchItem
 from sqlalchemy import func as _sa_func
 import json as _json_mod
@@ -97,6 +97,7 @@ sock = _Sock(app)
 db.init_app(app)
 login_manager.init_app(app)
 migrate.init_app(app, db)
+limiter.init_app(app)  # P4 §A.4: 登录暴力破解限流, 装饰器在 auth.py
 
 # ── SQLite 默认 PRAGMA foreign_keys=OFF, 必须每连接都打开,
 #    否则 ON DELETE CASCADE 不生效 → 删 Batch 不会带走 BatchItem,

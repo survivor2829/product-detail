@@ -4,13 +4,14 @@
 from urllib.parse import urlparse
 from flask import Blueprint, render_template, redirect, url_for, request, flash
 from flask_login import login_user, logout_user, login_required, current_user
-from extensions import db
+from extensions import db, limiter
 from models import User
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute; 20 per hour", methods=["POST"])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("index"))
