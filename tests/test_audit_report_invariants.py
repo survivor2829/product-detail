@@ -73,6 +73,31 @@ class TestAuditReport(unittest.TestCase):
         for n in range(1, 5):
             self.assertIn(f"根因 {n}", rc_section, f"根因模式缺第 {n} 项")
 
+    def test_top10_stubs_exist(self):
+        """Top 10 每条都必须有对应 _stubs/ 文件 (Scott review 时点链接可看到详细方案)."""
+        expected_stubs = [
+            "C5-except-pass-decrypt-stub.md",
+            "A1-secret-key-fallback-stub.md",
+            "B4-windows-font-path-stub.md",
+            "C10-clear-proxy-race-stub.md",
+            "A6-task-id-idor-stub.md",
+            "A4-login-no-ratelimit-stub.md",
+            "C1-no-logging-stub.md",
+            "B1-app-py-god-module-stub.md",
+            "B7-map-parsed-spaghetti-stub.md",
+            "B5-prompt-template-monolith-stub.md",
+        ]
+        missing = [s for s in expected_stubs if not (STUBS_DIR / s).exists()]
+        self.assertFalse(missing, f"缺 stub: {missing}")
+
+    def test_each_stub_has_required_sections(self):
+        """每个 stub 必须含: 问题简述 / 修复方案 / checklist."""
+        required = ["问题简述", "修复方案", "checklist"]
+        for stub in STUBS_DIR.glob("*-stub.md"):
+            text = stub.read_text(encoding="utf-8")
+            for section in required:
+                self.assertIn(section, text, f"{stub.name} 缺节: {section}")
+
 
 if __name__ == "__main__":
     unittest.main()
