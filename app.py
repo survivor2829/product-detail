@@ -80,10 +80,22 @@ PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else {}
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-_secret_key = os.environ.get("SECRET_KEY", "")
-if not _secret_key and os.environ.get("FLASK_ENV") != "development":
-    print("[警告] 未设置 SECRET_KEY 环境变量，使用开发默认值（生产环境请务必设置）")
-app.config["SECRET_KEY"] = _secret_key or "dev-change-me-in-production"
+# ── P4 §A.1 修复: SECRET_KEY 必填, 不再有公开默认值兜底 ──
+# 原 bug: `_secret_key or "dev-change-me-in-production"` 在生产环境 SECRET_KEY
+# 缺失时会静默用公开字符串, 攻击者可伪造 session cookie 接管账号.
+# 修复 (per audit stub A1 方案 A): 非 development 直接 sys.exit(1) fail-fast.
+_secret_key = os.environ.get("SECRET_KEY", "").strip()
+if not _secret_key:
+    if os.environ.get("FLASK_ENV") == "development":
+        _secret_key = "dev-change-me-in-production"
+    else:
+        sys.stderr.write(
+            "[FATAL] SECRET_KEY 未设, 拒绝在非 development 环境启动.\n"
+            "  生成: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+            "  写入 .env: SECRET_KEY=<生成值>\n"
+        )
+        sys.exit(1)
+app.config["SECRET_KEY"] = _secret_key
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///wubaoyun.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
