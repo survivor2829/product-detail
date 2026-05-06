@@ -75,6 +75,15 @@ python app.py
 
 `.claude/` 目录是项目的 Claude Code 协作配置，已落地的内容如下：
 
+### Agent 自主性约定（档 2 PR 模式）
+
+详见 `.claude/AUTONOMY.md`（2026-05-06 由 master roadmap §6 定义）。
+
+简版规则：
+- **自动 OK**：编辑/测试/commit/push feature 分支/开 PR
+- **stop and ask**：merge PR、deploy、花钱、动 prod
+- **PR 自审 checklist**：全测、smoke、PR description 5 节齐备
+
 ### 任务路由（按工作类型选 agent / skill）
 
 | 任务类型 | 用什么 | 入口 |
