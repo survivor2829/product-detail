@@ -49,6 +49,9 @@ def main() -> None:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    # P3 砍刀流后 app.py 启动校验 platform key, hook 跑开发模式绕过校验
+    # (生产部署在 .env 配齐 key, 不依赖 FLASK_ENV)
+    env.setdefault("FLASK_ENV", "development")
     # import app 不需要代理，清掉避免 Clash 对 DashScope SDK 初始化造成影响
     for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
               "http_proxy", "https_proxy", "all_proxy"):
