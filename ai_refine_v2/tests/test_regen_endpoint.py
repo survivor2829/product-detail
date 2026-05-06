@@ -19,7 +19,31 @@ def _uid(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
-def _make_authed_client(username="testuser"):
+def _cleanup_user(username: str) -> None:
+    """在 app context 里删除指定用户及其关联 Batch 行（幂等）。
+
+    Batch.user_id FK 没有 ondelete=CASCADE，所以必须先手动删 Batch
+    （Batch→BatchItem 有 cascade，会连带删除）再删 User。
+    """
+    with app.app_context():
+        u = User.query.filter_by(username=username).first()
+        if u is None:
+            return
+        # 先删关联 Batch 行（BatchItem 由 ORM cascade 跟删）
+        for b in Batch.query.filter_by(user_id=u.id).all():
+            db.session.delete(b)
+        db.session.flush()
+        db.session.delete(u)
+        db.session.commit()
+
+
+def _make_authed_client(test_instance: unittest.TestCase, username="testuser"):
+    """创建已登录的测试客户端，并注册 addCleanup 以防止僵尸用户残留。
+
+    Args:
+        test_instance: 调用方的 TestCase 实例（self），用于注册 addCleanup。
+        username: 要创建或复用的用户名；调用方应传 _uid(...) 生成的唯一名。
+    """
     client = app.test_client()
     with app.app_context():
         u = User.query.filter_by(username=username).first()
@@ -28,6 +52,8 @@ def _make_authed_client(username="testuser"):
             u.set_password("x")
             db.session.add(u)
             db.session.commit()
+            # 仅对新创建的行注册清理，避免误删预存测试用户
+            test_instance.addCleanup(_cleanup_user, username)
         uid = u.id
     with client.session_transaction() as sess:
         sess["_user_id"] = str(uid)
@@ -45,7 +71,7 @@ class TestRegenEndpoint4xx(unittest.TestCase):
         self.assertIn(r.status_code, (302, 401))
 
     def test_batch_not_exist_404(self):
-        client, _ = _make_authed_client()
+        client, _ = _make_authed_client(self)
         r = client.post(
             "/api/batch/NOTEXIST/items/1/regenerate-screen",
             json={"block_index": 0},
@@ -56,12 +82,13 @@ class TestRegenEndpoint4xx(unittest.TestCase):
         alice_name = _uid("alice")
         bob_name = _uid("bob_other")
         batch_id = _uid("bob_batch")
-        client, my_uid = _make_authed_client(alice_name)
+        client, my_uid = _make_authed_client(self, alice_name)
         with app.app_context():
             other = User(username=bob_name, is_approved=True)
             other.set_password("x")
             db.session.add(other)
             db.session.commit()
+            self.addCleanup(_cleanup_user, bob_name)
             b = Batch(batch_id=batch_id, name="b", raw_name="b",
                       user_id=other.id, batch_dir="x")
             db.session.add(b)
@@ -75,7 +102,7 @@ class TestRegenEndpoint4xx(unittest.TestCase):
     def test_item_not_done_409(self):
         username = _uid("done_user")
         batch_id = _uid("d_b")
-        client, uid = _make_authed_client(username)
+        client, uid = _make_authed_client(self, username)
         with app.app_context():
             b = Batch(batch_id=batch_id, name="b", raw_name="b", user_id=uid,
                       batch_dir="x")
@@ -96,7 +123,7 @@ class TestRegenEndpoint4xx(unittest.TestCase):
     def test_block_index_missing_400(self):
         username = _uid("bi_user")
         batch_id = _uid("bi_b")
-        client, uid = _make_authed_client(username)
+        client, uid = _make_authed_client(self, username)
         with app.app_context():
             b = Batch(batch_id=batch_id, name="b", raw_name="b", user_id=uid,
                       batch_dir="x")
@@ -124,7 +151,7 @@ class TestRegenEndpoint200(unittest.TestCase):
         from pathlib import Path
         username = _uid("ok_user")
         batch_id = _uid("ok_b")
-        client, uid = _make_authed_client(username)
+        client, uid = _make_authed_client(self, username)
         with app.app_context():
             b = Batch(batch_id=batch_id, name="b", raw_name="b", user_id=uid,
                       batch_dir="x")
@@ -186,7 +213,7 @@ class TestRegenEndpointLock(unittest.TestCase):
         from app import _get_regen_lock
         username = _uid("lock_user")
         batch_id = _uid("l_b")
-        client, uid = _make_authed_client(username)
+        client, uid = _make_authed_client(self, username)
         with app.app_context():
             b = Batch(batch_id=batch_id, name="b", raw_name="b", user_id=uid,
                       batch_dir="x")
