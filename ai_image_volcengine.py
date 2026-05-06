@@ -25,22 +25,10 @@ _SESSION.mount("https://", HTTPAdapter(pool_connections=10, pool_maxsize=10))
 _SESSION.trust_env = False
 
 # ── 代理清除（火山方舟国内服务，不走 Clash）───────────────────
-_PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-               "http_proxy", "https_proxy", "all_proxy")
-
-
-def _clear_proxy():
-    saved = {}
-    for k in _PROXY_KEYS:
-        if k in os.environ:
-            saved[k] = os.environ.pop(k)
-    return saved
-
-
-def _restore_proxy(saved):
-    for k, v in saved.items():
-        os.environ[k] = v
-
+# P4 §C.10 修复: 删 _clear_proxy / _restore_proxy 全部.
+# _SESSION.trust_env=False (line 25) + per-call proxies={} (双保险) 已能完全
+# 阻断代理介入, 多线程下 0 race. 原 pop os.environ 模式在 batch_queue 3-worker
+# 并发时可能让线程 B 看不到 saved 状态, 还原阶段引发污染.
 
 # ── 核心生图函数 ──────────────────────────────────────────────
 
@@ -79,7 +67,6 @@ def generate_background(prompt: str, api_key: str,
         "Content-Type": "application/json",
     }
 
-    saved = _clear_proxy()
     try:
         # proxies={} 双保险 — 即使 trust_env 漏网也绝不走代理
         resp = _SESSION.post(ARK_ENDPOINT, json=payload, headers=headers,
@@ -88,8 +75,6 @@ def generate_background(prompt: str, api_key: str,
         print("[豆包生图] 网络请求失败:")
         traceback.print_exc()
         return []
-    finally:
-        _restore_proxy(saved)
 
     # Parse response body regardless of HTTP status — API embeds error details in JSON
     try:
@@ -163,7 +148,6 @@ def download_image(url: str, save_dir, filename: str = "") -> str:
         filename = f"doubao_bg_{int(time.time())}_{os.urandom(4).hex()}.png"
 
     save_path = save_dir / filename
-    saved = _clear_proxy()
     try:
         r = _SESSION.get(url, timeout=60, proxies={"http": "", "https": ""})
         r.raise_for_status()
@@ -175,8 +159,6 @@ def download_image(url: str, save_dir, filename: str = "") -> str:
         print("[豆包生图] 下载失败:")
         traceback.print_exc()
         return ""
-    finally:
-        _restore_proxy(saved)
 
 
 # ── 预设 Prompt 模板（与 ai_image.py 对齐，可针对豆包特性微调）────

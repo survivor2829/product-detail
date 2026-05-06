@@ -16,27 +16,28 @@ dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
 
 # 复用 TCP/TLS 连接，多段下载时省去 ~200-400ms 握手开销
 _SESSION = requests.Session()
+# trust_env=False: 不读 HTTP_PROXY / HTTPS_PROXY 等环境变量, 避免 Clash 介入 DashScope CDN 下载
+_SESSION.trust_env = False
 _SESSION.mount("https://", HTTPAdapter(pool_connections=10, pool_maxsize=10))
 
 # 默认模型
 T2I_MODEL = "wan2.6-t2i"
 
-# 调用前清除代理（阿里云API不走代理）
+# P4 §C.10 修复: 进程级一次性 unset 代理 env, 替代 per-request pop/restore
+# (per audit stub C10 方案 A). 原 _clear_proxy/_restore_proxy 在 batch_queue
+# 3-worker 并发时 race: A pop → B saved 空 → A restore → B 后续请求带回代理.
+# DashScope SDK 不允许 session 级配置, 只能模块加载时一次性 unset (单线程, 0 race).
 _PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                "http_proxy", "https_proxy", "all_proxy")
 
 
-def _clear_proxy():
-    saved = {}
+def _disable_proxy_for_dashscope() -> None:
+    """模块加载时一次性 unset 代理 env. 进程级单次操作, 多线程安全."""
     for k in _PROXY_KEYS:
-        if k in os.environ:
-            saved[k] = os.environ.pop(k)
-    return saved
+        os.environ.pop(k, None)
 
 
-def _restore_proxy(saved):
-    for k, v in saved.items():
-        os.environ[k] = v
+_disable_proxy_for_dashscope()
 
 
 _DASHSCOPE_SIZES = ["768*1344", "960*1280", "960*1696", "1024*1024",
@@ -67,20 +68,17 @@ def generate_background(prompt: str, api_key: str,
 
     msg = Message(role='user', content=[{'text': prompt}])
 
-    saved = _clear_proxy()
-    try:
-        rsp = ImageGeneration.call(
-            model=T2I_MODEL,
-            api_key=api_key,
-            messages=[msg],
-            negative_prompt=neg,
-            prompt_extend=True,
-            watermark=False,
-            n=n,
-            size=size,
-        )
-    finally:
-        _restore_proxy(saved)
+    # 代理已在模块加载时 _disable_proxy_for_dashscope() unset, 此处直接调
+    rsp = ImageGeneration.call(
+        model=T2I_MODEL,
+        api_key=api_key,
+        messages=[msg],
+        negative_prompt=neg,
+        prompt_extend=True,
+        watermark=False,
+        n=n,
+        size=size,
+    )
 
     if rsp.status_code != 200:
         print(f"[AI生图] 失败: {rsp.code} - {rsp.message}")
@@ -117,7 +115,7 @@ def download_image(url: str, save_dir: str | Path, filename: str = "") -> str:
         filename = f"ai_bg_{int(time.time())}_{os.urandom(4).hex()}.png"
 
     save_path = save_dir / filename
-    saved = _clear_proxy()
+    # _SESSION.trust_env=False + 模块级 _disable_proxy_for_dashscope() 已是双保险
     try:
         resp = _SESSION.get(url, timeout=60)
         resp.raise_for_status()
@@ -128,8 +126,6 @@ def download_image(url: str, save_dir: str | Path, filename: str = "") -> str:
     except Exception as e:
         print(f"[AI生图] 下载失败: {e}")
         return ""
-    finally:
-        _restore_proxy(saved)
 
 
 # ── 预设 Prompt 模板 ─────────────────────────────────────────────────
