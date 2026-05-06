@@ -151,13 +151,19 @@ def _update_batch_product(batch_id: str, name: str, status: str,
 
 
 # ── 单品池：散提交 ──────────────────────────────────────────────────
-def submit_single(task_id: str, payload: dict, processor_fn: ProcessorFn) -> dict:
-    """提交一个单品任务到单品池。"""
+def submit_single(task_id: str, payload: dict, processor_fn: ProcessorFn,
+                  user_id: int | None = None) -> dict:
+    """提交一个单品任务到单品池.
+
+    user_id: 任务发起人 ID (P4 §A.6 owner 标记). 路由轮询时校验 task_id ownership.
+             None = 后台脚本 / mock (允许 admin 读, 普通用户 403).
+    """
     with _lock:
         if task_id in _single_tasks:
             raise ValueError(f"task_id 已存在: {task_id}")
         state = {
             "task_id": task_id,
+            "user_id": user_id,  # P4 §A.6: owner 标记防 IDOR
             "status": "pending",
             "payload": payload,
             "started_at": None,

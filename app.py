@@ -1898,6 +1898,7 @@ def single_mock_task():
             task_id=tid,
             payload={"name": f"mock_single_{i}"},
             processor_fn=batch_queue_mod.mock_processor,
+            user_id=current_user.id,  # P4 §A.6: owner 标记防 IDOR
         )
         task_ids.append(tid)
     return jsonify({"ok": True, "submitted": count, "task_ids": task_ids})
@@ -1906,9 +1907,13 @@ def single_mock_task():
 @app.route("/api/single/<task_id>/status", methods=["GET"])
 @login_required
 def single_task_status(task_id):
+    """P4 §A.6 owner 校验防 IDOR: state.user_id 必须等于 current_user.id (或 admin)."""
     state = batch_queue_mod.get_single_status(task_id)
     if state is None:
         return jsonify({"error": f"任务未找到: {task_id}"}), 404
+    owner_id = state.get("user_id")
+    if owner_id != current_user.id and not current_user.is_admin:
+        abort(403)
     return jsonify(state)
 
 
@@ -4516,6 +4521,7 @@ def ai_refine_v2_execute():
         deepseek_key=deepseek_key,
         gpt_image_key=gpt_image_key,
         mode=schema_mode,
+        user_id=current_user.id,  # P4 §A.6: owner 标记防 IDOR
     )
     mode = pipeline_runner._detect_mode(deepseek_key, gpt_image_key)
     return jsonify({
@@ -4534,11 +4540,18 @@ def ai_refine_v2_execute():
 @app.route("/api/ai-refine-v2/status/<task_id>", methods=["GET"])
 @login_required
 def ai_refine_v2_status(task_id: str):
-    """轮询 v2 精修任务进度. 返回 status / progress_pct / progress_msg / 结果字段."""
+    """轮询 v2 精修任务进度. 返回 status / progress_pct / progress_msg / 结果字段.
+
+    P4 §A.6 owner 校验防 IDOR: state.user_id 必须等于 current_user.id (或 admin).
+    历史任务 (无 user_id) 仅 admin 可读.
+    """
     from ai_refine_v2 import pipeline_runner
     state = pipeline_runner.get_task_status(task_id)
     if state is None:
         return jsonify({"error": f"任务不存在或已过期: {task_id}"}), 404
+    owner_id = state.get("user_id")
+    if owner_id != current_user.id and not current_user.is_admin:
+        abort(403)
     return jsonify(state)
 
 

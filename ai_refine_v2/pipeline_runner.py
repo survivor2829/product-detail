@@ -45,6 +45,8 @@ _MOCK_PLANNING = _REPO_ROOT / "smoke_output_v2" / "_planning.json"
 @dataclass
 class TaskState:
     task_id: str
+    # P4 §A.6: owner 标记防 IDOR. None = 历史任务 (无 owner) → 仅 admin 可读.
+    user_id: int | None = None
     status: str = "pending"  # pending | running_planner | running_generator | running_assembler | success | failed
     mode: str = "unknown"     # real | mock | partial-mock
     progress_pct: int = 0     # 0-100
@@ -857,11 +859,15 @@ def _worker_v2(task_id: str, product_text: str, product_image_url: str,
 # ─────────────────────────────────────────────────────────────
 def start_task(product_text: str, product_image_url: str,
                product_title: str, deepseek_key: str,
-               gpt_image_key: str, mode: str = "v1") -> str:
+               gpt_image_key: str, mode: str = "v1",
+               user_id: int | None = None) -> str:
     """启动后台管线任务, 立即返回 task_id.
 
     mode='v1' (默认, 向后兼容): plan + generate + Jinja+Playwright
     mode='v2' (PRD §阶段二·任务 2.2 起): plan_v2 + generate_v2 + PIL stub assembler
+
+    user_id: 任务发起人 ID (P4 §A.6 owner 标记). 路由轮询时校验 task_id ownership.
+             None = 后台脚本 / 测试 (允许 admin 读, 普通用户 403).
 
     安全阀: V2_ALLOW_REAL_API!=true 时强制清空 keys, _worker 自动走 mock 路径.
     生产唯一入口经过这里, 所以任何 UI 误点都被截断在烧 API 前.
@@ -871,7 +877,7 @@ def start_task(product_text: str, product_image_url: str,
     deepseek_key, gpt_image_key = _apply_safety_valve(deepseek_key, gpt_image_key)
     task_id = f"v2_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
     with _TASKS_LOCK:
-        _TASKS[task_id] = TaskState(task_id=task_id)
+        _TASKS[task_id] = TaskState(task_id=task_id, user_id=user_id)
     t = threading.Thread(
         target=_worker, daemon=True,
         args=(task_id, product_text, product_image_url, product_title,
