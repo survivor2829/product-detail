@@ -71,5 +71,7 @@ app_dev.log
 .DS_Store
 Thumbs.db
 
-# Claude Code 本地设置
-.claude/
+# Claude Code 本地设置 (settings.local.json 等不进 git)
+# 只忽略具体文件, 不忽略整个目录, 让 AUTONOMY.md 进 git
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
