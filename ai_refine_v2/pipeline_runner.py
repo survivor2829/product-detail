@@ -713,15 +713,19 @@ def _run_assembler_v2(task_dir: Path, blocks: list[dict]) -> str:
 # ─────────────────────────────────────────────────────────────
 def _worker(task_id: str, product_text: str, product_image_url: str,
             product_title: str, deepseek_key: str, gpt_image_key: str,
-            mode: str = "v1"):
+            mode: str = "v1", product_category: str | None = None):
     """Dispatcher: 按 mode 分发到 _worker_v1 / _worker_v2.
 
     mode='v1' (默认, 兼容直调 _worker 的 4 个老单测): plan + generate + Jinja+Playwright
     mode='v2' (PRD §阶段二·任务 2.2): plan_v2 + generate_v2 + PIL stub assembler
+
+    product_category: PR A (2026-05-07) 透传给 _worker_v2 用于 post-planning reorder.
+                      v1 路径不需要 (老单测向后兼容).
     """
     if mode == "v2":
         _worker_v2(task_id, product_text, product_image_url,
-                   product_title, deepseek_key, gpt_image_key)
+                   product_title, deepseek_key, gpt_image_key,
+                   product_category=product_category)
         return
     if mode != "v1":
         _set(task_id, status="failed",
@@ -815,12 +819,18 @@ def _worker_v1(task_id: str, product_text: str, product_image_url: str,
 
 
 def _worker_v2(task_id: str, product_text: str, product_image_url: str,
-               product_title: str, deepseek_key: str, gpt_image_key: str):
+               product_title: str, deepseek_key: str, gpt_image_key: str,
+               product_category: str | None = None):
     """v2 路径: plan_v2 + generate_v2 + PIL stub assembler.
 
     跟 _worker_v1 镜像结构, 调 v2 函数. 4 刀 guard 复用:
       A 绕代理 / B 失败 raise / D raw_url   → _run_real_generator_v2 内部
       E assembled.png 太小 raise            → _run_assembler_v2 内部
+
+    Args:
+        product_category: PR A (2026-05-07): 4 大品类之一 (设备类/耗材类/配件类/工具类),
+                          用于 post-planning reorder (耗材/配件类 lifestyle_demo 提到 idx=2).
+                          None=向后兼容老调用, 不重排.
     """
     actual_mode = _detect_mode(deepseek_key, gpt_image_key)
     _set(task_id, mode=actual_mode, status="running_planner",
@@ -844,6 +854,10 @@ def _worker_v2(task_id: str, product_text: str, product_image_url: str,
             _set(task_id, progress_msg="[v2 mock] 加载预置 planning_v2", progress_pct=10)
             planning = _load_mock_planning_v2(product_text, product_title)
             time.sleep(0.5)
+
+        # PR A (2026-05-07): 耗材类/配件类 lifestyle_demo 强制提到 idx=2
+        from ai_refine_v2 import refine_planner
+        planning = refine_planner._reorder_lifestyle_to_second(planning, product_category)
 
         _set(task_id, planning=planning, progress_pct=20,
              progress_msg="planning_v2 已生成")
@@ -905,7 +919,8 @@ def _worker_v2(task_id: str, product_text: str, product_image_url: str,
 def start_task(product_text: str, product_image_url: str,
                product_title: str, deepseek_key: str,
                gpt_image_key: str, mode: str = "v1",
-               user_id: int | None = None) -> str:
+               user_id: int | None = None,
+               product_category: str | None = None) -> str:
     """启动后台管线任务, 立即返回 task_id.
 
     mode='v1' (默认, 向后兼容): plan + generate + Jinja+Playwright
@@ -913,6 +928,10 @@ def start_task(product_text: str, product_image_url: str,
 
     user_id: 任务发起人 ID (P4 §A.6 owner 标记). 路由轮询时校验 task_id ownership.
              None = 后台脚本 / 测试 (允许 admin 读, 普通用户 403).
+
+    product_category: PR A (2026-05-07) 4 大品类之一 (设备类/耗材类/配件类/工具类),
+                      v2 路径下用于 post-planning reorder (耗材/配件 lifestyle_demo→idx=2).
+                      None=向后兼容老调用 / v1 路径忽略此参数.
 
     安全阀: V2_ALLOW_REAL_API!=true 时强制清空 keys, _worker 自动走 mock 路径.
     生产唯一入口经过这里, 所以任何 UI 误点都被截断在烧 API 前.
@@ -925,8 +944,12 @@ def start_task(product_text: str, product_image_url: str,
         _TASKS[task_id] = TaskState(task_id=task_id, user_id=user_id)
     t = threading.Thread(
         target=_worker, daemon=True,
-        args=(task_id, product_text, product_image_url, product_title,
-              deepseek_key, gpt_image_key, mode),
+        kwargs=dict(
+            task_id=task_id, product_text=product_text,
+            product_image_url=product_image_url, product_title=product_title,
+            deepseek_key=deepseek_key, gpt_image_key=gpt_image_key,
+            mode=mode, product_category=product_category,
+        ),
     )
     t.start()
     return task_id

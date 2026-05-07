@@ -400,7 +400,7 @@ class TestSafetyValveCoversV2(unittest.TestCase):
         seen: dict = {}
 
         def _capture(task_id, product_text, product_image_url,
-                     product_title, deepseek_key, gpt_image_key, mode="v1"):
+                     product_title, deepseek_key, gpt_image_key, mode="v1", **_kwargs):
             seen["ds"] = deepseek_key
             seen["gpt"] = gpt_image_key
             seen["mode"] = mode

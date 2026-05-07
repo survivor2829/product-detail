@@ -552,6 +552,58 @@ def plan_v2(
     raise PlannerError(f"unreachable: last_err={last_err}")
 
 
+# ─────────────────────────────────────────────────────────────
+# Post-planning reorder (PR A · 2026-05-07)
+# ─────────────────────────────────────────────────────────────
+_REORDER_LIFESTYLE_CATEGORIES = frozenset({"耗材类", "配件类"})
+
+
+def _reorder_lifestyle_to_second(planning: dict, product_category: str | None) -> dict:
+    """耗材类/配件类 lifestyle_demo 强制提到 idx=2.
+
+    Why: 第 2 屏是首屏后的"黄金注意力位", 真人演示产品最有说服力,
+    放前面立刻建立信任. 设备类/工具类的 lifestyle_demo 含义不同, 不动.
+
+    Args:
+        planning: plan_v2 返回的 dict, 含 screens[]
+        product_category: 4 大品类之一 (设备类/耗材类/配件类/工具类). None=不重排.
+
+    Returns:
+        修改后的 planning (in-place 修改, 也返回引用).
+        - 仅当 product_category in {耗材类, 配件类} 时才动
+        - lifestyle_demo 已经在 idx=2 → no-op (幂等)
+        - lifestyle_demo 缺失 → no-op (DeepSeek 偶发不出此屏)
+        - screens 空 → 直接返回
+    """
+    if product_category not in _REORDER_LIFESTYLE_CATEGORIES:
+        return planning
+
+    screens = planning.get("screens") or []
+    if not screens:
+        return planning
+
+    # 找 lifestyle_demo 屏 + idx=2 屏
+    lifestyle_screen = next(
+        (s for s in screens if s.get("role") == "lifestyle_demo"), None
+    )
+    if lifestyle_screen is None:
+        return planning  # DeepSeek 没出此屏, no-op
+
+    if lifestyle_screen.get("idx") == 2:
+        return planning  # 已经在第 2 屏, 幂等
+
+    target_screen = next((s for s in screens if s.get("idx") == 2), None)
+    if target_screen is None:
+        return planning  # idx=2 缺失 (异常情况), 不动
+
+    # 互换 idx
+    lifestyle_orig_idx = lifestyle_screen["idx"]
+    lifestyle_screen["idx"] = 2
+    target_screen["idx"] = lifestyle_orig_idx
+
+    return planning
+
+
 # ── CLI · 真实 DeepSeek 烟雾测试 (W1 Day 5) ─────────────────────
 # 只做 DZ600M 一个 case, 成本 ¥0.01, 跟 w1_samples/10_device_dz600m.json 黄金样本对比.
 # 不在单测覆盖 (单测永远走 mock), CLI 入口仅用于手动烧一次真 API 验证 mock <-> 真 API 对齐.

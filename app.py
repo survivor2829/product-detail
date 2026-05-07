@@ -4725,6 +4725,12 @@ def ai_refine_v2_execute():
     if schema_mode not in ("v1", "v2"):
         return jsonify({"error": f"schema_mode 必须 'v1' 或 'v2', 实际 {schema_mode!r}"}), 400
 
+    # PR A (2026-05-07): 透传 product_category 给 v2 worker 用于 post-planning reorder
+    # (耗材/配件类 lifestyle_demo 屏强制提到 idx=2). 缺则 None=不重排.
+    product_category = (data.get("product_category") or "").strip() or None
+    if product_category and product_category not in ALLOWED_PRODUCT_TYPES:
+        product_category = None  # 不合法的品类 → 静默降级不重排
+
     task_id = pipeline_runner.start_task(
         product_text=product_text,
         product_image_url=product_image_url,
@@ -4733,6 +4739,7 @@ def ai_refine_v2_execute():
         gpt_image_key=gpt_image_key,
         mode=schema_mode,
         user_id=current_user.id,  # P4 §A.6: owner 标记防 IDOR
+        product_category=product_category,
     )
     mode = pipeline_runner._detect_mode(deepseek_key, gpt_image_key)
     return jsonify({
