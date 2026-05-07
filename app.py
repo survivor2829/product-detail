@@ -1123,22 +1123,117 @@ def build_redirect(product_type):
 
 
 # ── 用户设置页 (P3 砍刀流后仅展示账号信息, 不再有 API Key 配置) ──
-@app.route("/settings", methods=["GET"])
+@app.route("/settings", methods=["GET", "POST"])
 @login_required
 def user_settings():
+    """PR C (2026-05-07): GET 渲染 settings 页, POST 接收非付费用户自配 key.
+
+    Gating: 付费/admin 用户不应该 POST 自配 key (走 platform 不需要), 直接 403.
+    """
+    if request.method == "POST":
+        # PR C: 仅非付费用户能自配 key (admin/付费用户走 platform)
+        if current_user.is_paid or current_user.is_admin:
+            flash("付费用户使用平台密钥，无需自配 API Key", "warning")
+            return redirect(url_for("user_settings"))
+
+        from crypto_utils import encrypt_api_key
+        ds_key = (request.form.get("custom_deepseek_key") or "").strip()
+        gpt_key = (request.form.get("custom_gpt_image_key") or "").strip()
+
+        updated = []
+        if ds_key:
+            current_user.custom_deepseek_key_enc = encrypt_api_key(ds_key)
+            updated.append("DeepSeek")
+        if gpt_key:
+            current_user.custom_gpt_image_key_enc = encrypt_api_key(gpt_key)
+            updated.append("GPT-image-2")
+
+        if updated:
+            db.session.commit()
+            flash(f"已保存: {' + '.join(updated)} API Key", "success")
+        else:
+            flash("未输入任何新 key (留空表示不修改)", "info")
+        return redirect(url_for("user_settings"))
+
     return render_template("auth/settings.html")
 
 
 def _get_user_api_key():
-    """获取 platform 托管的 DeepSeek API Key, 返回 (key, source).
+    """[向后兼容] 获取 platform 托管的 DeepSeek API Key, 返回 (key, source).
 
-    P3 砍刀流: 永远走 os.environ['DEEPSEEK_API_KEY'], 不再读 user.custom_api_key_enc.
-    缺 env 时 source 为 None, 由 caller 决定如何处理 (通常应已被启动校验拦下).
+    P3 砍刀流原始版本. PR C (2026-05-07) 后, 推荐用 _get_deepseek_key(user) 二级模式.
+    保留是为了不破坏老调用点 (parse-text endpoint 暂时用这个, 待迁移).
     """
     key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     if key:
         return key, "platform"
     return None, None
+
+
+def _get_deepseek_key(user):
+    """PR C 二级模式: 付费用户走 platform key, 非付费用户走 custom key.
+
+    Args:
+        user: current_user 对象 (有 is_paid / is_admin / custom_deepseek_key_enc)
+
+    Returns:
+        (key, source) 元组. source ∈ {"platform", "custom"}.
+
+    Raises:
+        RuntimeError: 付费/admin 用户找不到 platform key (admin 必须配)
+                     或 非付费用户没配 custom key (用户引导去 settings 配)
+    """
+    # admin 永远当付费用户对待 (admin 测试时不该自配 key)
+    if getattr(user, "is_admin", False) or getattr(user, "is_paid", False):
+        key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError(
+                "付费用户的 DeepSeek key 缺失 (admin 在 .env 配 DEEPSEEK_API_KEY 后重启)"
+            )
+        return key, "platform"
+
+    # 非付费用户: 解密 custom_deepseek_key_enc
+    enc = getattr(user, "custom_deepseek_key_enc", None)
+    if not enc:
+        raise RuntimeError(
+            "请先在 /settings 配置自己的 DeepSeek API Key, "
+            "或联系管理员升级为付费用户"
+        )
+    from crypto_utils import decrypt_api_key
+    key = (decrypt_api_key(enc) or "").strip()
+    if not key:
+        raise RuntimeError(
+            "DeepSeek key 解密失败, 请重新在 /settings 配置"
+        )
+    return key, "custom"
+
+
+def _get_gpt_image_key(user):
+    """PR C 二级模式: 付费用户走 platform GPT_IMAGE_API_KEY, 非付费用户走 custom.
+
+    跟 _get_deepseek_key 同样的二级 dispatcher 逻辑, 只是 key 名不同.
+    """
+    if getattr(user, "is_admin", False) or getattr(user, "is_paid", False):
+        key = os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError(
+                "付费用户的 GPT-image-2 key 缺失 (admin 在 .env 配 GPT_IMAGE_API_KEY 后重启)"
+            )
+        return key, "platform"
+
+    enc = getattr(user, "custom_gpt_image_key_enc", None)
+    if not enc:
+        raise RuntimeError(
+            "请先在 /settings 配置自己的 GPT-image-2 API Key (APIMart), "
+            "或联系管理员升级为付费用户"
+        )
+    from crypto_utils import decrypt_api_key
+    key = (decrypt_api_key(enc) or "").strip()
+    if not key:
+        raise RuntimeError(
+            "GPT-image-2 key 解密失败, 请重新在 /settings 配置"
+        )
+    return key, "custom"
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -2972,10 +3067,11 @@ def parse_text_for_build(product_type):
     if product_title:
         raw_text = f"【产品标题】{product_title}\n\n{raw_text}"
 
-    # 取 platform 托管的 DeepSeek key (P3 砍刀流后所有用户共用)
-    api_key, key_source = _get_user_api_key()
-    if not api_key:
-        return jsonify({"error": "服务暂不可用 (缺 DEEPSEEK_API_KEY 平台密钥, 请联系运维)"}), 503
+    # PR C (2026-05-07): 二级 key 模式 — paid/admin 用 platform, else 用 user 自配
+    try:
+        api_key, key_source = _get_deepseek_key(current_user)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
 
     # 直接调 DeepSeek —— 必须用 AI 才能生成 advantage_labels 和 clean_story
     try:
@@ -4718,8 +4814,12 @@ def ai_refine_v2_execute():
             }), 400
 
     from ai_refine_v2 import pipeline_runner
-    deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    gpt_image_key = os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    # PR C (2026-05-07): 二级 key 模式 — paid/admin 用 platform, else 用 user 自配
+    try:
+        deepseek_key, _ = _get_deepseek_key(current_user)
+        gpt_image_key, _ = _get_gpt_image_key(current_user)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     # PRD §阶段二·任务 2.2: 前端可显式传 schema_mode='v2' 走新路径; 默认 'v1' 兼容.
     schema_mode = (data.get("schema_mode") or "v1").strip().lower()
     if schema_mode not in ("v1", "v2"):
