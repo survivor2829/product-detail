@@ -1790,6 +1790,7 @@ def _get_regen_lock(item_pk: int, block_index: int) -> threading.Lock:
     "/api/batch/<batch_id>/items/<int:item_pk>/regenerate-screen",
     methods=["POST"],
 )
+@limiter.limit("10 per minute; 30 per hour", methods=["POST"])
 @login_required
 def batch_item_regenerate_screen(batch_id, item_pk):
     """v3.3 单屏 reroll. spec: 2026-04-30-regenerate-screen-design.md"""
