@@ -305,11 +305,13 @@ _MAX_SCREEN_COUNT_V2 = 15  # v3 (PRD AI_refine_v3.1): 10 → 15
 
 # v3 (PRD AI_refine_v3.1) 新增: role 白名单
 # v3.iter2 (2026-04-29 Scott 4/9 反馈): 11 → 12 屏型, +lifestyle_demo (B2B 必备)
+# PR B (2026-05-07): +material_origin (耗材/配件类原材料溯源/加工过程屏)
 _VALID_ROLES_V2 = frozenset({
     "hero", "feature_wall", "scenario", "scenario_grid_2x3",
     "vs_compare", "detail_zoom", "icon_grid_radial",
     "spec_table", "value_story", "brand_quality", "FAQ",
     "lifestyle_demo",  # v3.iter2: 真人 + 产品 + 实景, A 暖色路线
+    "material_origin",  # PR B: 耗材/配件原材料溯源/加工过程, 4 source_type
 })
 
 # v3 必出屏型 (任何产品都生成 — 缺任何一个 = schema 不合规)
@@ -600,6 +602,72 @@ def _reorder_lifestyle_to_second(planning: dict, product_category: str | None) -
     lifestyle_orig_idx = lifestyle_screen["idx"]
     lifestyle_screen["idx"] = 2
     target_screen["idx"] = lifestyle_orig_idx
+
+    return planning
+
+
+# ─────────────────────────────────────────────────────────────
+# PR B (2026-05-07): material_origin 屏注入 (耗材/配件类原材料溯源)
+# ─────────────────────────────────────────────────────────────
+_MATERIAL_ORIGIN_CATEGORIES = frozenset({"耗材类", "配件类"})
+
+
+def _inject_material_origin(planning: dict, product_category: str | None) -> dict:
+    """耗材/配件类 + DeepSeek 输出 materials 字段时, 注入 material_origin 屏.
+
+    Why: 增加产品故事感 + 可信度 (天然橡胶 → 工人采集 / 化学剂 → 实验室合成).
+    位置: 注入到 idx=3 (hero=1, lifestyle_demo=2, material_origin=3, ...),
+    其后所有屏 idx +1.
+
+    Args:
+        planning: plan_v2 返回的 dict, 含 screens[] + product_meta.materials
+        product_category: 4 大品类之一. 仅 {耗材类, 配件类} 注入.
+
+    Returns:
+        修改后的 planning (in-place + return). 不满足条件时 no-op:
+        - product_category 不在白名单 → no-op
+        - product_meta.materials 缺/空 → no-op (DeepSeek 没提取出来时降级)
+        - planning 已有 material_origin 屏 → no-op (DeepSeek 自己出过, 不重复注入)
+    """
+    if product_category not in _MATERIAL_ORIGIN_CATEGORIES:
+        return planning
+
+    materials = (planning.get("product_meta") or {}).get("materials") or []
+    if not materials or not isinstance(materials, list):
+        return planning  # DeepSeek 没提取出来, 优雅降级
+
+    screens = planning.get("screens") or []
+    existing_roles = [s.get("role") for s in screens]
+    if "material_origin" in existing_roles:
+        return planning  # 幂等, 不重复注入
+
+    # 取第一个 material 作为屏的视觉 hint 来源
+    first = materials[0] if isinstance(materials[0], dict) else {}
+    source_type = (first.get("source_type") or "natural").strip().lower()
+    source_story_hint = (first.get("source_story_hint") or "").strip()
+    material_name = (first.get("name") or "原材料").strip()
+
+    # 构造新屏 (idx=3, 后续屏 idx +1)
+    for s in screens:
+        if s.get("idx", 0) >= 3:
+            s["idx"] = s["idx"] + 1
+
+    new_screen = {
+        "idx": 3,
+        "role": "material_origin",
+        "title": f"屏 3 · 原材料溯源 ({material_name})",
+        "prompt": (
+            f"展示 {material_name} 的来源/采集/加工过程, "
+            f"source_type={source_type}, story={source_story_hint}. "
+            f"纪实摄影风格, 自然光, 真人或场景特写, 突出材料真实性 + 工艺可信度. "
+            f"画面情绪温暖、有人情味, 让观众感受'产品身世'. "
+        ) * 4  # 重复以达到 plan_v2 prompt 长度 ≥200 字符约束
+    }
+    screens.append(new_screen)
+    # 重排
+    screens.sort(key=lambda s: s.get("idx", 0))
+    planning["screens"] = screens
+    planning["screen_count"] = len(screens)
 
     return planning
 

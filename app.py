@@ -2533,6 +2533,10 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '    {"title":"拆卸旧件","desc":"关闭电源，取下旧配件"},\n'
             '    ...\n'
             '  ],\n'
+            '  "materials": [\n'
+            '    {"name":"304 不锈钢","source_type":"mineral","source_story_hint":"国内特钢厂出料"},\n'
+            '    ...\n'
+            '  ],\n'
             '  "package_items": [\n'
             '    {"name":"主刷","qty":"1","note":""},\n'
             '    ...\n'
@@ -2551,6 +2555,10 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "【重要提示】\n"
             "- 识别文案中提到的所有兼容机型，填入 compat_models（多列出，不要遗漏）\n"
             "- install_steps 提供清晰的安装步骤（3-6步）\n"
+            "- materials 提取产品材质 + 来源类型 (source_type 4 选 1):\n"
+            "    natural=天然/植物/动物 (橡胶/木材/棉麻); chemical=化学合成 (尼龙/EVA/树脂);\n"
+            "    mineral=矿物/金属 (304不锈钢/铝合金/玻璃); recycled=回收再生 (再生塑料/纤维)\n"
+            "  source_story_hint 一句中文 (≤30 字), 描述材料来源/产地/工艺. 严禁编造文案中没有的产地或工艺.\n"
             "- package_items 列出包装内所有配件清单\n"
             "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n"
             "- block_b2_items: 必须是 N 项（N 等于 2、4 或 6），每项 {icon_text: emoji, label: \"4 字以内的核心能力\"}。\n"
@@ -2598,6 +2606,10 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '    {"before_label":"使用前","after_label":"使用后","desc":"顽固油污一喷即净"}\n'
             '  ],\n'
             '  "compat_models": ["XL-510", "DZ50X", "或不限品牌"],\n'
+            '  "materials": [\n'
+            '    {"name":"植物提取物","source_type":"natural","source_story_hint":"东南亚有机种植"},\n'
+            '    ...\n'
+            '  ],\n'
             '  "block_b2_items": [\n'
             '    {"icon_text":"🧪","label":"1:50稀释"},\n'
             '    ...\n'
@@ -2615,6 +2627,10 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "- usage_steps 提供清晰的使用步骤（3-5步）\n"
             "- before_after 描述使用前后的清洁效果对比\n"
             "- compat_models 列出该耗材适配的机型/型号 (3-8 个); 如果是通用配方不限品牌, 填 [\"通用\", \"不限品牌\"]; 严禁编造未在文案出现的型号\n"
+            "- materials 提取产品成分 + 来源类型 (source_type 4 选 1):\n"
+            "    natural=天然 (植物提取/动物源/天然橡胶); chemical=化学合成 (酶/表面活性剂/醇);\n"
+            "    mineral=矿物 (纯碱/盐酸/磷酸); recycled=回收再生\n"
+            "  source_story_hint 一句中文 (≤30 字), 描述成分来源/产地/工艺. 严禁编造未在文案出现的产地或工艺.\n"
             "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n"
             "- block_b2_items: 必须是 N 项（N 等于 2、4 或 6），每项 {icon_text: emoji, label: \"4 字以内的核心能力\"}。\n"
             "  label 必须是从文案里提炼的具体能力（如 0磷无害 / 1:50稀释 / 食品级），不能是通用形容词（如 高效/专业）。\n"

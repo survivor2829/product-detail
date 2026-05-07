@@ -858,6 +858,8 @@ def _worker_v2(task_id: str, product_text: str, product_image_url: str,
         # PR A (2026-05-07): 耗材类/配件类 lifestyle_demo 强制提到 idx=2
         from ai_refine_v2 import refine_planner
         planning = refine_planner._reorder_lifestyle_to_second(planning, product_category)
+        # PR B (2026-05-07): 耗材类/配件类 + DeepSeek 输出 materials 时注入 material_origin 屏
+        planning = refine_planner._inject_material_origin(planning, product_category)
 
         _set(task_id, planning=planning, progress_pct=20,
              progress_msg="planning_v2 已生成")
