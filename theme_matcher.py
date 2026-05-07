@@ -1,7 +1,7 @@
 """主题智能匹配 — 任务9 (PRD F11)。
 
 输入: DeepSeek 解析出的 product_type 字符串 (如 "驾驶式扫地车" / "拖把刷")
-      + product_type 大类 (设备类 / 耗材类 / 配耗类 / 工具类)
+      + product_type 大类 (设备类 / 耗材类 / 配件类 / 工具类)
 输出: theme_id (themes.json 里的某个 id)
 
 匹配优先级 (从高到低):
@@ -75,7 +75,7 @@ CATEGORY_DEFAULT: dict[str, str] = {
     "设备类": "classic-red",
     "工具类": "energy-orange",
     "耗材类": "fresh-green",
-    "配耗类": "minimal-white",
+    "配件类": "minimal-white",
 }
 
 GLOBAL_FALLBACK = "classic-red"
@@ -94,7 +94,7 @@ def resolve_theme_id(parsed_product_type: str | None,
     Args:
         parsed_product_type: DeepSeek 返回的 parsed.product_type 字段, 例:
             "驾驶式扫地车" / "智能AI识别机器人" / "工业级洗地机"
-        product_category: 上传时的产品大类 (设备类/耗材类/工具类/配耗类),
+        product_category: 上传时的产品大类 (设备类/耗材类/工具类/配件类),
             用于关键词都不命中时的兜底。
 
     Returns:
@@ -150,7 +150,7 @@ if __name__ == "__main__":
         ("旗舰版洗地机",       "设备类"),
         ("Pro 商用扫地机",     "设备类"),
         ("环保清洁剂",         "耗材类"),
-        ("工业级吸水胶条",     "配耗类"),
+        ("工业级吸水胶条",     "配件类"),
         ("手持电动拖把",       "工具类"),
         ("",                  "设备类"),
         ("",                  ""),

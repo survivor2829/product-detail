@@ -68,7 +68,7 @@ class Batch(db.Model):
     # 任务9 (PRD F11): 模板策略
     template_strategy = db.Column(db.String(20), default="auto")  # 'auto' | 'fixed'
     fixed_theme_id = db.Column(db.String(40), nullable=True)       # 仅当 strategy='fixed'
-    product_category = db.Column(db.String(20), default="设备类")  # 设备类/耗材类/工具类/配耗类
+    product_category = db.Column(db.String(20), default="设备类")  # 设备类/耗材类/工具类/配件类
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

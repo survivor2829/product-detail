@@ -150,7 +150,7 @@ def _load_user(user_id):
     return db.session.get(User, int(user_id))
 
 # ── product_type 白名单校验（防止路径遍历）──
-ALLOWED_PRODUCT_TYPES = {"设备类", "耗材类", "配耗类", "工具类"}
+ALLOWED_PRODUCT_TYPES = {"设备类", "耗材类", "配件类", "工具类"}
 
 def _validate_product_type(product_type):
     if product_type not in ALLOWED_PRODUCT_TYPES:
@@ -636,11 +636,11 @@ def _strip_extreme_in_list(items, fields):
 
 # P5.1 (2026-05-07): 4 品类参数 label 映射
 # 替代 line 754-757 硬编码 "工作效率/清洗宽度/清水箱/续航时间" 设备类专属.
-# 设备类 label 保持原值 (向后兼容); 耗材/配耗/工具按各自语义命名.
+# 设备类 label 保持原值 (向后兼容); 耗材/配件/工具按各自语义命名.
 _PARAM_LABELS_BY_CATEGORY = {
     "设备类": ("工作效率", "清洗宽度", "清水箱", "续航时间"),
     "耗材类": ("稀释比", "覆盖面积", "净含量", "保质期"),
-    "配耗类": ("适配机型", "净含量", "材质", "保质期"),
+    "配件类": ("适配机型", "净含量", "材质", "保质期"),
     "工具类": ("适配宽度", "材质", "净重", "耐久性"),
 }
 
@@ -649,7 +649,7 @@ _PARAM_LABELS_BY_CATEGORY = {
 _CAT_FALLBACK = {
     "设备类": "商用清洁设备",
     "耗材类": "清洁耗材",
-    "配耗类": "清洁配耗",
+    "配件类": "清洁配件",
     "工具类": "清洁工具",
 }
 
@@ -659,7 +659,7 @@ def _map_parsed_to_form_fields(parsed: dict, product_category: str | None = None
 
     Args:
         parsed: DeepSeek 解析后的字典
-        product_category: 4 大品类之一 ("设备类"/"耗材类"/"配耗类"/"工具类").
+        product_category: 4 大品类之一 ("设备类"/"耗材类"/"配件类"/"工具类").
                           None 或未知值时走"设备类"老路径 (向后兼容).
     """
     parsed = parsed if isinstance(parsed, dict) else {}
@@ -795,7 +795,7 @@ def _map_parsed_to_form_fields(parsed: dict, product_category: str | None = None
     }
 
     # ── 产品优势（仅用AI返回的，不兜底推导）──
-    # 优先用 block_b2_items（工具/配耗/耗材类专用，强制 2/4/6 项、4字以内具体能力）
+    # 优先用 block_b2_items（工具/配件/耗材类专用，强制 2/4/6 项、4字以内具体能力）
     b2_items_raw = parsed.get("block_b2_items", [])
     if isinstance(b2_items_raw, list) and b2_items_raw:
         # 规范到 2/4/6 项: AI 违反 prompt 返回 {1,3,5} 时回退到 advantages 兜底分支,
@@ -1081,7 +1081,7 @@ def _save_upload(file_field_name, auto_rembg: bool = False) -> str:
 
 _CATEGORIES = [
     {"type": "设备类", "desc": "商用清洁机器人、洗地机、扫地车等大型设备", "color": "#E8231A", "icon": "🤖"},
-    {"type": "配耗类", "desc": "刷盘、滤芯、吸水胶条等设备配件", "color": "#1E6FBF", "icon": "🔧"},
+    {"type": "配件类", "desc": "刷盘、滤芯、吸水胶条等设备配件", "color": "#1E6FBF", "icon": "🔧"},
     {"type": "耗材类", "desc": "清洁剂、除垢液、清洁垫等消耗品", "color": "#2E8B57", "icon": "🧪"},
     {"type": "工具类", "desc": "拖把、刮水器、清洁桶等手动工具", "color": "#E87C1A", "icon": "🧹"},
 ]
@@ -2500,7 +2500,7 @@ _EXTREME_WORDS_RULE = (
 def _build_category_prompt(product_type: str, raw_text: str) -> str:
     """根据产品类型构建对应的 DeepSeek 解析提示词"""
 
-    if product_type == "配耗类":
+    if product_type == "配件类":
         return (
             "你是一个清洁配件营销文案专家。请根据以下产品参数，完成两件事：\n\n"
             "第一，提取所有技术参数（型号、规格、材质等）填入对应字段。\n"
