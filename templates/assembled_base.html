@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 {# ── 品类主题色映射 ── #}
-{% set _theme_colors = {"设备类":"#E8231A","配耗类":"#1E6FBF","耗材类":"#2E8B57","工具类":"#E87C1A"} %}
+{% set _theme_colors = {"设备类":"#E8231A","配件类":"#1E6FBF","耗材类":"#2E8B57","工具类":"#E87C1A"} %}
 {% set _theme_color = _theme_colors.get(product_type|default("设备类"), "#E8231A") %}
-{% set _tag_bg_colors = {"设备类":"rgba(232,35,26,0.08)","配耗类":"rgba(30,111,191,0.08)","耗材类":"rgba(46,139,87,0.08)","工具类":"rgba(232,124,26,0.08)"} %}
-{% set _tag_text_colors = {"设备类":"#E8231A","配耗类":"#1E6FBF","耗材类":"#2E8B57","工具类":"#E87C1A"} %}
+{% set _tag_bg_colors = {"设备类":"rgba(232,35,26,0.08)","配件类":"rgba(30,111,191,0.08)","耗材类":"rgba(46,139,87,0.08)","工具类":"rgba(232,124,26,0.08)"} %}
+{% set _tag_text_colors = {"设备类":"#E8231A","配件类":"#1E6FBF","耗材类":"#2E8B57","工具类":"#E87C1A"} %}
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }

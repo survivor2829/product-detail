@@ -5,7 +5,7 @@
       耗材类用户在前端表单看到的 param_label 应该是耗品语义("稀释比/覆盖面积/净含量/保质期").
 
 设计:
-- _PARAM_LABELS_BY_CATEGORY: 4 品类 x 4 label 映射 (设备/耗材/配耗/工具)
+- _PARAM_LABELS_BY_CATEGORY: 4 品类 x 4 label 映射 (设备/耗材/配件/工具)
 - _CAT_FALLBACK: 4 品类 x 兜底字符串 (替代硬编码"商用清洁设备")
 - _map_parsed_to_form_fields(parsed, product_category=None) 加可选参数, None=设备类老路径
 - /api/build/<product_type>/parse-text 端点 (line 2988) 改传 product_category=product_type
@@ -30,7 +30,7 @@ class TestParamLabelsByCategoryConstant:
 
     def test_includes_all_four_categories(self):
         from app import _PARAM_LABELS_BY_CATEGORY
-        for cat in ["设备类", "耗材类", "配耗类", "工具类"]:
+        for cat in ["设备类", "耗材类", "配件类", "工具类"]:
             assert cat in _PARAM_LABELS_BY_CATEGORY, (
                 f"_PARAM_LABELS_BY_CATEGORY 必须含 {cat!r} key. "
                 f"4 品类与 ALLOWED_PRODUCT_TYPES 对齐."
@@ -85,7 +85,7 @@ class TestCategoryFallbackConstant:
 
     def test_includes_all_four_categories(self):
         from app import _CAT_FALLBACK
-        for cat in ["设备类", "耗材类", "配耗类", "工具类"]:
+        for cat in ["设备类", "耗材类", "配件类", "工具类"]:
             assert cat in _CAT_FALLBACK, (
                 f"_CAT_FALLBACK 必须含 {cat!r} key."
             )
