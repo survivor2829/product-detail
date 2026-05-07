@@ -120,6 +120,10 @@ from models import User, GenerationLog, Batch, BatchItem
 from sqlalchemy import func as _sa_func
 import json as _json_mod
 
+# CSRF token 寿命: flask-wtf 默认 3600s (1h) — 用户开 login 页放 1h+ 再
+# POST 时 csrf 过期报 400. 改 86400s (24h) 给"开页面放着不管"行为留余量.
+# 真实事故: 2026-05-07 用户 prod 浏览器登录报 400, 排查根因 = csrf 过期.
+app.config.setdefault("WTF_CSRF_TIME_LIMIT", 86400)
 csrf = CSRFProtect(app)
 
 # 批次实时推送：flask-sock 与现有 ThreadPoolExecutor 共存,不替换 Werkzeug worker。
