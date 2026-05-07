@@ -106,6 +106,9 @@ def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dic
     main_url = (payload.get("main_image_path") or "").strip()
     cutout_url = (payload.get("cutout_path") or "").strip()
     parsed_url = (payload.get("parsed_json_path") or "").strip()
+    # PR A (2026-05-07): batch 产品的品类透传给 v2 worker, 用于 post-planning
+    # reorder (耗材/配件 lifestyle_demo → idx=2). 缺则 None=不重排.
+    product_category = (payload.get("product_category") or "").strip() or None
     if not main_url:
         raise ValueError(f"产品 {name} 缺 main_image_path")
     if not parsed_url:
@@ -156,6 +159,7 @@ def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dic
         deepseek_key=deepseek_key,
         gpt_image_key=gpt_image_key,
         mode="v2",
+        product_category=product_category,  # PR A reorder gating
     )
 
     # 同步等待 v2 task 完成 (轮询 _TASKS, 6 分钟超时上限).

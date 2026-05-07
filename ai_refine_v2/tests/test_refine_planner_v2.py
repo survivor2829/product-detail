@@ -538,15 +538,16 @@ class TestV3RoleEnum(unittest.TestCase):
             f"非法 role 应触发警告. warnings={w}",
         )
 
-    def test_all_12_roles_in_valid_set(self):
-        """v3.iter2 _VALID_ROLES_V2 必须有 12 个 role, 含 v3.iter2 新 +1 lifestyle_demo."""
+    def test_all_13_roles_in_valid_set(self):
+        """v3.iter2 + PR B (2026-05-07) _VALID_ROLES_V2: 12 + material_origin = 13."""
         from ai_refine_v2.refine_planner import _VALID_ROLES_V2
         self.assertEqual(
-            len(_VALID_ROLES_V2), 12,
-            f"v3.iter2 应有 12 个合法 role, 实际 {len(_VALID_ROLES_V2)}",
+            len(_VALID_ROLES_V2), 13,
+            f"v3.iter2+PR B 应有 13 个合法 role, 实际 {len(_VALID_ROLES_V2)}",
         )
         for new_role in (
             "scenario_grid_2x3", "icon_grid_radial", "FAQ", "lifestyle_demo",
+            "material_origin",  # PR B (2026-05-07): 耗材/配件原材料溯源屏
         ):
             with self.subTest(role=new_role):
                 self.assertIn(new_role, _VALID_ROLES_V2)
