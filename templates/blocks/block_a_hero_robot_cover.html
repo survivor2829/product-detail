@@ -1,13 +1,16 @@
 <!--
-  Block A — 商用机器人/清洁设备「封面首屏」
+  Block A — 通用「封面首屏」(品类无关)
   宽度 750px
+
+  支持品类: 设备类 / 耗材类 / 配耗类 / 工具类 (P5.1 起)
+  原文件名 hero_robot_cover 是历史命名, 实际渲染逻辑完全数据驱动, 品类无关.
 
   场景图（floor_bg_image）铺满整个英雄屏；产品图（product_image）居中叠放。
   若传入 cover_image（成品宣发图）则直接显示整张图，不做合成。
 
   变量：
   - logo_image: 可选，顶部 Logo URL
-  - category_line: 品类一行，如「多功能清洁机器人」
+  - category_line: 品类一行，按品类填: 设备「多功能清洁设备」/ 耗材「食品级清洁剂」/ 工具「304 不锈钢拖把」
   - product_name / brand_text: 第一行小字数据源（品牌+产品名），优先级高于 category_line
   - model_name: 型号，胶囊标签
   - main_title: 主标题

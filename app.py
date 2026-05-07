@@ -634,8 +634,34 @@ def _strip_extreme_in_list(items, fields):
                     item[f] = _strip_extreme_words(_to_str(item[f]))
 
 
-def _map_parsed_to_form_fields(parsed: dict) -> dict:
-    """将解析结果映射为表单字段（供前端 AI 填表使用）"""
+# P5.1 (2026-05-07): 4 品类参数 label 映射
+# 替代 line 754-757 硬编码 "工作效率/清洗宽度/清水箱/续航时间" 设备类专属.
+# 设备类 label 保持原值 (向后兼容); 耗材/配耗/工具按各自语义命名.
+_PARAM_LABELS_BY_CATEGORY = {
+    "设备类": ("工作效率", "清洗宽度", "清水箱", "续航时间"),
+    "耗材类": ("稀释比", "覆盖面积", "净含量", "保质期"),
+    "配耗类": ("适配机型", "净含量", "材质", "保质期"),
+    "工具类": ("适配宽度", "材质", "净重", "耐久性"),
+}
+
+# P5.1 (2026-05-07): 4 品类兜底字符串映射
+# 替代 line 739 硬编码 "商用清洁设备" 设备类专属兜底.
+_CAT_FALLBACK = {
+    "设备类": "商用清洁设备",
+    "耗材类": "清洁耗材",
+    "配耗类": "清洁配耗",
+    "工具类": "清洁工具",
+}
+
+
+def _map_parsed_to_form_fields(parsed: dict, product_category: str | None = None) -> dict:
+    """将解析结果映射为表单字段（供前端 AI 填表使用）.
+
+    Args:
+        parsed: DeepSeek 解析后的字典
+        product_category: 4 大品类之一 ("设备类"/"耗材类"/"配耗类"/"工具类").
+                          None 或未知值时走"设备类"老路径 (向后兼容).
+    """
     parsed = parsed if isinstance(parsed, dict) else {}
     detail_params = parsed.get("detail_params", {})
     dimensions = parsed.get("dimensions", {})
@@ -735,10 +761,17 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         slogan = f"高效{_cat_noun}"
         tagline_line1, tagline_line2 = _split_slogan(slogan)
     # 最终兜底：确保首屏至少有产品名
+    # P5.1: 兜底字符串按品类映射 (替代硬编码 "商用清洁设备")
+    _cat_fallback = _CAT_FALLBACK.get(product_category or "设备类", _CAT_FALLBACK["设备类"])
     if not _main and not _cat:
-        _cat = product_type_str or "商用清洁设备"
+        _cat = product_type_str or _cat_fallback
     if not _main:
         _main = _cat
+
+    # P5.1: param_label 按品类选择 (替代硬编码 4 个设备类参数名)
+    _param_labels = _PARAM_LABELS_BY_CATEGORY.get(
+        product_category or "设备类", _PARAM_LABELS_BY_CATEGORY["设备类"]
+    )
 
     result = {
         "brand_text": brand_text,
@@ -751,10 +784,10 @@ def _map_parsed_to_form_fields(parsed: dict) -> dict:
         "hero_subtitle_pre": _hero_sub,
         "hero_subtitle_em": "",
         "hero_subtitle_post": "",
-        "param_1_label": "工作效率", "param_1_value": param_efficiency,
-        "param_2_label": "清洗宽度", "param_2_value": param_width,
-        "param_3_label": "清水箱", "param_3_value": param_capacity,
-        "param_4_label": "续航时间", "param_4_value": param_runtime,
+        "param_1_label": _param_labels[0], "param_1_value": param_efficiency,
+        "param_2_label": _param_labels[1], "param_2_value": param_width,
+        "param_3_label": _param_labels[2], "param_3_value": param_capacity,
+        "param_4_label": _param_labels[3], "param_4_value": param_runtime,
         "e_specs": specs,
         "e_dim_length": _append_unit(dim_length),
         "e_dim_width": _append_unit(dim_width),
@@ -2564,6 +2597,7 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             '  "before_after": [\n'
             '    {"before_label":"使用前","after_label":"使用后","desc":"顽固油污一喷即净"}\n'
             '  ],\n'
+            '  "compat_models": ["XL-510", "DZ50X", "或不限品牌"],\n'
             '  "block_b2_items": [\n'
             '    {"icon_text":"🧪","label":"1:50稀释"},\n'
             '    ...\n'
@@ -2580,6 +2614,7 @@ def _build_category_prompt(product_type: str, raw_text: str) -> str:
             "- kpis 列出稀释比、覆盖面积、每升成本等关键指标\n"
             "- usage_steps 提供清晰的使用步骤（3-5步）\n"
             "- before_after 描述使用前后的清洁效果对比\n"
+            "- compat_models 列出该耗材适配的机型/型号 (3-8 个); 如果是通用配方不限品牌, 填 [\"通用\", \"不限品牌\"]; 严禁编造未在文案出现的型号\n"
             "- advantages 6-9项，每项附带贴切的emoji，严禁编造\n"
             "- block_b2_items: 必须是 N 项（N 等于 2、4 或 6），每项 {icon_text: emoji, label: \"4 字以内的核心能力\"}。\n"
             "  label 必须是从文案里提炼的具体能力（如 0磷无害 / 1:50稀释 / 食品级），不能是通用形容词（如 高效/专业）。\n"
@@ -2985,7 +3020,8 @@ def parse_text_for_build(product_type):
             parsed["product_name"] = product_title
         if not parsed.get("main_title"):
             parsed["main_title"] = product_title
-    mapped = _map_parsed_to_form_fields(parsed)
+    # P5.1: 传入 URL 里的 product_type, 让 param_label 按品类匹配
+    mapped = _map_parsed_to_form_fields(parsed, product_category=product_type)
     # AI 精修(HTML v2)读嵌套语义,扁平表单消费者忽略本键
     mapped["_raw_parsed"] = parsed
     return jsonify(mapped)
