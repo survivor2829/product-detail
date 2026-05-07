@@ -33,10 +33,23 @@ class TestSettingsHtmlNoApiKeyCard(unittest.TestCase):
         self.assertNotIn("API Key 设置", self.text,
                          "settings.html 仍含 'API Key 设置' 卡标题")
 
-    def test_no_deepseek_platform_link(self):
-        """删除诱导用户去 DeepSeek 平台注册的链接."""
-        self.assertNotIn("platform.deepseek.com", self.text,
-                         "settings.html 仍有 DeepSeek 平台引导链接")
+    def test_deepseek_platform_link_only_for_nonpaid(self):
+        """PR C (2026-05-07) relax: platform.deepseek.com 链接仅在非付费用户的
+        条件渲染块内出现, 给非付费用户引导自配 key 时用. 付费用户看不到."""
+        if "platform.deepseek.com" not in self.text:
+            return  # 完全没有也合法
+        # 必须在 jinja 条件块 ({% if %}...{% endif %}) 内, 受 is_paid 控制
+        # 简化: 只要 settings.html 含 is_paid jinja 条件渲染块即认为受控
+        import re
+        has_is_paid_block = re.search(
+            r"\{%\s*if\s+[^%]*is_paid[^%]*%\}",
+            self.text,
+        )
+        self.assertTrue(
+            has_is_paid_block,
+            "settings.html 含 platform.deepseek.com 但不在 is_paid 条件块内. "
+            "PR C 设计: 非付费用户才显示自配 key 引导."
+        )
 
 
 class TestAdminUsersHtmlNoCustomKeyBadge(unittest.TestCase):

@@ -93,12 +93,43 @@
     </div>
   </div>
 
+  {% if current_user.is_paid or current_user.is_admin %}
   <div class="card">
     <div class="card-title">服务说明</div>
     <div class="info-row">
       <span class="info-label">AI 服务</span>
-      <span class="info-value">由小玺 AI 平台统一托管，用户无需配置 API Key 即可使用 AI 识别 / 精修 / 生图 功能。</span>
+      <span class="info-value">您是付费用户（或管理员），AI 识别 / 精修 / 生图 使用平台密钥，无需自行配置。</span>
     </div>
   </div>
+  {% else %}
+  {# PR C (2026-05-07): 非付费用户自配 API Key #}
+  <div class="card">
+    <div class="card-title">API Key 配置</div>
+    <p style="color:#666;font-size:13px;line-height:1.6;margin-bottom:16px;">
+      您是免费用户，使用 AI 功能需自行配置 DeepSeek 和 GPT-image-2 (APIMart) 的 API Key。
+      费用按次扣您自己账户。如需升级付费版（用平台密钥免去自配），请联系管理员。
+    </p>
+    <form method="POST" action="{{ url_for('user_settings') }}">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+      <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+        <label class="info-label" for="custom_deepseek_key">DeepSeek API Key</label>
+        <input type="password" id="custom_deepseek_key" name="custom_deepseek_key"
+               placeholder="{% if current_user.custom_deepseek_key_enc %}已配置（输入新值覆盖）{% else %}sk-...（DeepSeek 官网申请）{% endif %}"
+               style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:4px;font-family:monospace;">
+        <small style="color:#999;font-size:12px;">用途: AI 识别产品文案 → JSON。申请: <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a></small>
+      </div>
+      <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:8px;margin-top:16px;">
+        <label class="info-label" for="custom_gpt_image_key">GPT-image-2 API Key (APIMart)</label>
+        <input type="password" id="custom_gpt_image_key" name="custom_gpt_image_key"
+               placeholder="{% if current_user.custom_gpt_image_key_enc %}已配置（输入新值覆盖）{% else %}APIMart key（gpt-image-2 服务）{% endif %}"
+               style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:4px;font-family:monospace;">
+        <small style="color:#999;font-size:12px;">用途: AI 精修 12 屏 (~¥7-8/产品)。申请: APIMart 平台账号</small>
+      </div>
+      <div style="margin-top:20px;">
+        <button type="submit" class="btn btn-primary" style="padding:10px 24px;">保存配置</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
 </body>
 </html>

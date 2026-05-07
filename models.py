@@ -18,6 +18,11 @@ class User(UserMixin, db.Model):
     is_paid = db.Column(db.Boolean, default=False)
     is_approved = db.Column(db.Boolean, default=False)
     custom_api_key_enc = db.Column(db.Text, nullable=True)
+    # PR C (2026-05-07): 二级模式 — 非付费用户自配 DeepSeek + GPT-image-2 key,
+    # Fernet 加密. 付费 (is_paid=True) 用户走 platform key, 这两列为空.
+    # custom_api_key_enc 老字段保留, alembic migration 复制其内容到 deepseek_key.
+    custom_deepseek_key_enc = db.Column(db.Text, nullable=True)
+    custom_gpt_image_key_enc = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
 
