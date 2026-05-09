@@ -14,6 +14,7 @@ import json
 import re
 import time
 import zlib
+import io
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote
@@ -5351,20 +5352,53 @@ def render_main_images(product_type):
     return jsonify({"main_images": results})
 
 
-# 模块主图候选（从详情图里挑 5 个信息密度高的 block）
-_MAIN_BLOCK_CANDIDATES = [
-    ("block_a",  "英雄封面"),
-    ("block_b3", "清洁故事"),
-    ("block_f",  "VS对比"),
-    ("block_h",  "场景网格"),
-    ("block_c1", "数据对比"),
-]
+# 模块主图候选（按品类分发）
+# 配件/耗材/工具：b3 清洁故事 / f 1台顶8人 依赖大段文案叙事 → 替换为 e 参数表 + b2 核心优势 icon 网格
+# AI 解析端 (app.py:802) 已对配件/耗材/工具类专门生成 block_b2_items, 此处直接复用
+_MAIN_BLOCK_CANDIDATES = {
+    "设备类": [("block_a", "英雄封面"), ("block_b3", "清洁故事"), ("block_f",  "VS对比"),
+              ("block_h", "场景网格"), ("block_c1", "数据对比")],
+    "配件类": [("block_a", "英雄封面"), ("block_e",  "产品参数"), ("block_b2", "核心优势"),
+              ("block_h", "场景网格"), ("block_c1", "数据对比")],
+    "耗材类": [("block_a", "英雄封面"), ("block_e",  "产品参数"), ("block_b2", "核心优势"),
+              ("block_b3", "清洁故事"), ("block_h",  "场景网格")],
+    "工具类": [("block_a", "英雄封面"), ("block_e",  "产品参数"), ("block_b2", "核心优势"),
+              ("block_h", "场景网格"), ("block_c1", "数据对比")],
+}
+_DEFAULT_MAIN_BLOCKS = _MAIN_BLOCK_CANDIDATES["设备类"]
+
+
+def _trim_bottom_whitespace(png_bytes: bytes, bg_rgb=(255, 255, 255), tolerance: int = 8) -> bytes:
+    """Crop the trailing same-color band off the bottom of a PNG.
+
+    Why: block_a 模板 min-height:720px + flex:1 + Playwright full_page=True 在短文案
+    时会在 PNG 下方留 200px+ 白带；不动模板用截后处理保通用性。
+    How: 与背景色 diff → getbbox 找非背景包围盒 → 仅裁底（保留 left/top/right 不动，
+    避免英雄屏深色场景被误判）。block_a 整图非白 → bbox 等于全图 → 不裁，无副作用。
+    """
+    from PIL import Image, ImageChops
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    bg = Image.new("RGB", img.size, bg_rgb)
+    diff = ImageChops.difference(img, bg)
+    if tolerance > 0:
+        diff = diff.point(lambda p: 0 if p < tolerance else p)
+    bbox = diff.getbbox()
+    if not bbox:
+        return png_bytes
+    cropped = img.crop((0, 0, img.size[0], bbox[3]))
+    out = io.BytesIO()
+    cropped.save(out, format="PNG", optimize=True)
+    return out.getvalue()
 
 
 @app.route('/export/<product_type>/main-images', methods=['POST'])
 @login_required
 def export_main_images_zip(product_type):
-    """Export the 5 module-main-images (block_a/b3/f/h/c1) as 750-wide PNGs in a ZIP."""
+    """Export module-main-images as 750-wide PNGs.
+
+    单图直接发 PNG (image/png),多图打 ZIP (application/zip)。候选 block 按品类分发,
+    配件/耗材/工具类用 b2/e 替代长文案叙事屏 (b3/f) 保证 ≥3 张兜底产出。
+    """
     _validate_product_type(product_type)
     req_data = request.get_json(silent=True) or {}
     theme_id = req_data.get("theme_id", "classic-red")
@@ -5390,11 +5424,14 @@ def export_main_images_zip(product_type):
                 break
     css_vars = "; ".join(f"{k}:{v}" for k, v in theme_vars.items()) if theme_vars else ""
 
-    import zipfile, io
-    zip_buffer = io.BytesIO()
+    import zipfile
     base_url_str = str(BASE_DIR).replace("\\", "/")
+    candidates = _MAIN_BLOCK_CANDIDATES.get(product_type, _DEFAULT_MAIN_BLOCKS)
 
+    # ── Stage 1: 渲染收集所有有效图片（带 trim） ─────────────────────────
+    rendered = []  # [(display_name, block_id, png_bytes), ...]
     try:
+        from PIL import Image
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
@@ -5405,49 +5442,87 @@ def export_main_images_zip(product_type):
                 device_scale_factor=2,
             )
 
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for block_id, display_name in _MAIN_BLOCK_CANDIDATES:
-                    block_data = preview_data.get(block_id) or {}
-                    if not block_data:
-                        continue
+            for block_id, display_name in candidates:
+                # 放宽：不再硬跳 if not block_data，让模板用 {% if %} 自己兜底
+                block_data = preview_data.get(block_id) or {}
+                try:
                     html = _render_single_block(block_id, block_data)
-                    if not html or not html.strip():
-                        continue
+                except Exception as render_err:
+                    print(f"[主图导出] {block_id} 渲染异常,跳过: {render_err}")
+                    continue
+                if not html or not html.strip():
+                    continue
 
-                    full_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8">
-                    <style>*{{margin:0;padding:0;box-sizing:border-box;}} body{{width:750px;background:#fff;}}</style>
-                    </head><body style="{css_vars}">{html}</body></html>'''
+                full_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8">
+                <style>*{{margin:0;padding:0;box-sizing:border-box;}} body{{width:750px;background:#fff;}}</style>
+                </head><body style="{css_vars}">{html}</body></html>'''
+                full_html = full_html.replace('src="/static/', f'src="file:///{base_url_str}/static/')
+                full_html = full_html.replace("src='/static/", f"src='file:///{base_url_str}/static/")
 
-                    full_html = full_html.replace('src="/static/', f'src="file:///{base_url_str}/static/')
-                    full_html = full_html.replace("src='/static/", f"src='file:///{base_url_str}/static/")
+                temp_html = _user_out / f"_mainimg_{block_id}_{uuid.uuid4().hex[:6]}.html"
+                with open(temp_html, "w", encoding="utf-8") as f:
+                    f.write(full_html)
 
-                    temp_html = _user_out / f"_mainimg_{block_id}_{uuid.uuid4().hex[:6]}.html"
-                    with open(temp_html, "w", encoding="utf-8") as f:
-                        f.write(full_html)
-
-                    page = ctx.new_page()
+                page = ctx.new_page()
+                try:
                     page.goto(temp_html.as_uri(), wait_until="networkidle", timeout=15000)
                     page.wait_for_timeout(500)
                     png_bytes = page.screenshot(full_page=True)
+                except Exception as shot_err:
+                    print(f"[主图导出] {block_id} 截图异常,跳过: {shot_err}")
                     page.close()
+                    try: temp_html.unlink()
+                    except Exception: pass
+                    continue
+                page.close()
+                try: temp_html.unlink()
+                except Exception: pass
 
-                    zf.writestr(f"{display_name}_{block_id}.png", png_bytes)
-                    try:
-                        temp_html.unlink()
-                    except Exception:
-                        pass
+                # Trim 底部留白(对 block_a 深色背景无副作用; 对 b2/e/c1/h 白底关键)
+                png_bytes = _trim_bottom_whitespace(png_bytes)
+
+                # 内容过少(渲染兜底但实际为空)→ 跳过避免输出无意义图
+                try:
+                    h = Image.open(io.BytesIO(png_bytes)).size[1]
+                except Exception:
+                    h = 0
+                if h < 200:
+                    continue
+
+                rendered.append((display_name, block_id, png_bytes))
 
             browser.close()
     except Exception as exc:
         import traceback; traceback.print_exc()
         return jsonify({"error": f"模块主图导出失败: {exc}"}), 500
 
-    zip_buffer.seek(0)
+    # ── Stage 2: 张数分支 ─────────────────────────────────────────────
+    if len(rendered) == 0:
+        return jsonify({"error": "未生成任何主图，请检查文案完整性"}), 400
+
     model_name = preview_data.get("block_a", {}).get("model_name", product_type)
+    safe_name = _safe_download_name(model_name, product_type)
+
+    # 单图：直发 PNG（不再强制打 ZIP 让用户多解压一步）
+    if len(rendered) == 1:
+        display_name, block_id, png_bytes = rendered[0]
+        return send_file(
+            io.BytesIO(png_bytes),
+            mimetype="image/png",
+            as_attachment=True,
+            download_name=f"{safe_name}_{display_name}.png",
+        )
+
+    # 多图：打 ZIP
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for display_name, block_id, png_bytes in rendered:
+            zf.writestr(f"{display_name}_{block_id}.png", png_bytes)
+    zip_buffer.seek(0)
     return send_file(
         zip_buffer, mimetype="application/zip",
         as_attachment=True,
-        download_name=f"{_safe_download_name(model_name, product_type)}.zip"
+        download_name=f"{safe_name}.zip"
     )
 
 
