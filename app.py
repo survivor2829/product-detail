@@ -1175,70 +1175,77 @@ def _get_user_api_key():
     return None, None
 
 
-def _get_deepseek_key(user):
-    """PR C 二级模式: 付费用户走 platform key, 非付费用户走 custom key.
+# PR C 二级模式 key dispatcher 的配置表 — 加新 key 类型 (如 ark) 改这里即可,
+# 无需复制整个函数. 跟 _get_user_api_key (legacy 单层) 解耦保留, 后者待 parse-text
+# 迁移完毕再删.
+_KEY_CONFIG = {
+    "deepseek": {
+        "env_var": "DEEPSEEK_API_KEY",
+        "custom_attr": "custom_deepseek_key_enc",
+        "display_name": "DeepSeek",
+        "settings_hint": "请先在 /settings 配置自己的 DeepSeek API Key, 或联系管理员升级为付费用户",
+    },
+    "gpt_image": {
+        "env_var": "GPT_IMAGE_API_KEY",
+        "custom_attr": "custom_gpt_image_key_enc",
+        "display_name": "GPT-image-2",
+        "settings_hint": "请先在 /settings 配置自己的 GPT-image-2 API Key (APIMart), 或联系管理员升级为付费用户",
+    },
+}
+
+
+def _get_platform_key(user, key_type):
+    """PR C 二级模式: 付费/admin 走 platform env key, 非付费走解密 custom_*_enc.
+
+    替换早先 _get_deepseek_key / _get_gpt_image_key 的两份 90% 重复实现.
+    保留两个原函数为薄 wrapper, 老调用点不动 (单独 PR 收尾).
 
     Args:
-        user: current_user 对象 (有 is_paid / is_admin / custom_deepseek_key_enc)
+        user: current_user 对象
+        key_type: _KEY_CONFIG 的 key (目前 "deepseek" / "gpt_image")
 
     Returns:
         (key, source) 元组. source ∈ {"platform", "custom"}.
 
     Raises:
-        RuntimeError: 付费/admin 用户找不到 platform key (admin 必须配)
-                     或 非付费用户没配 custom key (用户引导去 settings 配)
+        ValueError: 未知 key_type
+        RuntimeError: 付费/admin 缺 platform key 或非付费缺 custom key
     """
+    cfg = _KEY_CONFIG.get(key_type)
+    if not cfg:
+        raise ValueError(f"未知 key_type: {key_type!r}, 期望 {list(_KEY_CONFIG)}")
+
     # admin 永远当付费用户对待 (admin 测试时不该自配 key)
     if getattr(user, "is_admin", False) or getattr(user, "is_paid", False):
-        key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        key = os.environ.get(cfg["env_var"], "").strip()
         if not key:
             raise RuntimeError(
-                "付费用户的 DeepSeek key 缺失 (admin 在 .env 配 DEEPSEEK_API_KEY 后重启)"
+                f"付费用户的 {cfg['display_name']} key 缺失 "
+                f"(admin 在 .env 配 {cfg['env_var']} 后重启)"
             )
         return key, "platform"
 
-    # 非付费用户: 解密 custom_deepseek_key_enc
-    enc = getattr(user, "custom_deepseek_key_enc", None)
+    # 非付费用户: 解密 custom_*_key_enc
+    enc = getattr(user, cfg["custom_attr"], None)
     if not enc:
-        raise RuntimeError(
-            "请先在 /settings 配置自己的 DeepSeek API Key, "
-            "或联系管理员升级为付费用户"
-        )
+        raise RuntimeError(cfg["settings_hint"])
     from crypto_utils import decrypt_api_key
     key = (decrypt_api_key(enc) or "").strip()
     if not key:
         raise RuntimeError(
-            "DeepSeek key 解密失败, 请重新在 /settings 配置"
+            f"{cfg['display_name']} key 解密失败, 请重新在 /settings 配置"
         )
     return key, "custom"
+
+
+# 薄 wrapper, 保留老接口名以减小本 PR 的回归面.
+# 下个 PR 再把所有调用点直接改 _get_platform_key + 删除这两个 wrapper.
+def _get_deepseek_key(user):
+    return _get_platform_key(user, "deepseek")
 
 
 def _get_gpt_image_key(user):
-    """PR C 二级模式: 付费用户走 platform GPT_IMAGE_API_KEY, 非付费用户走 custom.
-
-    跟 _get_deepseek_key 同样的二级 dispatcher 逻辑, 只是 key 名不同.
-    """
-    if getattr(user, "is_admin", False) or getattr(user, "is_paid", False):
-        key = os.environ.get("GPT_IMAGE_API_KEY", "").strip()
-        if not key:
-            raise RuntimeError(
-                "付费用户的 GPT-image-2 key 缺失 (admin 在 .env 配 GPT_IMAGE_API_KEY 后重启)"
-            )
-        return key, "platform"
-
-    enc = getattr(user, "custom_gpt_image_key_enc", None)
-    if not enc:
-        raise RuntimeError(
-            "请先在 /settings 配置自己的 GPT-image-2 API Key (APIMart), "
-            "或联系管理员升级为付费用户"
-        )
-    from crypto_utils import decrypt_api_key
-    key = (decrypt_api_key(enc) or "").strip()
-    if not key:
-        raise RuntimeError(
-            "GPT-image-2 key 解密失败, 请重新在 /settings 配置"
-        )
-    return key, "custom"
+    return _get_platform_key(user, "gpt_image")
 
 
 @app.route("/api/upload", methods=["POST"])
