@@ -82,17 +82,22 @@ class TestGetDeepseekKeyHelper:
         )
 
     def test_helper_checks_is_paid(self):
-        """helper 函数体必须检查 is_paid 决定走 platform 还是 custom."""
+        """二级模式 dispatcher 必须检查 is_paid (或 is_admin) 决定走 platform 还是 custom.
+
+        2026-05-09 重构后接受 2 种结构:
+        (a) 老结构: _get_deepseek_key 内联 is_paid 检查
+        (b) 新结构: _get_deepseek_key 是薄 wrapper, 检查抽到 _get_platform_key dispatcher
+        """
         content = APP_PY.read_text(encoding="utf-8")
-        # 找 _get_deepseek_key 函数体 (到下一个 def 之前)
-        match = re.search(
-            r"def\s+_get_deepseek_key\s*\([^)]*\)[^:]*:\s*\n([\s\S]+?)(?=\n(?:def|@app|class)\s)",
+        # findall 抓 _get_(deepseek|platform)_key 任一函数体, 拼起来检查
+        bodies = re.findall(
+            r"def\s+_get_(?:deepseek|platform)_key\s*\([^)]*\)[^:]*:\s*\n([\s\S]+?)(?=\n(?:def|@app|class)\s)",
             content,
         )
-        assert match, "找不到 _get_deepseek_key 函数体"
-        body = match.group(1)
-        assert "is_paid" in body or "is_admin" in body, (
-            "_get_deepseek_key 必须检查 is_paid (或 is_admin) 决定 key 来源"
+        assert bodies, "找不到 _get_deepseek_key 或 _get_platform_key 函数体"
+        combined = "\n".join(bodies)
+        assert "is_paid" in combined or "is_admin" in combined, (
+            "二级模式 dispatcher 必须检查 is_paid (在 _get_deepseek_key 或 _get_platform_key 内)"
         )
 
 
@@ -107,15 +112,19 @@ class TestGetGptImageKeyHelper:
         )
 
     def test_helper_checks_is_paid(self):
+        """gpt_image 二级模式 dispatcher 必须检查 is_paid.
+
+        2026-05-09 重构后接受 2 种结构 (同 deepseek 测试).
+        """
         content = APP_PY.read_text(encoding="utf-8")
-        match = re.search(
-            r"def\s+_get_gpt_image_key\s*\([^)]*\)[^:]*:\s*\n([\s\S]+?)(?=\n(?:def|@app|class)\s)",
+        bodies = re.findall(
+            r"def\s+_get_(?:gpt_image|platform)_key\s*\([^)]*\)[^:]*:\s*\n([\s\S]+?)(?=\n(?:def|@app|class)\s)",
             content,
         )
-        assert match, "找不到 _get_gpt_image_key 函数体"
-        body = match.group(1)
-        assert "is_paid" in body or "is_admin" in body, (
-            "_get_gpt_image_key 必须检查 is_paid 决定 key 来源"
+        assert bodies, "找不到 _get_gpt_image_key 或 _get_platform_key 函数体"
+        combined = "\n".join(bodies)
+        assert "is_paid" in combined or "is_admin" in combined, (
+            "二级模式 dispatcher 必须检查 is_paid (在 _get_gpt_image_key 或 _get_platform_key 内)"
         )
 
 
@@ -205,22 +214,22 @@ class TestAdminBehavesAsPaid:
     """守护: admin 用户视为 is_paid=True (admin 永远走 platform key)."""
 
     def test_helpers_treat_admin_as_paid(self):
-        """_get_deepseek_key / _get_gpt_image_key 必须把 admin 当付费用户."""
+        """二级模式 dispatcher 必须把 admin 当付费用户处理.
+
+        2026-05-09 重构后接受 2 种结构: 检查可在 _get_deepseek_key / _get_gpt_image_key
+        内联, 或抽到共享的 _get_platform_key dispatcher.
+        """
         content = APP_PY.read_text(encoding="utf-8")
-        # 任一 helper 必须含 'is_admin' 检查
-        ds_match = re.search(
-            r"def\s+_get_deepseek_key[\s\S]+?(?=\n(?:def|@app|class)\s)",
+        # 抓所有候选 dispatcher 函数体并拼起来检查 'is_admin'
+        bodies = re.findall(
+            r"def\s+_get_(?:deepseek|gpt_image|platform)_key[\s\S]+?(?=\n(?:def|@app|class)\s)",
             content,
         )
-        assert ds_match, "找不到 _get_deepseek_key"
-        gpt_match = re.search(
-            r"def\s+_get_gpt_image_key[\s\S]+?(?=\n(?:def|@app|class)\s)",
-            content,
+        assert bodies, (
+            "找不到任何二级模式 helper (_get_deepseek_key / _get_gpt_image_key / "
+            "_get_platform_key)"
         )
-        assert gpt_match, "找不到 _get_gpt_image_key"
-        # 至少一个 helper 在 is_paid 同行/邻近行检查 is_admin (实施可二选一: 直接 is_admin or is_paid)
-        combined = ds_match.group(0) + gpt_match.group(0)
+        combined = "\n".join(bodies)
         assert "is_admin" in combined, (
-            "_get_deepseek_key 或 _get_gpt_image_key 必须把 admin 视为 paid "
-            "(否则 admin 自己测试时也得自配 key)"
+            "二级模式 dispatcher 必须把 admin 视为 paid (否则 admin 测试时也得自配 key)"
         )

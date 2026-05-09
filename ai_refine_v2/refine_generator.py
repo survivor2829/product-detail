@@ -46,7 +46,9 @@ _APIMART_BASE = os.environ["REFINE_API_BASE_URL"]
 _APIMART_MODEL = "gpt-image-2"
 _APIMART_SIZE_DEFAULT = "1:1"
 _POLL_INTERVAL_S = 3
-_POLL_TIMEOUT_S = 240
+# 2026-05-09 用户报 v2 Hero TimeoutError: 240s (4min) 对 12 屏 + APIMart 偶发 503 重试边界过紧.
+# 提到 480s (8min), env var 可覆盖给 admin 紧急调参 (生产 hot-fix 不重 deploy).
+_POLL_TIMEOUT_S = int(os.environ.get("REFINE_POLL_TIMEOUT_S", "480"))
 _COST_PER_CALL_RMB = 0.70  # gpt-image-2 + thinking=medium
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 "
@@ -888,8 +890,10 @@ def generate_v2(
     if hero_res.image_url is None:
         result.errors.append(f"hero ({hero_block['block_id']}): {hero_res.error}")
         result.total_elapsed_s = round(time.time() - t_start, 2)
+        # 注意: hero_res.error 已包含 "重试 N 次后仍失败: ..." (来自 _generate_one_block_v2),
+        # 这里不再叠一层 "重试" 文案, 避免视觉上像 4 倍重试 (实际只重试 max_retries_hero 次).
         raise HeroFailure(
-            f"v2 Hero 重试 {max_retries_hero} 次后仍失败: {hero_res.error}. "
+            f"v2 Hero 失败: {hero_res.error}. "
             f"PRD §7: 整单 fail, 已生成的其他屏不保留."
         )
 
