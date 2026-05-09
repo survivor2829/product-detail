@@ -36,16 +36,36 @@ On confirm:
 git push
 ```
 
-## Step 3 — SSH and pull (ASK FIRST)
+## Step 3 — SSH and 智能 deploy (ASK FIRST)
 
-Ask: "SSH to tencent-prod and restart docker-compose? (y/n)"
+Ask: "SSH to tencent-prod and deploy? (y/n)"
+
+⚠️ **2026-05-09 OOM 事故教训**: prod 直接 `docker compose up -d --build` 会撑死 4G VPS
+(build 进程逃出 mem_limit 约束, chromium 解压峰值 1-2GB → OOM thrashing → 强制重启).
+
+新流程：**仅 Dockerfile / requirements / playwright 改动时才 build, 否则 restart**.
+这样 deploy templates / static / 纯 Python 改动时 0 build 风险.
 
 On confirm:
 ```bash
-ssh tencent-prod "cd /root/clean-industry-ai-assistant && git pull && docker compose restart && sleep 5 && docker compose ps"
+ssh tencent-prod << 'REMOTE'
+  set -e
+  cd /root/clean-industry-ai-assistant
+  git pull
+  if git diff HEAD@{1} HEAD --name-only | grep -qE '^(Dockerfile|requirements.*\.txt|playwright)'; then
+    echo '[deploy] 检测 Dockerfile/requirements 改动 → 必须 build (注意 OOM 风险)'
+    echo '[deploy] 如果机器内存仍是 4G, 强烈建议先做 PR-B (镜像仓库 pull) 或升级硬件'
+    docker compose up -d --build
+  else
+    echo '[deploy] 仅 app/templates/static 改动 → restart 即可 (零 OOM 风险)'
+    docker compose restart web
+  fi
+  sleep 5
+  docker compose ps
+REMOTE
 ```
 
-Expected: container shows `Up`. Anything `Restarting` or `Exit` = fail.
+Expected: container shows `Up X (healthy)`. `Restarting` / `Exit` / `(unhealthy)` = fail.
 
 ## Step 4 — Health check
 
