@@ -86,7 +86,7 @@ RUN pip config set global.index-url https://mirrors.cloud.tencent.com/pypi/simpl
 # 只会拉 chrome + chrome-headless-shell, 不会重复拉 ffmpeg.
 # 反过来则失败: chromium 先装触发 ffmpeg 404 → 整个命令 fail → chrome+shell 的
 # INSTALLATION_COMPLETE 不落盘 → 第二阶段再重下 chrome+shell 仍 404 (HOST 换过了).
-RUN pip install --no-cache-dir playwright && \
+RUN pip install --no-cache-dir playwright==1.58.0 && \
     PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
       playwright install ffmpeg
 RUN PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing \
