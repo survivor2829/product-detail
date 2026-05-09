@@ -1556,9 +1556,17 @@
         throw new Error(err.error || '导出失败');
       }
       const blob = await resp.blob();
+      // 后端按张数返回 image/png(单图)或 application/zip(多图);文件名优先用 Content-Disposition
+      const ct = resp.headers.get('Content-Type') || '';
+      const isZip = ct.includes('zip');
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^;"']+)/i);
+      const fallbackName = `${currentProductType}_主图.${isZip ? 'zip' : 'png'}`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `${currentProductType}_主图.zip`; a.click();
+      a.href = url;
+      a.download = m ? decodeURIComponent(m[1]) : fallbackName;
+      a.click();
       URL.revokeObjectURL(url);
     } catch (err) { showError('主图导出失败：' + err.message); }
     finally { btn.disabled = false; btn.textContent = '📦 导出全部主图 ZIP'; }
