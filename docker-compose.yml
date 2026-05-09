@@ -62,6 +62,18 @@ services:
   web:
     build: .
     restart: unless-stopped
+    # 2026-05-09 OOM 事故修复: 加 healthcheck 让容器假死时 docker ps 能看到 (unhealthy).
+    # python urllib 而非 curl: python:slim 基镜像不一定有 curl, python 解释器是必有的.
+    # /auth/login 永远 200 (登录表单页, 无 auth 门), 比 / (302 redirect) 更适合判定.
+    # ⚠ 注意: docker 默认 healthcheck 失败不会自动重启容器 (unless-stopped 只对 exit
+    # 生效). 当前只给 visibility, 自动重启需要 autoheal sidecar 或升 docker swarm,
+    # 单独 PR 处理.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/auth/login', timeout=5)\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     # ⚠ 不用 depends_on — Compose V2 对 depends_on 不跟随 profile gating,
     # full profile 未激活时 depends_on 指向 db/redis 会报 "undefined service".
     # 代价: full 部署时 web 可能先于 pg 起来, 靠 restart + pool_pre_ping 重连.
