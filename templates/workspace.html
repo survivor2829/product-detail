@@ -269,6 +269,7 @@
     /* ── Export Bar ─────────────────────────────────────────── */
     #export_bar {
       display: none; align-items: center; justify-content: center;
+      gap: 12px;
       padding: 12px 24px;
       background: rgba(255,255,255,0.92);
       backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -656,8 +657,13 @@
 
     <!-- Export Bar (detail) -->
     <div id="export_bar">
-      <button class="btn-export" id="btn_export" onclick="doExport()">
-        📥 导出详情页 PNG
+      <button class="btn-export" id="btn_export_png" onclick="doExport('png')" title="无损 PNG, 文件较大 (~5MB)">
+        📥 导出 PNG
+      </button>
+      <button class="btn-export" id="btn_export_jpg" onclick="doExport('jpg')"
+              style="background:var(--color-bg-soft,#f4f4f5); color:var(--color-text);"
+              title="JPG quality 90, 文件更小 (~1.5-2MB), 适合电商上传">
+        📥 导出 JPG <span style="font-size:11px; opacity:.7;">(较小)</span>
       </button>
     </div>
 
@@ -1239,10 +1245,16 @@
   }
 
   /* ── Export ─────────────────────────────────────────────────── */
-  async function doExport() {
-    const btn = document.getElementById('btn_export');
-    btn.disabled = true;
-    btn.textContent = '导出中...';
+  async function doExport(format = 'png') {
+    const fmt = format === 'jpg' ? 'jpg' : 'png';
+    const ext = fmt;
+    // 双按钮: 点哪个 disable 哪个, 另一个保持可点 (避免误锁)
+    const btnPng = document.getElementById('btn_export_png');
+    const btnJpg = document.getElementById('btn_export_jpg');
+    const activeBtn = fmt === 'jpg' ? btnJpg : btnPng;
+    const originalText = activeBtn.innerHTML;
+    activeBtn.disabled = true;
+    activeBtn.textContent = '导出中...';
     try {
       const resp = await fetch(`/export/${encodeURIComponent(currentProductType)}`, {
         method: 'POST',
@@ -1251,7 +1263,8 @@
           module_order: getCurrentModuleOrder(),
           hidden_modules: getHiddenModuleIds(),
           theme_id: currentThemeId,
-          build_data: currentBuildData
+          build_data: currentBuildData,
+          format: fmt
         })
       });
       if (!resp.ok) {
@@ -1262,14 +1275,14 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${currentProductType}_详情页.png`;
+      a.download = `${currentProductType}_详情页.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
       showError('导出失败：' + err.message);
     } finally {
-      btn.disabled = false;
-      btn.textContent = '📥 导出高清 PNG';
+      activeBtn.disabled = false;
+      activeBtn.innerHTML = originalText;
     }
   }
 

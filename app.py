@@ -5533,6 +5533,11 @@ def export_generic(product_type):
     module_order = req_data.get("module_order", [])
     hidden_modules = set(req_data.get("hidden_modules", []))
     theme_id = req_data.get("theme_id", "classic-red")
+    # 导出格式: png (无损,默认,~5MB) | jpg (quality 90,~1.5-2MB,适合电商上传)
+    export_format = (req_data.get("format") or "png").lower()
+    if export_format not in ("png", "jpg"):
+        export_format = "png"
+    is_jpg = export_format == "jpg"
 
     # Load theme CSS vars
     theme_vars = {}
@@ -5587,8 +5592,9 @@ def export_generic(product_type):
     model_name = data.get("block_a", {}).get("model_name", product_type)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # 服务端文件名含时间戳避免同型号重复导出覆盖;下载文件名只给用户看产品名
-    server_filename = f"{product_type}_{model_name}_{timestamp}.png"
-    download_filename = f"{_safe_download_name(model_name, product_type)}.png"
+    ext = "jpg" if is_jpg else "png"
+    server_filename = f"{product_type}_{model_name}_{timestamp}.{ext}"
+    download_filename = f"{_safe_download_name(model_name, product_type)}.{ext}"
     _user_outputs = STATIC_OUTPUTS / str(current_user.id)
     _user_outputs.mkdir(parents=True, exist_ok=True)
     out_path = _user_outputs / server_filename
@@ -5606,7 +5612,11 @@ def export_generic(product_type):
             page = ctx.new_page()
             page.goto(temp_html.as_uri(), wait_until="networkidle", timeout=30000)
             page.wait_for_timeout(2000)
-            page.screenshot(path=str(out_path), full_page=True)
+            if is_jpg:
+                # quality 90: 肉眼几乎无损,750x3000 长图约 1.5-2MB,适合电商上传
+                page.screenshot(path=str(out_path), full_page=True, type="jpeg", quality=90)
+            else:
+                page.screenshot(path=str(out_path), full_page=True)
             browser.close()
     except Exception as exc:
         import traceback; traceback.print_exc()
@@ -5623,7 +5633,8 @@ def export_generic(product_type):
     db.session.add(log)
     db.session.commit()
 
-    return send_file(str(out_path), mimetype="image/png",
+    return send_file(str(out_path),
+                     mimetype="image/jpeg" if is_jpg else "image/png",
                      as_attachment=True, download_name=download_filename)
 
 
