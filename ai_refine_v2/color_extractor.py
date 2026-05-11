@@ -145,26 +145,43 @@ def extract_color_anchor(
       - quantize 内部异常
     """
     p = Path(cutout_path)
+    print(f"[color_anchor] start path={p} exists={p.is_file()}")
     if not p.is_file():
+        print(f"[color_anchor] FAIL reason=cutout_missing path={p} ⚠️")
         return None
     try:
         img = Image.open(p)
+        orig_size = img.size
         # 下采样加速 quantize
         if max(img.size) > downsample_to:
             ratio = downsample_to / max(img.size)
             new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
             img = img.resize(new_size, Image.LANCZOS)
         non_bg = _filter_background_pixels(img)
+        total_pixels = img.size[0] * img.size[1]
+        print(f"[color_anchor] orig_size={orig_size} downsampled={img.size} mode={img.mode} "
+              f"non_bg_pixels={len(non_bg)} total_pixels={total_pixels} "
+              f"non_bg_ratio={len(non_bg)/total_pixels if total_pixels else 0:.4f}")
         if len(non_bg) < min_non_bg_pixels:
+            print(f"[color_anchor] FAIL reason=too_few_non_bg_pixels "
+                  f"got={len(non_bg)} required>={min_non_bg_pixels} ⚠️")
             return None
 
         clusters = _kmeans_via_quantize(non_bg, k=5)
         if not clusters:
+            print(f"[color_anchor] FAIL reason=quantize_returned_empty ⚠️")
             return None
 
         primary_rgb, primary_count = clusters[0]
         confidence = primary_count / len(non_bg)
+        primary_hex_preview = _rgb_to_hex(primary_rgb)
+        cluster_summary = [(f"{_rgb_to_hex(rgb)}", cnt, f"{cnt/len(non_bg):.3f}")
+                           for rgb, cnt in clusters[:5]]
+        print(f"[color_anchor] clusters (hex, count, ratio)={cluster_summary}")
         if confidence < min_confidence:
+            print(f"[color_anchor] FAIL reason=low_confidence "
+                  f"primary_hex={primary_hex_preview} confidence={confidence:.4f} "
+                  f"required>={min_confidence} ⚠️")
             return None
 
         primary_hex = _rgb_to_hex(primary_rgb)
@@ -176,14 +193,18 @@ def extract_color_anchor(
         # 渲染色卡 PNG bytes (Task 7)
         try:
             swatch_bytes = _render_swatch_png(primary_hex, size=swatch_size)
-        except Exception:
+        except Exception as e:
+            print(f"[color_anchor] swatch_render_failed err={e} → 走 B1 only 单图模式 ⚠️")
             swatch_bytes = b""  # 渲染失败仍允许返 anchor (走 B1 only)
 
+        print(f"[color_anchor] OK primary_hex={primary_hex} palette={palette_hex} "
+              f"confidence={confidence:.4f} swatch_bytes={len(swatch_bytes)}")
         return ColorAnchor(
             primary_hex=primary_hex,
             palette_hex=palette_hex,
             confidence=confidence,
             swatch_png_bytes=swatch_bytes,
         )
-    except Exception:  # 按 spec §5.1: 任何异常 → 返 None, 不外抛
+    except Exception as e:  # 按 spec §5.1: 任何异常 → 返 None, 不外抛
+        print(f"[color_anchor] FAIL reason=extraction_exception err={e} ⚠️")
         return None
