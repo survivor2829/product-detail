@@ -151,9 +151,10 @@ def _build_prompt(theme_id: str, screen: str, category: str,
 
     返回 (prompt, negative_prompt),由调用方分别传给 Seedream。
     product_hint 用 category(如"驾驶式洗地机")让 hero 等屏的环境带语境。
-    variant 由 style_pack 决定(如 factory/showroom/tech_grid/...),传 "" → 走 DEFAULT_VARIANT。
+    variant: 场景变体名(如 showroom/mall_corridor/...),来自 prompt_templates.DEFAULT_VARIANTS_MAP。
+    传 "" → 走 DEFAULT_VARIANT。
 
-    prev_variant/next_variant: 邻屏实际的 variant(也来自 style_pack)。
+    prev_variant/next_variant: 邻屏实际的 variant。
     必须传下去,_transition_hint 才能按真实邻屏 palette 拼接缝描述。
     不传 → 回退 DEFAULT,六图串联时会出现可见色带(本 bug 要解决的正是这个)。
 
@@ -195,7 +196,7 @@ def _generate_one(theme_id: str, screen: str, category: str,
 
     reference_image_url: 可选参考图路径或 data URL。
                          传空字符串(默认) → 纯文生图,行为与原来完全一致。
-    variant: style_pack 决定的场景变体(如 factory/showroom/...)，影响 prompt 和缓存 key。
+    variant: 场景变体名(如 showroom/mall_corridor/...)，影响 prompt 和缓存 key。
     """
     key = _cache_key(theme_id, screen, category, product_name, variant)
     path = _cached_path(key)
@@ -250,8 +251,6 @@ def generate_backgrounds(theme_id: str,
                          screens: Iterable[str] = SCREENS_NEEDING_BG,
                          product_name: str = "",
                          reference_image_url: str = "",
-                         style_pack: str = "",
-                         random_style: bool = False,
                          ) -> Dict[str, str]:
     """
     并发生成 N 屏背景图。返回 {screen_type: bg_url 或 ""}。
@@ -267,17 +266,11 @@ def generate_backgrounds(theme_id: str,
       传空字符串(默认) → 纯文生图,行为与原来完全一致。
       传本地路径(如 /static/uploads/xxx.png)或 data URL →
         每屏调用都带同一张参考图,Seedream 会在风格/色调上向参考图靠拢。
-
-    style_pack: 风格包 id(如 "industrial_authority"),控制每屏选哪个 variant。
-      传 "random" 或 random_style=True → 随机盲盒模式,每次抽不同风格。
-      传 "" → 走 DEFAULT_STYLE_PACK(commercial_showroom)。
     """
     screens = tuple(screens)
     mode = get_mode()
 
-    # 解析 style_pack → variants_map
-    pack_id, variants_map = prompt_templates.pick_style_pack(style_pack, random_style)
-    print(f"[bg] style_pack={pack_id}")
+    variants_map = prompt_templates.DEFAULT_VARIANTS_MAP
 
     # 没有 API key → 全部走 CSS 兜底,不联网
     if not api_key:
@@ -305,7 +298,7 @@ def generate_backgrounds(theme_id: str,
                         prev_map[s], next_map[s],
                         reference_image_url,
                         variants_map.get(s, ""),
-                        # 邻屏的实际 variant(由 style_pack 决定) — 让接缝描述与邻屏真实 palette 一致
+                        # 邻屏的实际 variant — 让接缝描述与邻屏真实 palette 一致
                         variants_map.get(prev_map[s], "") if prev_map[s] else "",
                         variants_map.get(next_map[s], "") if next_map[s] else ""): s
             for s in screens_list
@@ -329,7 +322,7 @@ def generate_backgrounds(theme_id: str,
 # 与背景图不同:这是"对照物"语义,需要"每次长得一样"的稳定性。
 # 所以:
 #   - 不走 AI_BG_MODE (即使设成 realtime 也不重烧)
-#   - 不加 theme / style_pack / variant 变体
+#   - 不加 theme / variant 变体
 #   - 永久磁盘缓存 (force_refresh=True 才重烧)
 #   - prompt 固定
 #
