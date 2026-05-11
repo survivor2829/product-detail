@@ -44,25 +44,69 @@
     .topbar-right a:hover { color: var(--color-text); }
     .topbar-username { font-weight: 600; color: var(--color-text); }
 
-    /* ── Workspace Layout ───────────────────────────────────── */
+    /* ── Workspace Layout(grid + 三档预设)───────────────────────
+       grid + fr 单位天然支持 transition,flex 的 width 切换在 Safari 有锯齿。
+       默认 = layout-balance,JS 加载前的裸奔体验也是均衡档。 */
     .workspace {
-      display: flex; gap: 14px;
+      display: grid;
+      grid-template-columns: var(--col-left) var(--col-center) var(--col-right);
+      gap: 14px;
       height: calc(100vh - 54px); margin-top: 54px;
       padding: 14px; background: var(--color-bg-page);
+      --col-left: 30fr; --col-center: 38fr; --col-right: 32fr;
+      transition: grid-template-columns 220ms cubic-bezier(.2,.8,.2,1);
     }
+    .workspace.layout-edit    { --col-left: 38fr; --col-center: 32fr; --col-right: 30fr; }
+    .workspace.layout-balance { --col-left: 30fr; --col-center: 38fr; --col-right: 32fr; }
+    .workspace.layout-preview { --col-left: 22fr; --col-center: 56fr; --col-right: 22fr; }
 
     .panel-left,
     .panel-center,
     .panel-right {
       background: #fff; border-radius: 8px;
       box-shadow: var(--shadow-panel); border: var(--border-panel);
-      overflow-y: auto; flex-shrink: 0;
+      overflow-y: auto;
+      min-width: 0; /* 关键:grid 子项默认 min-width:auto 会被内容(如 #preview_container 750px)撑爆列 */
     }
-    .panel-left { width: 360px; }
-    .panel-right { width: 244px; }
     .panel-center {
-      flex: 1; flex-shrink: 1;
       position: relative; display: flex; flex-direction: column;
+    }
+
+    /* ── 顶栏布局切换按钮 ─────────────────────────────────────── */
+    .layout-toggle {
+      display: inline-flex; gap: 2px;
+      background: var(--color-bg-soft, #f4f4f5);
+      border-radius: 8px; padding: 3px; margin-right: 4px;
+    }
+    .layout-toggle button {
+      border: none; background: transparent;
+      padding: 5px 10px; font-size: 12px; font-weight: 500;
+      color: var(--color-text-muted);
+      border-radius: 6px; cursor: pointer;
+      transition: all .15s; font-family: inherit;
+    }
+    .layout-toggle button:hover { color: var(--color-text); }
+    .layout-toggle button.active {
+      background: #fff; color: var(--color-primary);
+      box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 600;
+    }
+
+    /* ── 响应式降级 ──────────────────────────────────────────── */
+    /* <1280px:预览档不够装 #preview_container 750px,自动降级到均衡 */
+    @media (max-width: 1279px) {
+      .workspace.layout-preview { --col-left: 30fr; --col-center: 38fr; --col-right: 32fr; }
+      .layout-toggle button[data-layout="preview"] {
+        opacity: 0.4; cursor: not-allowed;
+      }
+    }
+    /* <1024px:三栏堆叠,toggle 隐藏 */
+    @media (max-width: 1023px) {
+      .workspace {
+        grid-template-columns: 1fr !important;
+        height: auto; overflow-y: auto;
+      }
+      .panel-left, .panel-right { max-height: 50vh; }
+      .layout-toggle { display: none; }
     }
 
     /* ── Panel Section ──────────────────────────────────────── */
@@ -247,7 +291,11 @@
     .btn-export:disabled { opacity: 0.65; cursor: not-allowed; }
 
     /* ── Theme Grid ─────────────────────────────────────────── */
-    .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 16px 16px; }
+    /* auto-fill + minmax 让卡片随右栏宽度自适应:
+       - layout-balance/edit 右栏 ≈ 460px → 3-4 列
+       - layout-preview 右栏 ≈ 320px → 2 列
+       避免硬写两列在右栏变宽时变得过宽且丑。 */
+    .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; padding: 14px 16px 16px; }
     .theme-card {
       border: 2px solid transparent;
       border-radius: 10px;
@@ -429,6 +477,11 @@
     小玺AI · 工作台
   </a>
   <div class="topbar-right">
+    <div class="layout-toggle" role="group" aria-label="布局预设">
+      <button type="button" data-layout="edit"    onclick="setLayout('edit')"    title="编辑主导:上传/填表阶段">✏️ 编辑</button>
+      <button type="button" data-layout="balance" onclick="setLayout('balance')" title="均衡(推荐)" class="active">⚖️ 均衡</button>
+      <button type="button" data-layout="preview" onclick="setLayout('preview')" title="预览主导:查看生成结果(需 ≥1280 屏宽)">🖼️ 预览</button>
+    </div>
     <a href="/batch/upload">批量生成</a>
     <a href="/batch/history">历史记录</a>
     <span class="topbar-username">{{ current_user.username }}</span>
@@ -624,15 +677,6 @@
       <!-- populated by loadThemes() -->
     </div>
 
-    <!-- AI 风格包(仅 AI 精修版生效) -->
-    <p class="panel-right-title" style="margin-top:18px; display:flex; align-items:center; gap:6px;">
-      AI 风格
-      <span style="font-size:10px; font-weight:500; color:var(--color-text-muted); background:var(--color-bg-soft,#f4f4f5); padding:2px 6px; border-radius:4px;">AI 精修专用</span>
-    </p>
-    <div class="style-pack-grid" id="style_pack_grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-      <!-- populated by loadStylePacks() -->
-    </div>
-
     <!-- E-commerce Copy Section -->
     <div id="ecom_content">
       <div class="ecom-panel">
@@ -711,9 +755,6 @@
   let currentProductType = '{{ initial_product_type|default("设备类") }}';
   let currentThemeId = 'classic-red';
   let allThemes = [];
-  let allStylePacks = [];
-  let currentStylePack = '';         // '' = 默认(commercial_showroom); 'random' = 盲盒
-  let currentRandomStyle = false;    // true = 每次随机抽一个包 (等价 currentStylePack='random')
   let currentBuildData = null;
   let originalRawText = '';
   let mainImageHtmls = [];       // [{id, name, html}, ...]
@@ -892,59 +933,24 @@
     }
   }
 
-  /* ── AI 风格包(仅 AI 精修版生效) ───────────────────────────── */
-  // icon 用 emoji,无需额外资源;不同包一眼可辨(权威/展厅/奢华/科技/户外/车间/盲盒)
-  const STYLE_PACK_ICONS = {
-    industrial_authority: '🏭',
-    commercial_showroom:  '🏬',
-    luxury_hospitality:   '🏨',
-    tech_minimal:         '🔬',
-    outdoor_architectural:'🏙️',
-    workshop_utility:     '🔧',
-    random:               '🎲',
-  };
+  /* ── 布局预设(三档:edit/balance/preview)───────────────────── */
+  const LAYOUT_KEY = 'workspace_layout_v1';
+  const VALID_LAYOUTS = ['edit', 'balance', 'preview'];
 
-  async function loadStylePacks() {
-    try {
-      const resp = await fetch('/api/style-packs', { headers: { 'X-CSRFToken': csrfToken } });
-      const data = await resp.json();
-      allStylePacks = data.packs || [];
-      renderStylePackGrid();
-    } catch (e) { console.error('Failed to load style packs', e); }
+  function setLayout(name, opts = {}) {
+    if (!VALID_LAYOUTS.includes(name)) name = 'balance';
+    // 预览档要求 ≥1280 屏宽(中栏 56% 才装得下 750px 的 #preview_container)
+    if (name === 'preview' && window.innerWidth < 1280) name = 'balance';
+    const ws = document.querySelector('.workspace');
+    if (!ws) return;
+    VALID_LAYOUTS.forEach(n => ws.classList.toggle(`layout-${n}`, n === name));
+    document.querySelectorAll('.layout-toggle button').forEach(b =>
+      b.classList.toggle('active', b.dataset.layout === name));
+    if (!opts.silent) localStorage.setItem(LAYOUT_KEY, name);
   }
 
-  function renderStylePackGrid() {
-    const grid = document.getElementById('style_pack_grid');
-    if (!grid) return;
-    // 未选 = 默认包(commercial_showroom);选 random 走盲盒
-    grid.innerHTML = allStylePacks.map(p => {
-      const sel = (p.id === currentStylePack) || (!currentStylePack && p.id === 'commercial_showroom');
-      const isRandom = p.id === 'random';
-      const icon = STYLE_PACK_ICONS[p.id] || '🎨';
-      const borderColor = sel ? 'var(--color-primary)' : 'var(--color-border, #e5e7eb)';
-      const bgColor = sel ? 'rgba(232,35,26,0.04)' : '#fff';
-      const randomHint = isRandom ? ' 🎲' : '';
-      return `
-        <div class="style-pack-card" data-pack-id="${p.id}" onclick="applyStylePack('${p.id}')" title="${p.desc}"
-             style="cursor:pointer; border:1.5px solid ${borderColor}; border-radius:8px; padding:8px 6px; background:${bgColor}; text-align:center; transition:all .15s;">
-          <div style="font-size:22px; line-height:1;">${icon}</div>
-          <div style="font-size:11px; font-weight:600; color:var(--color-text); margin-top:4px;">${p.label}${randomHint}</div>
-          <div style="font-size:9px; color:var(--color-text-muted); margin-top:2px; line-height:1.25; height:22px; overflow:hidden;">${p.desc}</div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  function applyStylePack(packId) {
-    currentStylePack = packId;
-    currentRandomStyle = (packId === 'random');
-    renderStylePackGrid();
-    // 如果包建议某个主题色,顺便切过去(用户仍可手动覆盖)
-    const pack = allStylePacks.find(p => p.id === packId);
-    if (pack && pack.recommended_theme && pack.recommended_theme !== currentThemeId) {
-      const rec = allThemes.find(t => t.id === pack.recommended_theme);
-      if (rec) applyTheme(rec.id);
-    }
+  function initLayout() {
+    setLayout(localStorage.getItem(LAYOUT_KEY) || 'balance', { silent: true });
   }
 
   /* ── Generate Preview ───────────────────────────────────────── */
@@ -1575,8 +1581,8 @@
 
   /* ── Init ───────────────────────────────────────────────────── */
   document.addEventListener('DOMContentLoaded', () => {
+    initLayout();           // 必须最先,从 localStorage 恢复布局档,避免 loadThemes 后才切档导致闪烁
     loadThemes();
-    loadStylePacks();       // 并行加载 AI 风格包(独立于主题色,不互相阻塞)
     renderArkKeyStatus();   // 显示用户已配置的豆包 Key 状态(末4位)
     // 产品图走自动抠图 — 否则 AI 精修合成时原图背景 + 原图水印文字会穿透到模板
     initUploadBox('upload_product', url => { productImageUrl = url; }, { autoRembg: true });

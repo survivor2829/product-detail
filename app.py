@@ -1101,19 +1101,6 @@ def get_themes():
     return jsonify(data)
 
 
-@app.route('/api/style-packs', methods=['GET'])
-@login_required
-def get_style_packs():
-    """返回 AI 精修版可选的风格包列表(正交于 theme_id 色板)。
-
-    每个风格包 = {screen_type: variant_name} 映射,决定 hero/scene/vs 等屏
-    的场景/构图/灯光类型。配合 theme_id 色板,产生 6×N 种视觉组合。
-    前端用于渲染「AI 风格」卡片选择器 + 盲盒随机按钮。
-    """
-    import prompt_templates
-    return jsonify({"packs": prompt_templates.list_style_packs()})
-
-
 @app.route("/")
 @login_required
 def index():
@@ -4038,10 +4025,6 @@ def generate_ai_detail_html():
         effect_image  = (data.get("effect_image") or "").strip()   # 效果图 → scene 屏 bg 覆盖
         qr_image      = (data.get("qr_image") or "").strip()       # 二维码 → cta 屏右栏
         theme_id = (data.get("theme_id") or "classic-red").strip()
-        # 风格包(正交于 theme_id):theme_id 控色板,style_pack 控场景/构图/灯光
-        # random_style=True → 每次从 6 个风格包里盲盒随机一个(用户"每次都不一样"需求)
-        style_pack = (data.get("style_pack") or "").strip()
-        random_style = bool(data.get("random_style"))
 
         # 先并发生成 6 屏 AI 背景(hero/advantages/specs/vs/scene/brand)
         # AI_BG_MODE 控制模式: cache(默认 24h 复用) / realtime(每次都新)
@@ -4075,8 +4058,6 @@ def generate_ai_detail_html():
                 brand=brand, api_key=ark_key,
                 product_name=product_name,
                 reference_image_url=scene_image,
-                style_pack=style_pack,
-                random_style=random_style,
             )
         except Exception as e:
             print(f"[ai-detail-html] 背景生成全局失败,全部走 CSS 兜底: {e}")
