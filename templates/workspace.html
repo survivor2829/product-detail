@@ -56,8 +56,8 @@
       --col-left: 30fr; --col-center: 38fr; --col-right: 32fr;
       transition: grid-template-columns 220ms cubic-bezier(.2,.8,.2,1);
     }
+    /* layout-balance 走基础默认值 (上面 .workspace 的 30/38/32),无需重复定义 */
     .workspace.layout-edit    { --col-left: 38fr; --col-center: 32fr; --col-right: 30fr; }
-    .workspace.layout-balance { --col-left: 30fr; --col-center: 38fr; --col-right: 32fr; }
     .workspace.layout-preview { --col-left: 22fr; --col-center: 56fr; --col-right: 22fr; }
 
     .panel-left,
@@ -290,6 +290,14 @@
       transform: translateY(-1px);
     }
     .btn-export:disabled { opacity: 0.65; cursor: not-allowed; }
+    /* 次要导出 (如 JPG): 软灰背景 + 深色字, 视觉降一级让 PNG 主按钮先吸引注意 */
+    .btn-export-secondary {
+      background: var(--color-bg-soft, #f4f4f5);
+      color: var(--color-text);
+    }
+    .btn-export-secondary:hover:not(:disabled) {
+      background: var(--color-bg-hover, #e8e8ea);
+    }
 
     /* ── Theme Grid ─────────────────────────────────────────── */
     /* auto-fill + minmax 让卡片随右栏宽度自适应:
@@ -660,8 +668,7 @@
       <button class="btn-export" id="btn_export_png" onclick="doExport('png')" title="无损 PNG, 文件较大 (~5MB)">
         📥 导出 PNG
       </button>
-      <button class="btn-export" id="btn_export_jpg" onclick="doExport('jpg')"
-              style="background:var(--color-bg-soft,#f4f4f5); color:var(--color-text);"
+      <button class="btn-export btn-export-secondary" id="btn_export_jpg" onclick="doExport('jpg')"
               title="JPG quality 90, 文件更小 (~1.5-2MB), 适合电商上传">
         📥 导出 JPG <span style="font-size:11px; opacity:.7;">(较小)</span>
       </button>
@@ -1247,7 +1254,6 @@
   /* ── Export ─────────────────────────────────────────────────── */
   async function doExport(format = 'png') {
     const fmt = format === 'jpg' ? 'jpg' : 'png';
-    const ext = fmt;
     // 双按钮: 点哪个 disable 哪个, 另一个保持可点 (避免误锁)
     const btnPng = document.getElementById('btn_export_png');
     const btnJpg = document.getElementById('btn_export_jpg');
@@ -1275,7 +1281,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${currentProductType}_详情页.${ext}`;
+      a.download = `${currentProductType}_详情页.${fmt}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
