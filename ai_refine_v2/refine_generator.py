@@ -730,11 +730,23 @@ def _generate_one_block_v2(
             if env_mode == "on" and color_anchor.swatch_png_bytes:
                 swatch_data_url = _to_data_url_from_bytes(color_anchor.swatch_png_bytes)
                 effective_image_urls = [image_data_url, swatch_data_url]
+                print(f"[refine] block={bid} vt={vt} mode=DUAL_IMAGE prefix=TEMPLATE_V3 "
+                      f"hex={color_anchor.primary_hex} confidence={color_anchor.confidence:.4f}")
             else:
                 effective_image_urls = image_data_url  # B1 only: 单图 + hex 文字锚
+                reason = "env=b1_only" if env_mode == "b1_only" else "swatch_empty"
+                print(f"[refine] block={bid} vt={vt} mode=SINGLE_IMAGE prefix=TEMPLATE_V3 "
+                      f"hex={color_anchor.primary_hex} reason={reason}")
         else:
             effective_prompt = _INJECTION_PREFIX_V3_LEGACY + prompt
             effective_image_urls = image_data_url
+            fallback_reason = "anchor_none" if not color_anchor else f"env={env_mode}"
+            print(f"[refine] block={bid} vt={vt} mode=LEGACY_FALLBACK prefix=V3_LEGACY "
+                  f"reason={fallback_reason} ⚠️ (无 hex 锚, 颜色保真风险高)")
+    else:
+        # 无 image_data_url (纯文生图) — 记录之以区分 LEGACY_FALLBACK
+        print(f"[refine] block={bid} vt={vt} mode=NO_IMAGE prompt_only "
+              f"anchor_present={bool(color_anchor)}")
 
     last_err = None
     attempts = 0
