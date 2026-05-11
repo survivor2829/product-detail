@@ -473,7 +473,7 @@ def plan_v2(
     product_title: Optional[str] = None,
     api_key: Optional[str] = None,
     model: str = _MODEL_DEFAULT,
-    max_retries: int = 1,
+    max_retries: int = 2,
     http_fn: Optional[Callable[[dict, str], dict]] = None,
     temperature: float = _TEMPERATURE_V2,
 ) -> dict:
@@ -523,17 +523,37 @@ def plan_v2(
 
     post_fn = http_fn or _http_post_deepseek
     last_err = None
+    last_schema_warnings: list[str] = []
 
     for attempt in range(max_retries + 1):
         try:
-            resp = post_fn(payload, use_key)
+            # Self-correcting retry: 失败重试时把上次违规反馈塞回 user_prompt,
+            # 让 DeepSeek 自纠正。否则同样的 prompt + temperature 大概率给同样的违规 plan。
+            if attempt > 0 and last_schema_warnings:
+                feedback_section = (
+                    "\n\n⚠️ 上次规划违反了以下硬约束, 请这次务必避免:\n"
+                    + "\n".join(f"  - {w}" for w in last_schema_warnings)
+                    + "\n特别注意: 每个 role 在一份详情页里**最多出现 1 次**, 严禁同 role 重复。"
+                )
+                current_payload = {
+                    **payload,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT_V2},
+                        {"role": "user", "content": user_prompt + feedback_section},
+                    ],
+                }
+            else:
+                current_payload = payload
+
+            resp = post_fn(current_payload, use_key)
             raw_content = resp["choices"][0]["message"]["content"]
             parsed = _extract_json(raw_content)
             schema_warnings = _validate_schema_v2(parsed)
             if schema_warnings:
                 last_err = f"v2 schema 不合规: {schema_warnings}"
+                last_schema_warnings = schema_warnings
                 if attempt < max_retries:
-                    print(f"[planner_v2] attempt {attempt + 1} schema 失败, 重试: {last_err}")
+                    print(f"[planner_v2] attempt {attempt + 1} schema 失败, 重试 (带反馈): {last_err}")
                     time.sleep(0.5)
                     continue
                 raise PlannerError(last_err)
