@@ -46,10 +46,15 @@
 - [ ] `/smoke` skill → 全过
 - [ ] 改了 `templates/`? 跑 `/regen-thumbs` 验证渲染
 - [ ] 改了 AI 生图 / 合成 / 路由? 跑 `tests/e2e_*` 中相关 e2e 测
+- [ ] **有 user-facing 改动 (新功能 / UI 变化 / 行为变化)?** 必须更新 `static/changelog.json`:
+      新建 entry 在 `entries[0]` + `latest_version` 升到对应版本号 (如 `2026.05.11.2`)。
+      **判定标准**: 用户登录后能感知到的差异都算 (新按钮 / 隐藏功能 / 改默认行为 /
+      错误信息变化等)。纯重构 / 性能优化 / 内部 dead code 清理不必更新。
+      **反例**: 加了"导出 JPG"按钮但漏写公告 → 用户不知道新功能存在 (2026-05-11 教训)。
 - [ ] PR description 含 5 节: 背景 / 改动 / 验证 / 风险 / 回滚
 - [ ] 跟 spec 关联? Body 引用 `docs/superpowers/specs/<file>.md` 路径
 
-不达 5 项任何一项 → 不许 push, 修复后重跑.
+不达任何一项 → 不许 push, 修复后重跑.
 
 ---
 
@@ -87,7 +92,14 @@
 
 ---
 
-**版本**: v1.0
-**生效日期**: 2026-05-06
+**版本**: v1.1
+**生效日期**: 2026-05-06 (v1.0); 2026-05-11 (v1.1: 加 changelog 自审项)
 **审核人**: Scott (本仓库 owner)
 **起草人**: Claude Opus 4.7 (per spec §6 brainstorm + Q3=2)
+
+## 修订记录
+
+### v1.1 (2026-05-11)
+- 加 PR 自审 checklist 第 5 项: user-facing 改动必须同步更新 `static/changelog.json`
+- 触发: 2026-05-11 PR #35 (导出 JPG) 漏写公告, 用户提醒后才补
+- 判定: 用户登录后能感知到的差异都算; 纯内部清理 / 重构不算
