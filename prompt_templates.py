@@ -328,15 +328,13 @@ DEFAULT_VARIANT = {
 }
 
 # 实证 commercial_showroom 是唯一使用过的风格 (前端 6 个风格按钮 + 盲盒从未真正生效),
-# 2026-05-25 清理后保留这套 variants 作为默认 prompt 元素。详见 docs/STYLE_PACK_CLEANUP.md。
+# 2026-05-11 清理后保留这套 variants 作为 ai_bg_cache 的默认编排,详见 docs/STYLE_PACK_CLEANUP.md。
+# 与 DEFAULT_VARIANT (上面那个,prompt-layer 单屏 fallback) 大部分共享,仅 specs/brand 两屏
+# 历史性偏 "commercial showroom" 调性,用 spread 让差异自文档化。
 DEFAULT_VARIANTS_MAP: dict[str, str] = {
-    "hero":       "showroom",
-    "advantages": "minimal_white",
-    "specs":      "frosted_glass",
-    "vs":         "split_light_dark",
-    "scene":      "mall_corridor",
-    "brand":      "deep_gradient",
-    "cta":        "clean_gradient",
+    **{k: v for k, v in DEFAULT_VARIANT.items() if v},  # 过滤 None (如 story)
+    "specs": "frosted_glass",   # vs DEFAULT_VARIANT 的 dark_carbon
+    "brand": "deep_gradient",   # vs DEFAULT_VARIANT 的 dark_metallic
 }
 
 
