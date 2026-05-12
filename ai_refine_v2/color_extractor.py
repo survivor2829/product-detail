@@ -78,6 +78,45 @@ def _filter_background_pixels(img: Image.Image) -> list[tuple[int, int, int]]:
     return _apply_hsv_white_filter(rgb_pixels, hsv_pixels)
 
 
+def _filter_pseudo_colors(
+    pixels: list[tuple[int, int, int]],
+    *,
+    min_saturation: int = 50,
+    pseudo_value_min: int = 50,
+    pseudo_value_max: int = 220,
+) -> list[tuple[int, int, int]]:
+    """剔除"伪色"像素 (边缘抗锯齿 + 阴影产生的中亮度低饱和混色).
+
+    v3.2.3 修 bug: 用户实测荧光绿产品 (palette 真色 #7AAB38 占 50%) 被错提成
+    深灰绿 #60746F (边缘伪色 28%, MEDIANCUT 把同色不同亮度拆成 3 簇).
+
+    HSV 判定 "伪色":
+      pseudo_value_min <= V <= pseudo_value_max  AND  S < min_saturation
+      → 中亮度 + 低饱和 = 抗锯齿混色 / 阴影 / 灰色边缘伪色, 应剔除
+
+    保留:
+      - 高饱和真彩色 (S >= min_saturation, 如荧光绿 #7AAB38 S=168)
+      - 真黑 (V < pseudo_value_min, 如黑轮子 #000 V=0, HE180 黑灰 V=23)
+      - 真白 (V > pseudo_value_max, 但已被上层 _filter_background_pixels 剔除)
+
+    Trade-off: 纯中灰色大块产品 (#888888 V=136 S=0) 会被错剔. 实际生产场景
+    中工业品很少有纯中灰主色 (要么白/黑/彩), 此 trade-off 由调用方 fallback 兜底.
+    """
+    if not pixels:
+        return []
+    temp_img = Image.new("RGB", (len(pixels), 1))
+    temp_img.putdata(pixels)
+    hsv_img = temp_img.convert("HSV")
+    hsv_pixels = list(hsv_img.getdata())
+
+    out: list[tuple[int, int, int]] = []
+    for rgb, (_h, s, v) in zip(pixels, hsv_pixels):
+        is_pseudo = (s < min_saturation and pseudo_value_min <= v <= pseudo_value_max)
+        if not is_pseudo:
+            out.append(rgb)
+    return out
+
+
 def _kmeans_via_quantize(
     pixels: list[tuple[int, int, int]],
     k: int = 5,
@@ -166,6 +205,18 @@ def extract_color_anchor(
             print(f"[color_anchor] FAIL reason=too_few_non_bg_pixels "
                   f"got={len(non_bg)} required>={min_non_bg_pixels} ⚠️")
             return None
+
+        # v3.2.3 伪色过滤: 剔除中亮度低饱和 (抗锯齿+阴影) 但保留真黑+真彩色.
+        # 如果过滤后剩 >= min_non_bg_pixels, 用过滤后的; 否则 fallback (纯灰中色保护).
+        non_bg_clean = _filter_pseudo_colors(non_bg)
+        if len(non_bg_clean) >= min_non_bg_pixels:
+            print(f"[color_anchor] pseudo-color filter: non_bg {len(non_bg)} → "
+                  f"clean {len(non_bg_clean)} (剔除边缘伪色, 保留真黑+真彩色)")
+            non_bg = non_bg_clean
+        else:
+            print(f"[color_anchor] pseudo-color filter SKIPPED: only {len(non_bg_clean)} "
+                  f"clean pixels (need >= {min_non_bg_pixels}), "
+                  f"fallback 原 {len(non_bg)} 像素 (纯中灰色产品保护)")
 
         clusters = _kmeans_via_quantize(non_bg, k=5)
         if not clusters:
