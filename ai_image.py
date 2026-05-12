@@ -95,13 +95,21 @@ def generate_background(prompt: str, api_key: str,
 
 def generate_segment(zone: str, prompt: str, api_key: str,
                      width: int = 750, height: int = 1334,
-                     negative_prompt: str = "") -> list[str]:
+                     negative_prompt: str = "",
+                     reference_image_url: str = "") -> list[str]:
     """
     无缝长图方案：为单段背景生成图片，按目标宽高自动选最接近的 DashScope 支持尺寸。
     返回 URL 列表（通常长度为 1）。
+
+    reference_image_url: 通义万相 wan2.6-t2i 目前不支持 image-to-image,
+        此参数为保持路由层签名统一而保留, 实际忽略并打 warning。
+        如需 i2i 颜色保真请改用 seedream 引擎。
     """
     size = _pick_dashscope_size(width, height)
     print(f"[AI生图][段:{zone}] 目标 {width}x{height} → 选用 {size}")
+    if reference_image_url:
+        print(f"[AI生图][段:{zone}] ⚠️ 通义万相 {T2I_MODEL} 不支持 image-to-image, "
+              f"参考图被忽略 (建议改用 seedream 引擎做颜色保真)")
     return generate_background(prompt, api_key, size=size,
                                negative_prompt=negative_prompt, n=1)
 

@@ -75,10 +75,15 @@ def _resolve_key(engine: str, api_keys: dict) -> str:
 def generate_segment(engine: str, zone: str, prompt: str,
                      api_keys: dict,
                      width: int = 750, height: int = 1334,
-                     negative_prompt: str = "") -> list[str]:
+                     negative_prompt: str = "",
+                     reference_image_url: str = "") -> list[str]:
     """
     统一段生成接口（无缝长图方案）。
     返回 URL 列表（成功时长度 1，失败时空列表）。
+
+    reference_image_url: 可选参考图 (data URL / http URL)。
+        传给底层引擎走 image-to-image (颜色 / silhouette 保真)。
+        豆包 Seedream 4.0 原生支持; 通义万相 wan2.6-t2i 暂不支持, 会被忽略并打 warning。
     """
     engine = engine if engine in ENGINES else DEFAULT_ENGINE
     key = _resolve_key(engine, api_keys)
@@ -89,10 +94,12 @@ def generate_segment(engine: str, zone: str, prompt: str,
     if engine == "seedream":
         return ai_image_volcengine.generate_segment(zone, prompt, key,
                                                     width=width, height=height,
-                                                    negative_prompt=negative_prompt)
+                                                    negative_prompt=negative_prompt,
+                                                    reference_image_url=reference_image_url)
     return ai_image.generate_segment(zone, prompt, key,
                                      width=width, height=height,
-                                     negative_prompt=negative_prompt)
+                                     negative_prompt=negative_prompt,
+                                     reference_image_url=reference_image_url)
 
 
 def download_image(engine: str, url: str, save_dir, filename: str = "") -> str:
@@ -105,13 +112,17 @@ def download_image(engine: str, url: str, save_dir, filename: str = "") -> str:
 def generate_segment_to_local(engine: str, zone: str, prompt: str,
                               api_keys: dict, save_dir,
                               width: int = 750, height: int = 1334,
-                              filename: str = "") -> str:
+                              filename: str = "",
+                              reference_image_url: str = "") -> str:
     """
     一步到位：调用引擎生成 + 下载到本地，返回本地文件路径（失败返回空串）。
     供 /api/build/<type>/generate-ai-detail 端点逐段调用。
+
+    reference_image_url: 可选参考图, 透传到 generate_segment 走 i2i 颜色保真。
     """
     urls = generate_segment(engine, zone, prompt, api_keys,
-                            width=width, height=height)
+                            width=width, height=height,
+                            reference_image_url=reference_image_url)
     if not urls:
         return ""
     fname = filename or f"{engine}_{zone}.png"

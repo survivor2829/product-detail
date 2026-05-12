@@ -3379,6 +3379,15 @@ def generate_ai_detail():
     print(f"[AI精修] 引擎={engine} 主题={theme_id} 段数={len(plan)} (prompt_templates)")
 
     # Step 2: 逐段生成背景（失败的段降级为空，由合成器忽略）
+    # v3.3 颜色保真: 把产品图作为 reference_image_url 传给引擎走 i2i, 让 AI 看见产品真实色。
+    # 豆包 Seedream 原生支持, 通义万相 wan2.6-t2i 不支持(会忽略并打 warning)。
+    from ai_bg_cache import _to_data_url as _img_to_data_url
+    ref_data_url = _img_to_data_url(product_image_local) if product_image_local else ""
+    if ref_data_url:
+        print(f"[AI精修] 参考图已转 data URL (len={len(ref_data_url)}) → i2i 颜色保真")
+    elif product_image_local:
+        print(f"[AI精修] ⚠️ 参考图转 data URL 失败, 降级纯文生图: {product_image_local}")
+
     t0 = _t.time()
     segment_paths = []
     for seg in plan:
@@ -3388,6 +3397,7 @@ def generate_ai_detail():
                 engine, zone, seg["prompt"], api_keys, seg_dir,
                 width=750, height=seg["height"],
                 filename=f"{zone}.png",
+                reference_image_url=ref_data_url,
             )
         except Exception as e:
             traceback.print_exc()
