@@ -262,5 +262,68 @@ class TestSwatchRendering(unittest.TestCase):
                              "swatch 中心像素必须等于 primary_hex")
 
 
+class TestPseudoColorFilter(unittest.TestCase):
+    """v3.2.3 HSV 伪色过滤 (修用户 2026-05-12 荧光绿被错提成深灰绿 bug).
+
+    设计要点:
+      - 剔除中亮度低饱和像素 (抗锯齿+阴影伪色)
+      - 保留真黑 (V<50, 如轮子/HE180 黑灰)
+      - 保留真彩色 (S>=50, 如荧光绿)
+      - 保留真高亮 (V>220, 如浅彩亮版)
+    """
+
+    def test_high_saturation_real_color_preserved(self):
+        """高饱和真彩色应保留 (如荧光绿 #7AAB38 V=171 S=171)."""
+        from ai_refine_v2.color_extractor import _filter_pseudo_colors
+        pixels = [(0x7A, 0xAB, 0x38)]
+        result = _filter_pseudo_colors(pixels)
+        self.assertEqual(len(result), 1, "高饱和真彩色应保留")
+
+    def test_low_sat_mid_value_pseudo_removed(self):
+        """中亮度低饱和伪色应剔除 (如 #60746F V=116 S=43)."""
+        from ai_refine_v2.color_extractor import _filter_pseudo_colors
+        pixels = [(0x60, 0x74, 0x6F)]
+        result = _filter_pseudo_colors(pixels)
+        self.assertEqual(len(result), 0, "边缘抗锯齿伪色应剔除")
+
+    def test_true_black_preserved(self):
+        """真黑 (V<50) 应保留 (如轮子 #000 V=0, HE180 黑灰 #151517 V=23)."""
+        from ai_refine_v2.color_extractor import _filter_pseudo_colors
+        pixels = [(0x00, 0x00, 0x00), (0x15, 0x15, 0x17)]
+        result = _filter_pseudo_colors(pixels)
+        self.assertEqual(len(result), 2, "真黑色应全部保留")
+
+    def test_high_value_preserved(self):
+        """真高亮 (V>220) 应保留 (如荧光绿浅版 #B6E0A1 V=224)."""
+        from ai_refine_v2.color_extractor import _filter_pseudo_colors
+        pixels = [(0xB6, 0xE0, 0xA1)]
+        result = _filter_pseudo_colors(pixels)
+        self.assertEqual(len(result), 1, "高亮区像素应保留")
+
+    def test_user_2026_05_12_fluorescent_green_mixture(self):
+        """钉死用户实际产品颜色分布 (荧光绿主体 + 伪灰边缘 + 真黑).
+
+        prod log 实测分布 (取整百倍, 模拟 200×150 图):
+          #60746F 4275 (28.3%) ← 边缘伪色, 应剔除
+          #1F2120 3262 (21.6%) ← 真黑, 保留
+          #7AAB38 2796 (18.5%) ← 真荧光绿, 保留
+          #87C438 2701 (17.9%) ← 荧光绿亮, 保留
+          #B6E0A1 2096 (13.9%) ← 荧光绿浅, 保留
+        """
+        from ai_refine_v2.color_extractor import _filter_pseudo_colors
+        pixels = (
+            [(0x60, 0x74, 0x6F)] * 100  # 伪灰应剔除
+            + [(0x1F, 0x21, 0x20)] * 80
+            + [(0x7A, 0xAB, 0x38)] * 70
+            + [(0x87, 0xC4, 0x38)] * 65
+            + [(0xB6, 0xE0, 0xA1)] * 50
+        )
+        result = _filter_pseudo_colors(pixels)
+        result_pseudo = [p for p in result if p == (0x60, 0x74, 0x6F)]
+        result_real = len(result) - len(result_pseudo)
+        self.assertEqual(len(result_pseudo), 0, "#60746F 伪灰应被剔除 100%")
+        self.assertEqual(result_real, 265, "真黑+真荧光绿全保留 (80+70+65+50)")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -78,12 +78,19 @@ def _filter_background_pixels(img: Image.Image) -> list[tuple[int, int, int]]:
     return _apply_hsv_white_filter(rgb_pixels, hsv_pixels)
 
 
+# v3.2.3 HSV 伪色过滤阈值 (calibrated 用户 2026-05-12 实测产品颜色样本)
+# 调参时改这里, 不动函数签名 — 避免调用方手动传参漂移.
+_PSEUDO_MIN_SATURATION = 50   # S < 此值 + V 在中亮度区间 = 抗锯齿伪色
+_PSEUDO_VALUE_MIN = 50        # V < 此值 = 真黑 (轮子/HE180 黑灰), 保留
+_PSEUDO_VALUE_MAX = 220       # V > 此值 = 真白/高亮 (荧光绿浅版), 保留
+
+
 def _filter_pseudo_colors(
     pixels: list[tuple[int, int, int]],
     *,
-    min_saturation: int = 50,
-    pseudo_value_min: int = 50,
-    pseudo_value_max: int = 220,
+    min_saturation: int = _PSEUDO_MIN_SATURATION,
+    pseudo_value_min: int = _PSEUDO_VALUE_MIN,
+    pseudo_value_max: int = _PSEUDO_VALUE_MAX,
 ) -> list[tuple[int, int, int]]:
     """剔除"伪色"像素 (边缘抗锯齿 + 阴影产生的中亮度低饱和混色).
 

@@ -43,8 +43,19 @@ Ask: "SSH to tencent-prod and deploy? (y/n)"
 ⚠️ **2026-05-09 OOM 事故教训**: prod 直接 `docker compose up -d --build` 会撑死 4G VPS
 (build 进程逃出 mem_limit 约束, chromium 解压峰值 1-2GB → OOM thrashing → 强制重启).
 
-新流程：**仅 Dockerfile / requirements / playwright 改动时才 build, 否则 restart**.
-这样 deploy templates / static / 纯 Python 改动时 0 build 风险.
+⚠️ **2026-05-12 deploy 不生效教训** (本人踩过的坑):
+docker-compose web service **没 bind mount 代码目录** (除 `./instance`), 所以 .py / templates /
+static 改动**全部走镜像 COPY**. `docker compose restart` 不重建镜像 → 跑的还是旧代码.
+旧 deploy 逻辑判 "纯 Python → restart" 是**错的**, 等于空操作.
+
+**新流程: 默认 hot-patch (0 OOM 风险, 立即生效), 标记需要后续 build 固化进镜像**:
+
+- **Hot-patch 路径** (默认):
+  `docker cp` 改动文件进 container + `restart` → 立即生效, 0 build, 0 OOM.
+  缺点: 不持久, 重建 container 会丢, 必须后续 `--build` 固化.
+
+- **Full build 路径** (仅 Dockerfile / requirements 改动时强制走):
+  `docker compose up -d --build` 改动写镜像. 有 OOM 风险, 4G VPS 慎用.
 
 On confirm:
 ```bash
@@ -52,12 +63,20 @@ ssh tencent-prod << 'REMOTE'
   set -e
   cd /root/clean-industry-ai-assistant
   git pull
-  if git diff HEAD@{1} HEAD --name-only | grep -qE '^(Dockerfile|requirements.*\.txt|playwright)'; then
-    echo '[deploy] 检测 Dockerfile/requirements 改动 → 必须 build (注意 OOM 风险)'
-    echo '[deploy] 如果机器内存仍是 4G, 强烈建议先做 PR-B (镜像仓库 pull) 或升级硬件'
+  CHANGED=$(git diff HEAD@{1} HEAD --name-only)
+  if echo "$CHANGED" | grep -qE '^(Dockerfile|requirements.*\.txt|playwright|docker-compose)'; then
+    echo '[deploy] Dockerfile/requirements/compose 改动 → 必须 --build (注意 OOM 风险)'
+    echo '[deploy] 建议: 低负载时段执行; 4G VPS 升硬件 / PR-B 镜像仓库 pull 是中期路径'
     docker compose up -d --build
   else
-    echo '[deploy] 仅 app/templates/static 改动 → restart 即可 (零 OOM 风险)'
+    echo '[deploy] 代码/template/static 改动 → hot-patch (docker cp + restart, 0 OOM)'
+    CONTAINER=clean-industry-ai-assistant-web-1
+    for f in $CHANGED; do
+      if [ -f "$f" ] && echo "$f" | grep -qE '\.(py|html|css|js|json|txt|yml|svg|md)$'; then
+        docker cp "$f" "$CONTAINER:/app/$f" 2>/dev/null && echo "  ✓ cp $f"
+      fi
+    done
+    echo '[deploy] ⚠ hot-patch 临时生效, 重建 container 会丢. 低负载时段跑 `docker compose up -d --build` 固化.'
     docker compose restart web
   fi
   sleep 5
@@ -66,6 +85,12 @@ REMOTE
 ```
 
 Expected: container shows `Up X (healthy)`. `Restarting` / `Exit` / `(unhealthy)` = fail.
+
+After hot-patch deploy, verify code reached container (sanity check):
+```bash
+ssh tencent-prod "docker exec clean-industry-ai-assistant-web-1 grep -c '<changed-keyword>' /app/<changed-file>"
+# 期望 count > 0; = 0 说明 cp 失败需排查
+```
 
 ## Step 4 — Health check
 
