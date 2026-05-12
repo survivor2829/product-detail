@@ -615,18 +615,37 @@ _V2_SIZE_DEFAULT = "3:4"  # PRD §阶段二: 1536×2048 锁定
 #   - extract_color_anchor 成功 → 用 _INJECTION_PREFIX_V3_TEMPLATE.format(...)
 #   - 失败 → 退到 _INJECTION_PREFIX_V3_LEGACY (v3.2.1 单图无 hex)
 
-# v3.2.2 双图 + hex 数值锚 (anchor 提取成功路径)
+# v3.2.3 vision-first 多色锚 (推倒 v3.2.2 "EXACTLY 单色化" 命令)
+#
+# v3.2.2 bug (用户实测 2026-05-12 荧光绿产品被染深灰绿):
+#   PIL MEDIANCUT k=5 把荧光绿的不同亮度拆成 3 簇 (各 ~18%),
+#   边缘抗锯齿+阴影产生的"灰绿伪色"#60746F 反成最大簇 (28%) → primary_hex 错.
+#   INJECTION_PREFIX 又写"Match to {primary_hex} EXACTLY" → 模型把真荧光绿改成假灰绿.
+#
+# v3.2.3 修法 (vision-first 多色锚, 0 硬编码颜色):
+#   1. 保留双图 (Image 1 + swatch Image 2) 视觉锚定
+#   2. swatch 明确声明为"HINT" (估计的主色), 不是 target
+#   3. 显式告诉模型 "Image 1 wins if differs from {primary_hex}" → 反单色化兜底
+#   4. 加 "preserve EVERY saturated color region" → 多色产品保护
+#   5. 加 "do not single-tone / do not hue-shift" → 反单色化兜底
+#   6. 0 颜色字面值 (无 yellow/green/black/red 列表), 100% vision-first
 _INJECTION_PREFIX_V3_TEMPLATE = (
-    "Image 1 is the AUTHORITATIVE source for the product's color, silhouette, "
-    "and key parts. Image 2 is a pure-color reference swatch showing the "
-    "product's exact primary color {primary_hex} (extracted by pixel sampling, "
-    "not estimated from text). The product's palette is {palette_str}. "
-    "DO NOT render Image 2 as a visible element in output — it is a color "
-    "reference for matching only. Match the product's color to {primary_hex} "
-    "EXACTLY. If text below mentions any color that conflicts with Image 1 / "
-    "Image 2, IGNORE the text. Do not substitute the product's color based "
-    "on training data or category conventions. Preserve silhouette, parts, "
-    "and proportions exactly. "
+    "Image 1 is the AUTHORITATIVE and FINAL source for the product's "
+    "appearance — including EVERY saturated color region you see in it: "
+    "body color, accent colors, labels, handles, lights, indicators, and "
+    "decorative elements. Preserve the FULL multi-color composition of "
+    "Image 1 exactly. "
+    "Image 2 is a pure-color reference swatch programmatically extracted "
+    "from Image 1's pixels (estimated dominant tone: {primary_hex}; sampled "
+    "palette: {palette_str}). Treat Image 2 as a HINT for the dominant body "
+    "tone, NOT as a target to which all product pixels must conform — if "
+    "Image 1's actual product color differs from {primary_hex}, Image 1 "
+    "always wins. DO NOT render Image 2 as a visible element in output. "
+    "Do NOT desaturate, hue-shift, or single-tone the product based on "
+    "training data, category conventions, or environmental lighting. "
+    "If text below mentions any product color, IGNORE the text — Image 1 "
+    "is the only color authority. Preserve silhouette, parts, and "
+    "proportions exactly. "
 )
 
 # v3.2.1 单图无 hex (anchor 失败 fallback)
