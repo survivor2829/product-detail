@@ -615,21 +615,39 @@ _V2_SIZE_DEFAULT = "3:4"  # PRD §阶段二: 1536×2048 锁定
 #   - extract_color_anchor 成功 → 用 _INJECTION_PREFIX_V3_TEMPLATE.format(...)
 #   - 失败 → 退到 _INJECTION_PREFIX_V3_LEGACY (v3.2.1 单图无 hex)
 
-# v3.2.3 vision-first 多色锚 (推倒 v3.2.2 "EXACTLY 单色化" 命令)
+# v3.2.4 美学作用域分层 (修 grayscale 美学整体压低高饱和产品 bug)
 #
-# v3.2.2 bug (用户实测 2026-05-12 荧光绿产品被染深灰绿):
-#   PIL MEDIANCUT k=5 把荧光绿的不同亮度拆成 3 簇 (各 ~18%),
-#   边缘抗锯齿+阴影产生的"灰绿伪色"#60746F 反成最大簇 (28%) → primary_hex 错.
-#   INJECTION_PREFIX 又写"Match to {primary_hex} EXACTLY" → 模型把真荧光绿改成假灰绿.
+# v3.2.3 修了 PIL 提取层 (伪色过滤) + prompt 多色保护, 但用户实测 2026-05-12 后
+# 仍报"高饱和产品被低饱和化" (荧光绿→灰绿). 根因不在 PIL 提取, 而是 v3.2 整套
+# "DJI/Apple 大疆风高级灰"美学路线对高饱和产品有结构性副作用:
 #
-# v3.2.3 修法 (vision-first 多色锚, 0 硬编码颜色):
-#   1. 保留双图 (Image 1 + swatch Image 2) 视觉锚定
-#   2. swatch 明确声明为"HINT" (估计的主色), 不是 target
-#   3. 显式告诉模型 "Image 1 wins if differs from {primary_hex}" → 反单色化兜底
-#   4. 加 "preserve EVERY saturated color region" → 多色产品保护
-#   5. 加 "do not single-tone / do not hue-shift" → 反单色化兜底
-#   6. 0 颜色字面值 (无 yellow/green/black/red 列表), 100% vision-first
+# SYSTEM_PROMPT_V2 准则 2 让 DeepSeek 每屏 prompt 都写 "sophisticated grayscale" /
+# "premium minimalist" / "DJI/Apple aesthetic" 调性词 (8-12 屏 × 多次重复),
+# gpt-image-2 把整体 prompt 当一个"美学场景"读 → 整张图调性 = 低饱和高级感 →
+# 模型为视觉协调自动压低唯一的高饱和元素 (产品) → 荧光绿被同化成灰绿.
+#
+# 低饱和产品 (HE180 黑/灰, HE150 中灰) 没暴露此 bug 是因为本来就 fit grayscale 美学.
+# 高饱和产品 (荧光绿/亮黄/亮红/紫/橙) 必然撞这个美学冲突 → 跨产品结构性根因.
+#
+# v3.2.4 修法 (0 硬编码颜色, 跨产品通用):
+#   显式声明 grayscale 美学作用域 = 仅环境 (背景/地面/墙/灯/氛围),
+#   产品是 "chromatic island in grayscale ocean" — 强意象 + 反指令兜底.
 _INJECTION_PREFIX_V3_TEMPLATE = (
+    # ── 美学作用域分层 (v3.2.4 新增, 最高权重放最开头) ──
+    "CRITICAL AESTHETIC SCOPE RULE: This image uses a 'premium minimalist "
+    "grayscale' aesthetic, BUT this aesthetic applies ONLY to the "
+    "environment (background, floor, walls, lighting, surrounding "
+    "atmosphere). The product itself is a chromatic island in a grayscale "
+    "ocean — it must retain Image 1's color saturation at FULL INTENSITY, "
+    "even when this creates sharp contrast with the muted environment. "
+    "Treat the product like a vibrant subject placed on a black-and-white "
+    "photograph: the environment is desaturated, the product is NOT. Any "
+    "product color (fluorescent, vivid, bright, neon, or muted alike) "
+    "must match Image 1's saturation 100%. DO NOT homogenize, harmonize, "
+    "dim, or desaturate the product to match the grayscale environment. "
+    "If you sense visual tension between a high-saturation product and a "
+    "low-saturation environment, that tension is INTENTIONAL — preserve it. "
+    # ── 原 vision-first 多色锚定 (v3.2.3) ──
     "Image 1 is the AUTHORITATIVE and FINAL source for the product's "
     "appearance — including EVERY saturated color region you see in it: "
     "body color, accent colors, labels, handles, lights, indicators, and "
