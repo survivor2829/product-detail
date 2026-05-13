@@ -155,6 +155,53 @@ docs/superpowers/audits/2026-05-13-portability-assessment-v2.md  | N +
 
 ---
 
-**版本**: v2.0 (现状复审)
+**版本**: v2.0 (现状复审) → 见 §G 实施日志获取后续 3 PR 结果
 **起草**: Claude Opus 4.7
-**Scott 决策**: 待定 — 选 P5.2 方案 A/B/C 即可启动实施 PR
+**Scott 决策**: 方案 A (block_f 标签变量化) + 全栈推进 P5.x
+
+---
+
+## §G. 实施日志 (2026-05-13 当日追加)
+
+v2 audit 完成后同日开干, 3 PR 全部 merge 上 main (1c36da9):
+
+| PR | 标题 | audit 对应 | 估时 | 实测 |
+|----|------|-----------|------|------|
+| [#42](https://github.com/survivor2829/product-detail/pull/42) | block_f 标签变量化 (方案 A) | §B.2 / §D.1 | 1-2h | **~45min** |
+| [#43](https://github.com/survivor2829/product-detail/pull/43) | theme_matcher 加 4 关键词 (浓缩/食品级/消毒/抗菌) | §C P5.3 (0.25d) | 0.5h | **~25min** |
+| [#44](https://github.com/survivor2829/product-detail/pull/44) | 耗材类 CATEGORY_VARIANTS_MAP | §D.2 P5.5 (1.5d) | 1.5d | **~1.5h** ⚠️ |
+
+**实测合计: ~2.5h vs v2 估 6h+ (P5.2 1-2h + P5.3 0.25d + P5.5 1.5d)**
+
+### G.1 §D.2 描述偏差 (P5.5)
+
+audit §D.2 写 "STYLE_PACKS 加耗品类专用 2-3 个风格包",但实施时发现:
+- **STYLE_PACKS 系统已于 2026-05-11 整体清理** (见 `docs/STYLE_PACK_CLEANUP.md`)
+- 当前架构是 `SCREEN_VARIANTS` (按 screen_type 分桶) + `DEFAULT_VARIANTS_MAP` (固定挑)
+- 没有 "风格包" 这一层概念可加 entry
+
+实施采用新的 **CATEGORY_VARIANTS_MAP 覆盖层架构** (#44):
+- `prompt_templates.CATEGORY_VARIANTS_MAP[品类][屏] = variant_name`
+- `resolve_variants_map(product_category)` helper, 非覆盖类目走 fast-path
+- `ai_bg_cache.generate_backgrounds()` 接入 — `product_category` 入参早已存在 (0 plumbing)
+
+语义对齐 audit 意图 ("给耗材类用更贴合的视觉调性"),但 API 与 audit 描述完全不同 — audit 写作时假设 STYLE_PACKS 仍在,这是 audit 自身未发现的 stale 点。
+
+### G.2 audit-vs-prompt-design 教训
+
+audit-then-implement 流程证明高效 (2.5h 推进 3 PR),但需要注意:
+- audit 估时偏保守 (实测 -58%) — 推 P5.x 时不要被 audit 估时锁死,先 recon 现状再下手
+- audit §D 决策建议在写作时有可能假设了已不存在的 API/系统;实施前需 grep 验证模块是否还在
+- "§D 决策建议" 是 "if you implemented this in audit's reality" 的伪代码,不是实际 PR 的 spec — 实施者需要重新设计
+
+### G.3 P5.x 剩余进度 (2026-05-13 收盘)
+
+| 子阶段 | v2 估 | 实测 | 状态 |
+|--------|------|------|------|
+| P5.1 | ✅ DONE | — | PR #16 (5-6) |
+| P5.2 | 1-2h | 45min | ✅ DONE (#42) |
+| P5.3 | 0.25d | 25min | ✅ DONE (#43) |
+| P5.5 | 1.5d | 1.5h | ✅ DONE (#44) |
+| P5.6 | 2d | — | ⏳ 待启动 (e2e ¥5-10 真测) |
+
+**P5 阶段 4/5 完成,只剩 P5.6 真测验证。**
