@@ -136,6 +136,15 @@ SCREEN_VARIANTS: dict[str, dict[str, dict]] = {
             "composition": "the horizon sits at the lower third, the upper two-thirds is open sky and atmosphere, the ground center is left quiet and clear",
             "emotion": "expansive, aspirational, cinematic openness",
         },
+        # 耗材类专用 — 实验室/工作台调性,适合清洁化学品/液体瓶/小工具
+        "lab_minimal": {
+            "scene": "a pristine laboratory workspace interior, a long seamless brushed stainless steel benchtop spans the lower frame, soft-focus glass beakers and white cabinetry recede into the background",
+            "lighting": "uniform overhead diffused panel light, no harsh directional source, soft ambient fill on all sides, clinical even illumination",
+            "palette": "cool {light_base} dominates with a faint {primary} hint near the bench edge, clean scientific atmosphere",
+            "material": "brushed stainless steel benchtop with fine horizontal grain and subtle satin reflection, matte epoxy-coated white walls, frosted glass partitions softly out of focus",
+            "composition": "the center of the bench is a wide quiet empty zone, upper two-thirds remains calm and open, no distracting equipment in the focal area",
+            "emotion": "clinical, trustworthy, scientifically clean",
+        },
     },
 
     # ── 优势屏 ──────────────────────────────────────────────
@@ -248,6 +257,15 @@ SCREEN_VARIANTS: dict[str, dict[str, dict]] = {
             "composition": "strong one-point perspective with the floor center left wide and open, the upper architectural expanse carries mood",
             "emotion": "expansive, public-scale, clean modern infrastructure",
         },
+        # 耗材类专用 — 仓储/配货走廊,体现"批量供应/专业储备"语境
+        "warehouse_aisle": {
+            "scene": "a modern industrial warehouse aisle interior, tall organized shelving units recede into the background, a smooth glossy epoxy floor stretches with strong one-point perspective",
+            "lighting": "overhead linear LED panels cast uniform balanced illumination, gentle ambient bounce from the bright walls, no harsh shadows",
+            "palette": "cool {light_base} dominates the upper zone, the floor reflects with a faint {primary} accent near the central perspective line",
+            "material": "self-leveling epoxy floor with soft mirror-like reflection, painted steel shelving softly out of focus, matte white walls in the background",
+            "composition": "the central aisle stays wide and quiet, flanking shelves recede symmetrically into depth, upper zone open and uncluttered",
+            "emotion": "professional, well-stocked, supply-chain reliable",
+        },
     },
 
     # ── 品牌屏 ──────────────────────────────────────────────
@@ -336,6 +354,40 @@ DEFAULT_VARIANTS_MAP: dict[str, str] = {
     "specs": "frosted_glass",   # vs DEFAULT_VARIANT 的 dark_carbon
     "brand": "deep_gradient",   # vs DEFAULT_VARIANT 的 dark_metallic
 }
+
+
+# ── 品类覆盖层 (P5.5) ──────────────────────────────────────────────────
+# 只列与 DEFAULT_VARIANTS_MAP 不同的屏;同款屏 fall through 走默认
+#
+# 耗材类: 清洁化学品/拖布/海绵等,产品形态小、需要"清洁/科研/仓储"叙事
+#   - hero    → lab_minimal     (vs 默认 showroom — 商场调性对耗材太"重")
+#   - scene   → warehouse_aisle (vs 默认 mall_corridor — 仓储语境更准)
+#   - 其他屏共享默认 (advantages/specs/vs/brand/cta 抽象度高,品类无关)
+CATEGORY_VARIANTS_MAP: dict[str, dict[str, str]] = {
+    "耗材类": {
+        "hero": "lab_minimal",
+        "scene": "warehouse_aisle",
+    },
+}
+
+
+def resolve_variants_map(product_category: str | None) -> dict[str, str]:
+    """根据品类返回合并后的 variants map。
+
+    合并规则: DEFAULT_VARIANTS_MAP 全键 + CATEGORY_VARIANTS_MAP[category] 覆盖。
+    品类没列 / 传空 → 直接返回 DEFAULT_VARIANTS_MAP 原引用 (零拷贝)。
+
+    用例:
+        >>> m = resolve_variants_map("耗材类")
+        >>> m["hero"], m["scene"], m["specs"]
+        ('lab_minimal', 'warehouse_aisle', 'frosted_glass')
+        >>> resolve_variants_map("设备类") is DEFAULT_VARIANTS_MAP
+        True
+    """
+    overlay = CATEGORY_VARIANTS_MAP.get((product_category or "").strip())
+    if not overlay:
+        return DEFAULT_VARIANTS_MAP
+    return {**DEFAULT_VARIANTS_MAP, **overlay}
 
 
 # ── Prompt 构建 ────────────────────────────────────────────────────────
