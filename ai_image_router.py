@@ -1,11 +1,23 @@
 """
-AI 生图双引擎路由层 — 统一接口，按 engine 字段分发到通义万相或豆包 Seedream
+AI 生图引擎路由层 — 统一接口, 按 engine 字段分发到任一引擎+通道.
+
+支持引擎 (engine) × 通道 (channel):
+  - 通义万相 wanxiang   官方 (阿里云百炼 DashScope)
+  - 豆包 Seedream       官方 (字节跳动 火山方舟 Ark)
+  - GPT image 2.0       中转站 (APIMart / REFINE_API_BASE_URL)
+  - nano banana         中转站 (规划中, 启用前 raise NotImplementedError)
+
+设计原则 (2026-05-13 用户拍板):
+  - 所有生图功能 (ai_bg_cache / ai_refine_v2 / 将来的新功能) 走这个统一入口
+  - 换引擎只改 env DEFAULT_IMAGE_ENGINE, 不动业务代码
+  - prompt/variant 等 "内容层" 由 prompt_templates 等模块管, router 不参与
 """
 import os
 from pathlib import Path
 
-import ai_image                  # 通义万相 (DashScope)
-import ai_image_volcengine       # 豆包 Seedream 4.0 (Ark)
+import ai_image                  # 通义万相 (DashScope, 阿里官方)
+import ai_image_volcengine       # 豆包 Seedream 4.0 (Ark, 火山官方)
+import ai_image_apimart          # gpt-image-2 / nano banana 等 (APIMart 中转站)
 import prompt_templates          # 专业级 prompt 模板库（六维结构化）
 
 
@@ -15,23 +27,52 @@ ENGINES = {
         "id": "wanxiang",
         "label": "通义万相",
         "vendor": "阿里云百炼",
+        "channel": "official",
         "model": ai_image.T2I_MODEL,
         "key_env": "DASHSCOPE_API_KEY",
         "key_field": "dashscope_api_key",
         "cost_hint": "约 0.04-0.08 元/张",
+        "supports_i2i": False,
     },
     "seedream": {
         "id": "seedream",
         "label": "豆包 Seedream 4.0",
         "vendor": "字节跳动 火山方舟",
+        "channel": "official",
         "model": ai_image_volcengine.T2I_MODEL,
         "key_env": "ARK_API_KEY",
         "key_field": "ark_api_key",
         "cost_hint": "约 0.08-0.16 元/张",
+        "supports_i2i": True,
+    },
+    "gpt-image-2": {
+        "id": "gpt-image-2",
+        "label": "GPT image 2.0",
+        "vendor": "OpenAI",
+        "channel": "apimart",
+        "model": ai_image_apimart.T2I_MODEL,
+        "key_env": "GPT_IMAGE_API_KEY",
+        "key_field": "gpt_image_api_key",
+        "cost_hint": "约 0.70 元/张 (thinking=medium)",
+        "supports_i2i": True,
+    },
+    "nano-banana": {
+        "id": "nano-banana",
+        "label": "nano banana (规划中)",
+        "vendor": "Google",
+        "channel": "apimart",
+        "model": "nano-banana",
+        "key_env": "GPT_IMAGE_API_KEY",  # 中转站共用 key
+        "key_field": "gpt_image_api_key",
+        "cost_hint": "TBD",
+        "supports_i2i": True,
+        "stub": True,  # 启用前 generate_segment 直接 raise NotImplementedError
     },
 }
 
-DEFAULT_ENGINE = "seedream"
+# 默认引擎: env DEFAULT_IMAGE_ENGINE 决定, 否则 seedream
+# 想换成 gpt-image-2 就 export DEFAULT_IMAGE_ENGINE=gpt-image-2, 0 代码改动
+DEFAULT_ENGINE = os.environ.get("DEFAULT_IMAGE_ENGINE", "seedream").strip() or "seedream"
 
 
 # ── 专业 prompt 规划 ─────────────────────────────────────────────
@@ -83,19 +124,33 @@ def generate_segment(engine: str, zone: str, prompt: str,
 
     reference_image_url: 可选参考图 (data URL / http URL)。
         传给底层引擎走 image-to-image (颜色 / silhouette 保真)。
-        豆包 Seedream 4.0 原生支持; 通义万相 wan2.6-t2i 暂不支持, 会被忽略并打 warning。
+        ENGINES[engine].supports_i2i 标了哪些引擎原生支持; 不支持的会被忽略并打 warning。
     """
     engine = engine if engine in ENGINES else DEFAULT_ENGINE
+    meta = ENGINES[engine]
+
+    if meta.get("stub"):
+        raise NotImplementedError(
+            f"引擎 {engine} ({meta['label']}) 尚未接通; 启用前请补 generate_segment 实现"
+        )
+
     key = _resolve_key(engine, api_keys)
     if not key:
-        meta = ENGINES[engine]
-        raise ValueError(f"缺少 {meta['label']} 的 API Key（环境变量 {meta['key_env']} 或请求字段 {meta['key_field']}）")
+        raise ValueError(
+            f"缺少 {meta['label']} 的 API Key (env {meta['key_env']} 或请求字段 {meta['key_field']})"
+        )
 
     if engine == "seedream":
         return ai_image_volcengine.generate_segment(zone, prompt, key,
                                                     width=width, height=height,
                                                     negative_prompt=negative_prompt,
                                                     reference_image_url=reference_image_url)
+    if engine == "gpt-image-2":
+        return ai_image_apimart.generate_segment(zone, prompt, key,
+                                                 width=width, height=height,
+                                                 negative_prompt=negative_prompt,
+                                                 reference_image_url=reference_image_url)
+    # wanxiang (default fallback)
     return ai_image.generate_segment(zone, prompt, key,
                                      width=width, height=height,
                                      negative_prompt=negative_prompt,
@@ -106,7 +161,35 @@ def download_image(engine: str, url: str, save_dir, filename: str = "") -> str:
     """按引擎选择对应的下载实现（两边接口一致，但保留分发以便未来差异化）"""
     if engine == "seedream":
         return ai_image_volcengine.download_image(url, save_dir, filename)
+    if engine in ("gpt-image-2", "nano-banana"):
+        return ai_image_apimart.download_image(url, save_dir, filename)
     return ai_image.download_image(url, save_dir, filename)
+
+
+# ── ai_refine_v2 集成钩子 ────────────────────────────────────────
+# refine_generator 用 api_call_fn 注入点 (签名: (prompt, img_data_url, key, thinking, size) -> url)
+# 把"哪个引擎+通道"决策权从 refine_generator 抽到 router, 业务侧改 env 即可切
+
+def get_refine_call_fn(engine: str | None = None):
+    """返回签名兼容 refine_v2.ApiCallFn 的 (prompt, image_data_url, api_key, thinking, size) -> url.
+
+    engine 不传 → 走 env DEFAULT_REFINE_ENGINE, 否则 fallback gpt-image-2 (refine v2 原生默认).
+    """
+    eng = (engine
+           or os.environ.get("DEFAULT_REFINE_ENGINE", "").strip()
+           or "gpt-image-2")
+    meta = ENGINES.get(eng)
+    if not meta or meta.get("stub"):
+        raise ValueError(f"refine engine 不可用: {eng}")
+
+    if eng == "gpt-image-2":
+        return ai_image_apimart.default_api_call
+    # 其他引擎: 暂未提供与 refine_v2 兼容的 (thinking, size) 签名,
+    # 启用时各引擎 adapter 自己补 default_api_call 即可
+    raise NotImplementedError(
+        f"引擎 {eng} 暂未实现 refine_v2 ApiCallFn 签名; "
+        f"在 ai_image_<engine>.py 加 default_api_call(prompt, image_data_url, api_key, thinking, size) 即可"
+    )
 
 
 def generate_segment_to_local(engine: str, zone: str, prompt: str,

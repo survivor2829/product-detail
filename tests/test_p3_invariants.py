@@ -15,6 +15,7 @@ SETTINGS_HTML = PROJECT / "templates/auth/settings.html"
 ADMIN_USERS_HTML = PROJECT / "templates/admin/users.html"
 APP_PY = PROJECT / "app.py"
 REFINE_GENERATOR = PROJECT / "ai_refine_v2/refine_generator.py"
+AI_IMAGE_APIMART = PROJECT / "ai_image_apimart.py"  # 2026-05-13 重构: APIMart HTTP 抽到这
 ENV_EXAMPLE = PROJECT / ".env.example"
 
 
@@ -88,16 +89,34 @@ class TestAppPyCustomKeyWriteRemoved(unittest.TestCase):
         )
 
 
-class TestRefineGeneratorBaseUrl(unittest.TestCase):
-    """refine_generator 必须接 REFINE_API_BASE_URL 环境变量, 不写默认 URL."""
+class TestApimartBaseUrl(unittest.TestCase):
+    """APIMart 适配器必须接 REFINE_API_BASE_URL 环境变量, 不写默认 URL.
 
-    @classmethod
-    def setUpClass(cls):
-        cls.text = REFINE_GENERATOR.read_text(encoding="utf-8")
+    2026-05-13 重构: refine_generator 委托给 ai_image_router → ai_image_apimart;
+    REFINE_API_BASE_URL 的 env 读取位置随之迁移到 ai_image_apimart.py.
+    """
 
-    def test_reads_base_url_env(self):
-        self.assertIn("REFINE_API_BASE_URL", self.text,
-                      "refine_generator 未接 REFINE_API_BASE_URL env")
+    def test_apimart_reads_base_url_env(self):
+        text = AI_IMAGE_APIMART.read_text(encoding="utf-8")
+        self.assertIn("REFINE_API_BASE_URL", text,
+                      "ai_image_apimart 未接 REFINE_API_BASE_URL env")
+
+    def test_apimart_no_hardcoded_base_url(self):
+        """防回归: ai_image_apimart 不许出现具体的 base URL 字符串."""
+        text = AI_IMAGE_APIMART.read_text(encoding="utf-8")
+        # 反硬编码: 禁止任何 https://...apimart 之类的具体 URL
+        for forbidden in ("api.apimart.io", "apimart.cn", "https://api."):
+            self.assertNotIn(forbidden, text,
+                             f"ai_image_apimart 出现硬编码 URL: {forbidden}")
+
+    def test_refine_generator_delegates_to_router(self):
+        """refine_generator._default_api_call 必须委托给 router, 不直接调 HTTP."""
+        text = REFINE_GENERATOR.read_text(encoding="utf-8")
+        self.assertIn("ai_image_router", text,
+                      "refine_generator 未走 router (P5.x 统一化失效)")
+        # 不许再有 _submit_image_task / _poll_image_task 等本地 HTTP helper
+        self.assertNotIn("def _submit_image_task", text,
+                         "refine_generator 仍含 _submit_image_task; 应已迁到 ai_image_apimart")
 
 
 class TestStartupValidation(unittest.TestCase):

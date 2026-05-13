@@ -29,8 +29,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, Iterable
 
-import ai_image_volcengine as vol
+import ai_image_router as _router  # 2026-05-13: 走统一引擎路由层 (豆包/通义/gpt-image-2/nano-banana)
 import prompt_templates
+
+
+def _engine() -> str:
+    """挑当前生效的图像引擎 (env BG_IMAGE_ENGINE > router DEFAULT_ENGINE).
+    想换成 gpt-image-2: export BG_IMAGE_ENGINE=gpt-image-2 即可, 0 代码改动."""
+    return os.environ.get("BG_IMAGE_ENGINE", "").strip() or _router.DEFAULT_ENGINE
+
+
+def _wrap_legacy_key(engine: str, legacy_api_key: str) -> dict:
+    """旧调用方传单 api_key str, 包装成 router 的 api_keys dict.
+    如 legacy key 跟当前 engine 不匹配, dict 为空 → router 走 env fallback."""
+    if not legacy_api_key:
+        return {}
+    field = _router.ENGINES.get(engine, {}).get("key_field", "")
+    return {field: legacy_api_key} if field else {}
 
 
 # ── 参考图工具 ──────────────────────────────────────────────
@@ -217,17 +232,19 @@ def _generate_one(theme_id: str, screen: str, category: str,
         print(f"[bg] REF   {screen:11s} → 用参考图生成 (data_url len={len(ref_data_url)})")
 
     try:
-        urls = vol.generate_segment(screen, prompt, api_key,
-                                    width=w, height=h,
-                                    negative_prompt=negative,
-                                    reference_image_url=ref_data_url)
+        engine = _engine()
+        api_keys = _wrap_legacy_key(engine, api_key)
+        urls = _router.generate_segment(engine, screen, prompt, api_keys,
+                                        width=w, height=h,
+                                        negative_prompt=negative,
+                                        reference_image_url=ref_data_url)
         if not urls:
-            print(f"[bg] EMPTY {screen:11s} Seedream 返回空 URL 列表")
+            print(f"[bg] EMPTY {screen:11s} {engine} 返回空 URL 列表")
             return ""
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        # 复用 vol.download_image,它内部会清代理 + 重试
-        local = vol.download_image(urls[0], CACHE_DIR, filename=f"{key}.png")
+        # 走 router; 各引擎 download_image 实现各异 (seedream 清代理, apimart 直下)
+        local = _router.download_image(engine, urls[0], CACHE_DIR, filename=f"{key}.png")
         if not local or not Path(local).exists():
             print(f"[bg] DLFAIL {screen:11s} 下载失败")
             return ""
@@ -275,9 +292,14 @@ def generate_backgrounds(theme_id: str,
     variants_map = prompt_templates.resolve_variants_map(product_category)
 
     # 没有 API key → 全部走 CSS 兜底,不联网
+    engine = _engine()
     if not api_key:
-        print(f"[bg] 无 ARK_API_KEY,全部 {len(screens)} 屏走 CSS 兜底")
-        return {s: "" for s in screens}
+        # 让 router 自己再 fallback env;但如果 caller 显式传空也尊重它走兜底
+        meta = _router.ENGINES.get(engine, {})
+        env_key = os.environ.get(meta.get("key_env", ""), "").strip()
+        if not env_key:
+            print(f"[bg] 无 {meta.get('key_env', engine + ' API')} key, 全部 {len(screens)} 屏走 CSS 兜底")
+            return {s: "" for s in screens}
 
     ref_hint = f"  参考图={'有' if reference_image_url else '无'}"
     print(f"[bg] 模式={mode}  主题={theme_id}  品类={product_category or '(空)'}  "
@@ -359,8 +381,8 @@ def get_labor_reference_image(api_key: str = "", force_refresh: bool = False) ->
       - 未命中 + 无 api_key → 返回 "" (模板回退到单图模式)
 
     复用底层:
-      - vol.generate_segment(zone, prompt, api_key, ...) 返回图片 URL 列表
-      - vol.download_image(url, save_dir, filename) 下载到本地(内部清代理)
+      - _router.generate_segment(engine, zone, prompt, api_keys, ...) 返回图片 URL 列表
+      - _router.download_image(engine, url, save_dir, filename) 下载到本地
     """
     global _LABOR_URL_CACHE
     if _LABOR_URL_CACHE and not force_refresh:
@@ -374,24 +396,27 @@ def get_labor_reference_image(api_key: str = "", force_refresh: bool = False) ->
         _LABOR_URL_CACHE = url
         return url
 
-    if not api_key:
-        print("[labor] 无 ARK_API_KEY,跳过生成,VS 屏走单图")
+    engine = _engine()
+    api_keys = _wrap_legacy_key(engine, api_key)
+    if not api_key and not api_keys:
+        print(f"[labor] 无 {engine} key, 跳过生成, VS 屏走单图")
         return ""
 
     try:
-        urls = vol.generate_segment(
+        urls = _router.generate_segment(
+            engine,
             "vs_labor",
             _LABOR_PROMPT,
-            api_key,
+            api_keys,
             width=1024,
             height=1024,
             negative_prompt=_LABOR_NEGATIVE,
         )
         if not urls:
-            print("[labor] Seedream 返回空 URL 列表")
+            print(f"[labor] {engine} 返回空 URL 列表")
             return ""
 
-        local = vol.download_image(urls[0], CACHE_DIR, filename=_LABOR_CACHE_FILENAME)
+        local = _router.download_image(engine, urls[0], CACHE_DIR, filename=_LABOR_CACHE_FILENAME)
         if not local or not Path(local).exists():
             print("[labor] 下载失败")
             return ""
