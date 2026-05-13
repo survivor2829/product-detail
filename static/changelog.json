@@ -1,7 +1,17 @@
 {
   "_comment": "更新公告数据源。改这个文件即上线，前端按 latest_version 与用户 localStorage 对比来决定红点。entries 按时间倒序，最新在前。",
-  "latest_version": "2026.05.13",
+  "latest_version": "2026.05.13.2",
   "entries": [
+    {
+      "version": "2026.05.13.2",
+      "date": "2026-05-13",
+      "title": "耗材类 AI 背景图调性升级（实验室+仓储,替代商场）",
+      "highlights": [
+        "上传耗材类产品时，AI 长图的英雄屏背景从「商场摄影棚」切到「实验室不锈钢工作台」，场景屏从「商场长廊」切到「仓储货架走廊」——视觉调性更贴合清洁剂/消毒液/海绵等耗材产品",
+        "其他屏（advantages/specs/vs/brand）保持原抽象调性不变（这几屏本身就是品类无关的）；设备类/配件类/工具类零变化",
+        "技术上加了 CATEGORY_VARIANTS_MAP 覆盖层，未来扩展其他品类只需增加 entry，不动模板代码；非耗材类走 DEFAULT_VARIANTS_MAP 对象引用 fast-path，零拷贝零开销"
+      ]
+    },
     {
       "version": "2026.05.13",
       "date": "2026-05-13",

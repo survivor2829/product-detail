@@ -270,7 +270,9 @@ def generate_backgrounds(theme_id: str,
     screens = tuple(screens)
     mode = get_mode()
 
-    variants_map = prompt_templates.DEFAULT_VARIANTS_MAP
+    # P5.5: 按品类挑 variants — 耗材类走 lab_minimal + warehouse_aisle,
+    # 其他品类继续 DEFAULT_VARIANTS_MAP (商场/工厂调性)
+    variants_map = prompt_templates.resolve_variants_map(product_category)
 
     # 没有 API key → 全部走 CSS 兜底,不联网
     if not api_key:
