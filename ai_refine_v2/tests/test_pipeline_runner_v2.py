@@ -316,7 +316,34 @@ class TestV2AssemblerSizeGuard(unittest.TestCase):
 # D. v2 mock helpers + 端到端 mock 模式
 # ────────────────────────────────────────────────────────────────
 class TestV2MockMode(unittest.TestCase):
-    """v2 mock 模式: 缺 key 时仍能跑通 (PRD §阶段二·任务 2.2 硬要求)."""
+    """v2 mock 模式: 缺 key 时仍能跑通 (PRD §阶段二·任务 2.2 硬要求).
+
+    [auto-routine 2026-05-11] _MOCK_IMAGES_DIR 指向 static/smoke_output_v2/,
+    那目录被 .gitignore (47:smoke_output_v2/), CI/沙箱里没有 → 测试只在本机
+    跑过过 demo 时才绿. 这里 setUp 显式造 6 张 600×600 合成 JPG 灌进 tmpdir
+    并 patch _MOCK_IMAGES_DIR, 让测试自闭包, 任何 clean checkout 都能跑.
+    """
+
+    def setUp(self):
+        import os as _os
+        from PIL import Image
+        self._mock_dir = tempfile.mkdtemp(prefix="v2_mock_imgs_")
+        # 6 张占位图够覆盖 6-10 屏 (n>6 时 _copy_mock_images_v2 循环复用).
+        # 用随机噪声而不是纯色 — _run_assembler_v2 后 4 刀 E (size guard)
+        # 要求 assembled.png > 100KB, 纯色合成图压缩后只剩 ~5KB 过不了关.
+        for i in range(1, 7):
+            noise = _os.urandom(900 * 900 * 3)
+            img = Image.frombytes("RGB", (900, 900), noise)
+            img.save(Path(self._mock_dir) / f"block_{i:02d}.jpg", "JPEG", quality=85)
+        self._patcher = mock.patch.object(
+            pipeline_runner, "_MOCK_IMAGES_DIR", Path(self._mock_dir),
+        )
+        self._patcher.start()
+
+    def tearDown(self):
+        self._patcher.stop()
+        import shutil
+        shutil.rmtree(self._mock_dir, ignore_errors=True)
 
     def test_load_mock_planning_v2_returns_valid_v2_schema(self):
         """_load_mock_planning_v2 输出必须满足 _validate_schema_v2 (零 warning)."""
