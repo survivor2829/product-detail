@@ -15,10 +15,19 @@ AI 生图引擎路由层 — 统一接口, 按 engine 字段分发到任一引�
 import os
 from pathlib import Path
 
-import ai_image                  # 通义万相 (DashScope, 阿里官方)
-import ai_image_volcengine       # 豆包 Seedream 4.0 (Ark, 火山官方)
+import ai_image_volcengine       # 豆包 Seedream 4.0 (Ark, 火山官方) — 一般都装了
 import ai_image_apimart          # gpt-image-2 / nano banana 等 (APIMart 中转站)
 import prompt_templates          # 专业级 prompt 模板库（六维结构化）
+
+# 通义万相依赖 dashscope; prod 镜像若未装则软降级 (引擎标记 unavailable 而非崩溃)
+try:
+    import ai_image as _ai_wanxiang  # 通义万相 (DashScope, 阿里官方)
+    _WANXIANG_AVAILABLE = True
+    _WANXIANG_T2I_MODEL = _ai_wanxiang.T2I_MODEL
+except ImportError:
+    _ai_wanxiang = None  # type: ignore
+    _WANXIANG_AVAILABLE = False
+    _WANXIANG_T2I_MODEL = "wanx2.1-t2i-turbo"  # 兜底常量,不影响注册
 
 
 # ── 引擎元数据（前端下拉框可读取）──────────────────────────────
@@ -28,7 +37,7 @@ ENGINES = {
         "label": "通义万相",
         "vendor": "阿里云百炼",
         "channel": "official",
-        "model": ai_image.T2I_MODEL,
+        "model": _WANXIANG_T2I_MODEL,
         "key_env": "DASHSCOPE_API_KEY",
         "key_field": "dashscope_api_key",
         "cost_hint": "约 0.04-0.08 元/张",
@@ -151,10 +160,12 @@ def generate_segment(engine: str, zone: str, prompt: str,
                                                  negative_prompt=negative_prompt,
                                                  reference_image_url=reference_image_url)
     # wanxiang (default fallback)
-    return ai_image.generate_segment(zone, prompt, key,
-                                     width=width, height=height,
-                                     negative_prompt=negative_prompt,
-                                     reference_image_url=reference_image_url)
+    if not _WANXIANG_AVAILABLE:
+        raise RuntimeError("wanxiang 引擎不可用: dashscope 未安装 (pip install dashscope)")
+    return _ai_wanxiang.generate_segment(zone, prompt, key,
+                                         width=width, height=height,
+                                         negative_prompt=negative_prompt,
+                                         reference_image_url=reference_image_url)
 
 
 def download_image(engine: str, url: str, save_dir, filename: str = "") -> str:
@@ -163,7 +174,9 @@ def download_image(engine: str, url: str, save_dir, filename: str = "") -> str:
         return ai_image_volcengine.download_image(url, save_dir, filename)
     if engine in ("gpt-image-2", "nano-banana"):
         return ai_image_apimart.download_image(url, save_dir, filename)
-    return ai_image.download_image(url, save_dir, filename)
+    if not _WANXIANG_AVAILABLE:
+        raise RuntimeError("wanxiang 引擎不可用: dashscope 未安装")
+    return _ai_wanxiang.download_image(url, save_dir, filename)
 
 
 # ── ai_refine_v2 集成钩子 ────────────────────────────────────────
@@ -225,7 +238,9 @@ def generate_detail_backgrounds(engine: str, product_data: dict,
 
     if engine == "seedream":
         return ai_image_volcengine.generate_detail_backgrounds(product_data, key, save_dir)
-    return ai_image.generate_detail_backgrounds(product_data, key, save_dir)
+    if not _WANXIANG_AVAILABLE:
+        raise RuntimeError("wanxiang 引擎不可用: dashscope 未安装")
+    return _ai_wanxiang.generate_detail_backgrounds(product_data, key, save_dir)
 
 
 if __name__ == "__main__":
