@@ -24,15 +24,12 @@
 from __future__ import annotations
 import base64
 import concurrent.futures
-import json
 import mimetypes
 import os
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Callable, Optional, Union
 
 from ai_refine_v2.color_extractor import ColorAnchor, extract_color_anchor  # v3.2.2
 from ai_refine_v2.prompts.generator import render
@@ -40,20 +37,12 @@ from ai_refine_v2.refine_planner import _VALID_ROLES_V2
 
 
 # ── 常量 ────────────────────────────────────────────────────────
-# P3 砍刀流: 精修 API endpoint 走 REFINE_API_BASE_URL env, 反硬编码原则下不留 fallback URL.
-# 启动校验 (app.py:_REQUIRED_PLATFORM_KEYS) 已确保 env 非空, 此处直接读保证 fail-fast.
-_APIMART_BASE = os.environ["REFINE_API_BASE_URL"]
-_APIMART_MODEL = "gpt-image-2"
+# 2026-05-13 重构: APIMart endpoint / model / poll timeout / UA 等 HTTP 细节
+# 已下沉到 ai_image_apimart.py (router 第三引擎 adapter). 本模块保留的常量:
+#   - _APIMART_SIZE_DEFAULT  仍用作 _default_api_call / generate / generate_v2 默认 size
+#   - _COST_PER_CALL_RMB     用于成本累计 (各处引用)
 _APIMART_SIZE_DEFAULT = "1:1"
-_POLL_INTERVAL_S = 3
-# 2026-05-09 用户报 v2 Hero TimeoutError: 240s (4min) 对 12 屏 + APIMart 偶发 503 重试边界过紧.
-# 提到 480s (8min), env var 可覆盖给 admin 紧急调参 (生产 hot-fix 不重 deploy).
-_POLL_TIMEOUT_S = int(os.environ.get("REFINE_POLL_TIMEOUT_S", "480"))
 _COST_PER_CALL_RMB = 0.70  # gpt-image-2 + thinking=medium
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-)
 
 
 # ── 数据结构 ────────────────────────────────────────────────────
@@ -107,116 +96,13 @@ class HeroFailure(RuntimeError):
     """
 
 
-# ── HTTP 底层 (私有) ────────────────────────────────────────────
-def _http_post_json(
-    url: str, payload: dict, api_key: str, timeout: int = 90,
-) -> tuple[int, Any]:
-    """POST JSON, 默认读 env HTTP_PROXY (APIMart 需要走代理).
-
-    返回 (status_code, parsed_body | raw_text). HTTPError 时也返错误 body 而非 raise,
-    便于 submit 层精细判断 APIMart 的自定义 code 字段.
-    """
-    req = urllib.request.Request(
-        url, method="POST",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": _UA,
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read().decode("utf-8")
-            try:
-                return r.status, json.loads(body)
-            except json.JSONDecodeError:
-                return r.status, body
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        try:
-            return e.code, json.loads(body)
-        except json.JSONDecodeError:
-            return e.code, body
-
-
-def _http_get_json(url: str, api_key: str, timeout: int = 30) -> dict:
-    req = urllib.request.Request(
-        url, method="GET",
-        headers={"Authorization": f"Bearer {api_key}", "User-Agent": _UA},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-# ── APIMart submit / poll (私有) ────────────────────────────────
-def _submit_image_task(
-    prompt: str,
-    image_data_url: Optional[str],
-    api_key: str,
-    thinking: str = "medium",
-    size: str = _APIMART_SIZE_DEFAULT,
-) -> str:
-    """提交 gpt-image-2 任务到 APIMart, 返回 task_id."""
-    payload: dict[str, Any] = {
-        "model": _APIMART_MODEL,
-        "prompt": prompt,
-        "n": 1,
-        "size": size,
-        "thinking": thinking,
-        "reasoning_effort": thinking,
-    }
-    # v3.2.2: image_data_url 可以是 str (单图) 或 list[str] (双图: cutout + swatch)
-    if image_data_url:
-        if isinstance(image_data_url, list):
-            payload["image_urls"] = image_data_url
-        else:
-            payload["image_urls"] = [image_data_url]
-
-    code, body = _http_post_json(
-        f"{_APIMART_BASE}/images/generations", payload, api_key,
-    )
-    if code != 200 or not isinstance(body, dict) or body.get("code") != 200:
-        raise RuntimeError(f"APIMart submit HTTP {code}: {body}")
-    tasks = body.get("data") or []
-    if not tasks or not tasks[0].get("task_id"):
-        raise RuntimeError(f"APIMart 响应缺 task_id: {body}")
-    return tasks[0]["task_id"]
-
-
-def _poll_image_task(
-    task_id: str,
-    api_key: str,
-    poll_interval: int = _POLL_INTERVAL_S,
-    poll_timeout: int = _POLL_TIMEOUT_S,
-) -> str:
-    """轮询 APIMart task 直到 completed, 返回 image_url. 失败/超时抛异常."""
-    t0 = time.time()
-    while True:
-        elapsed = time.time() - t0
-        if elapsed > poll_timeout:
-            raise TimeoutError(
-                f"APIMart 轮询超时 {poll_timeout}s, task_id={task_id}"
-            )
-        data = _http_get_json(
-            f"{_APIMART_BASE}/tasks/{task_id}?language=en", api_key,
-        )
-        node = data.get("data") or data
-        status = node.get("status")
-        if status == "completed":
-            images = (node.get("result") or {}).get("images") or []
-            if not images:
-                raise RuntimeError(f"APIMart completed 但无 images: {node}")
-            url = images[0].get("url")
-            if isinstance(url, list):
-                url = url[0] if url else None
-            if not url:
-                raise RuntimeError(f"APIMart completed 但无 url: {images}")
-            return url
-        if status in ("failed", "cancelled"):
-            raise RuntimeError(f"APIMart 任务 {status}: {node}")
-        time.sleep(poll_interval)
-
+# ── _default_api_call: 委托给 router (2026-05-13 重构) ──────────
+# HTTP submit/poll 逻辑已移至 ai_image_apimart.py (router 第三引擎 adapter),
+# 此处保留 _default_api_call 函数名因为测试用 patch(...refine_generator._default_api_call)
+# 硬编码 mock 路径 (test_pipeline_runner.py / test_pipeline_runner_v2.py).
+#
+# 想换引擎: export DEFAULT_REFINE_ENGINE=<engine_id>, router 会挑对应实现.
+# 默认仍是 gpt-image-2 (apimart 通道), 行为跟重构前完全一致.
 
 def _default_api_call(
     prompt: str,
@@ -225,15 +111,21 @@ def _default_api_call(
     thinking: str = "medium",
     size: str = _APIMART_SIZE_DEFAULT,
 ) -> str:
-    """生产默认: submit + poll. 单测注入 mock 时替换此函数.
+    """生产默认: 委托给 ai_image_router 找当前 engine 的实现.
+
+    2026-05-13 重构前: 直接 submit + poll 调 APIMart gpt-image-2 (~100 行 HTTP 代码).
+    2026-05-13 重构后: 委托给 router → 默认仍是 ai_image_apimart.default_api_call,
+        但可以通过 env DEFAULT_REFINE_ENGINE 切到任何其他引擎 (豆包/通义/未来 nano banana).
+
+    保留函数名因为 test_pipeline_runner*.py 用 patch 硬编码 mock 此路径, 改名破测试.
 
     签名约束 (ApiCallFn):
         (prompt, image_data_url, api_key, thinking, size) -> image_url
     """
-    task_id = _submit_image_task(
+    import ai_image_router  # 延迟 import 避免冷启动循环依赖
+    return ai_image_router.get_refine_call_fn()(
         prompt, image_data_url, api_key, thinking=thinking, size=size,
     )
-    return _poll_image_task(task_id, api_key)
 
 
 ApiCallFn = Callable[[str, Optional[str], str, str, str], str]

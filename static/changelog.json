@@ -1,7 +1,18 @@
 {
   "_comment": "更新公告数据源。改这个文件即上线，前端按 latest_version 与用户 localStorage 对比来决定红点。entries 按时间倒序，最新在前。",
-  "latest_version": "2026.05.13.2",
+  "latest_version": "2026.05.13.3",
   "entries": [
+    {
+      "version": "2026.05.13.3",
+      "date": "2026-05-13",
+      "title": "AI 生图引擎统一化（豆包/通义/GPT image 2.0/nano banana 一口子）",
+      "highlights": [
+        "之前换个图像引擎要改业务代码（豆包绑死 ai_bg_cache, gpt-image-2 绑死 ai_refine_v2，互相独立），现在所有功能走同一个 ai_image_router，加新引擎只需在 router 加 entry",
+        "实测可用引擎: 豆包 Seedream / 通义万相 / GPT image 2.0 (via APIMart 中转站); 占位 nano banana (启用时再补)",
+        "换引擎现在只需要改 env: DEFAULT_IMAGE_ENGINE=gpt-image-2 切到 GPT, =seedream 切回豆包; 业务代码零改动",
+        "446+ pytest 全绿，API 行为零变化，纯内部架构统一"
+      ]
+    },
     {
       "version": "2026.05.13.2",
       "date": "2026-05-13",
