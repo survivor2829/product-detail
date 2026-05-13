@@ -80,7 +80,9 @@
       "vs_right_title": "",
       "vs_right_sub": "",
       "vs_left_bottom": "",
-      "vs_right_bottom": ""
+      "vs_right_bottom": "",
+      "left_label": "本产品",
+      "right_label": "传统人工"
     },
     "block_d1": {
       "title_line1_pre": "",
