@@ -14,6 +14,7 @@
   - vs_left_title, vs_left_sub, vs_right_title, vs_right_sub
   - vs_left_bottom, vs_right_bottom
   - vs_rows: 多维度对比行列表 [{"label":"维度","left":"机器数据","right":"人工数据"},...]
+  - left_label, right_label: 双图对比胶囊标签 (品类自适应; 默认设备类语义"本产品"/"传统人工")
 -->
 {% if vs_left_title or title_line1_red %}<div style="width:750px; font-family:'PingFang SC','Noto Sans SC','Microsoft YaHei','Helvetica Neue',sans-serif; background:#fff; overflow:hidden;">
 
@@ -42,7 +43,7 @@
     {% endif %}
 
     {% if labor_image %}
-    <!-- 双图对比：左=本产品 / 右=传统人工。labor_image 由 Seedream 生成并磁盘缓存 -->
+    <!-- 双图对比：左=left_label / 右=right_label (默认设备类"本产品/传统人工")。labor_image 由 Seedream 生成并磁盘缓存 -->
     <div style="position:absolute; top:30px; left:0; right:0; height:620px; z-index:1; display:flex; align-items:stretch; justify-content:space-around; padding:0 24px;">
       <!-- 本产品 -->
       <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 8px;">
@@ -50,7 +51,7 @@
              style="max-width:100%; max-height:86%; object-fit:contain; filter:drop-shadow(0 10px 30px rgba(0,0,0,0.3));"
              alt="">
         <div style="margin-top:10px; padding:5px 16px; background:linear-gradient(135deg, var(--theme-primary, #E8231A) 0%, #d42a1e 100%); color:#fff; font-size:15px; font-weight:700; border-radius:14px; letter-spacing:1px; box-shadow:0 3px 10px rgba(232,35,26,0.35);">
-          本产品
+          {{ left_label|default('本产品') }}
         </div>
       </div>
       <!-- 传统人工 -->
@@ -59,7 +60,7 @@
              style="max-width:100%; max-height:86%; object-fit:contain; border-radius:12px; filter:drop-shadow(0 10px 30px rgba(0,0,0,0.3));"
              alt="">
         <div style="margin-top:10px; padding:5px 16px; background:linear-gradient(135deg, #3a3e48 0%, #22262e 100%); color:rgba(255,255,255,0.92); font-size:15px; font-weight:700; border-radius:14px; letter-spacing:1px; box-shadow:0 3px 10px rgba(0,0,0,0.35);">
-          传统人工
+          {{ right_label|default('传统人工') }}
         </div>
       </div>
     </div>
