@@ -137,8 +137,10 @@ SCREEN_VARIANTS: dict[str, dict[str, dict]] = {
             "emotion": "expansive, aspirational, cinematic openness",
         },
         # 耗材类专用 — 实验室/工作台调性,适合清洁化学品/液体瓶/小工具
+        # 2026-05-14: 把 beakers 从远景模糊区提到前景视觉锚点,加 pH meter / pipette
+        # stand 等具体器材,强化"实验室"语义,避免被 Seedream 压平成"白底安静空间"
         "lab_minimal": {
-            "scene": "a pristine laboratory workspace interior, a long seamless brushed stainless steel benchtop spans the lower frame, soft-focus glass beakers and white cabinetry recede into the background",
+            "scene": "a pristine laboratory workspace interior, a brushed stainless steel benchtop dominates the lower third, a row of empty glass beakers and amber-tinted reagent bottles arranged at the left edge of the frame, a digital pH meter and a pipette stand at the right edge, the central benchtop surface left wide and empty for compositing",
             "lighting": "uniform overhead diffused panel light, no harsh directional source, soft ambient fill on all sides, clinical even illumination",
             "palette": "cool {light_base} dominates with a faint {primary} hint near the bench edge, clean scientific atmosphere",
             "material": "brushed stainless steel benchtop with fine horizontal grain and subtle satin reflection, matte epoxy-coated white walls, frosted glass partitions softly out of focus",
@@ -258,8 +260,10 @@ SCREEN_VARIANTS: dict[str, dict[str, dict]] = {
             "emotion": "expansive, public-scale, clean modern infrastructure",
         },
         # 耗材类专用 — 仓储/配货走廊,体现"批量供应/专业储备"语境
+        # 2026-05-14: shelving 从远景模糊提到中景明确可见,加码垛箱子 / PE 缠绕托盘
+        # 等具体仓储符号,让 Seedream 真感受到"仓储"而非"通用工业走廊"
         "warehouse_aisle": {
-            "scene": "a modern industrial warehouse aisle interior, tall organized shelving units recede into the background, a smooth glossy epoxy floor stretches with strong one-point perspective",
+            "scene": "a modern industrial warehouse aisle interior, tall metal pallet racks flank both sides at chest height with stacked unbranded cardboard boxes and PE-wrapped pallets clearly visible, a glossy epoxy floor stretches forward with strong one-point perspective, the central aisle floor left wide and empty for compositing",
             "lighting": "overhead linear LED panels cast uniform balanced illumination, gentle ambient bounce from the bright walls, no harsh shadows",
             "palette": "cool {light_base} dominates the upper zone, the floor reflects with a faint {primary} accent near the central perspective line",
             "material": "self-leveling epoxy floor with soft mirror-like reflection, painted steel shelving softly out of focus, matte white walls in the background",

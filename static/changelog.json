@@ -1,7 +1,17 @@
 {
   "_comment": "更新公告数据源。改这个文件即上线，前端按 latest_version 与用户 localStorage 对比来决定红点。entries 按时间倒序，最新在前。",
-  "latest_version": "2026.05.13.3",
+  "latest_version": "2026.05.14",
   "entries": [
+    {
+      "version": "2026.05.14",
+      "date": "2026-05-14",
+      "title": "耗材类 AI 长图调性强化（实验室器材+仓储符号前景化）",
+      "highlights": [
+        "耗材类 AI 长图英雄屏/场景屏品类辨识度升级：实验室屏的烧杯、琥珀色试剂瓶、数字 pH 计、移液器明确出现在画面左右边缘；仓储屏的金属托盘货架、码垛纸箱、PE 缠绕托盘从远景柔焦提到中景可见",
+        "根因修复：5-13 上线后用户反馈耗材类跟设备类「差不太多」，排查后定位是原 prompt 用了「recede into background / soft-focus」等弱化语让 Seedream 把品类符号扔到 20% 模糊远景；本次把这些 prop 移到前景明确位置 + 加「central area left wide and empty for compositing」保护合成区",
+        "0 新增模板 / 0 业务逻辑改动 / 169 pytest 全绿，纯 prompt 调优；改动文件仅 prompt_templates.py 两段 scene 字段"
+      ]
+    },
     {
       "version": "2026.05.13.3",
       "date": "2026-05-13",
