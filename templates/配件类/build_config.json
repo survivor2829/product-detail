@@ -1,6 +1,6 @@
 {
-  "name": "配耗类",
-  "product_type": "配耗类",
+  "name": "配件类",
+  "product_type": "配件类",
   "engines": ["blocks"],
   "default_engine": "blocks",
   "hero_block_template": "blocks/block_a_hero_robot_cover.html",

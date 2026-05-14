@@ -86,7 +86,7 @@ def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dic
     payload: 同 v1 兼容字段 (name / main_image_path / cutout_path /
              parsed_json_path / resolved_theme_id / product_category)
     ark_api_key: v3.2 已不使用, 保留参数兼容 batch_queue 调用约定. v3.2 用
-                 服务端 env DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY.
+                 服务端 env DEEPSEEK_API_KEY + REFINE_API_KEY (兼容 GPT_IMAGE_API_KEY fallback).
 
     raises: 任何异常上抛 (batch_queue._submit_one 兜成 status=failed)
 
@@ -142,10 +142,13 @@ def refine_one_product(scope_id: str, payload: dict, *, ark_api_key: str) -> dic
     # v3.2 双 key 从 env 读 (生产 .env 已注入, 见 2026-04-29 部署日志)
     import os as _os
     deepseek_key = _os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    gpt_image_key = _os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    gpt_image_key = (
+        _os.environ.get("REFINE_API_KEY", "").strip()
+        or _os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    )
     if not deepseek_key or not gpt_image_key:
         raise RuntimeError(
-            "v3.2 v2 path 需要 DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY 都配上 "
+            "v3.2 v2 path 需要 DEEPSEEK_API_KEY + REFINE_API_KEY 都配上 "
             f"(deepseek={bool(deepseek_key)}, gpt={bool(gpt_image_key)}). "
             "在生产 .env 加这两个 key 后 docker compose up -d --force-recreate web."
         )

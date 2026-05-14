@@ -375,12 +375,18 @@ class TestV2SafetyValve(unittest.TestCase):
 
     def setUp(self):
         self._saved = os.environ.pop("V2_ALLOW_REAL_API", None)
+        self._saved_flask_env = os.environ.get("FLASK_ENV")
+        os.environ["FLASK_ENV"] = "development"
 
     def tearDown(self):
         if self._saved is not None:
             os.environ["V2_ALLOW_REAL_API"] = self._saved
         else:
             os.environ.pop("V2_ALLOW_REAL_API", None)
+        if self._saved_flask_env is not None:
+            os.environ["FLASK_ENV"] = self._saved_flask_env
+        else:
+            os.environ.pop("FLASK_ENV", None)
 
     # ── _detect_mode 闸门 ─────────────────────────────────────
     def test_unset_forces_mock_even_with_real_keys(self):
@@ -389,6 +395,20 @@ class TestV2SafetyValve(unittest.TestCase):
         self.assertEqual(
             pipeline_runner._detect_mode("real_ds_key", "real_gpt_key"),
             "mock",
+        )
+
+    def test_production_default_allows_real_api(self):
+        """生产环境不再被临时安全阀强制 mock."""
+        os.environ["FLASK_ENV"] = "production"
+        os.environ.pop("V2_ALLOW_REAL_API", None)
+
+        self.assertEqual(
+            pipeline_runner._detect_mode("real_ds_key", "real_gpt_key"),
+            "real",
+        )
+        self.assertEqual(
+            pipeline_runner._apply_safety_valve("real_ds_key", "real_gpt_key"),
+            ("real_ds_key", "real_gpt_key"),
         )
 
     def test_explicit_false_forces_mock(self):

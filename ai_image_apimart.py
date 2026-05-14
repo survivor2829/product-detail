@@ -2,7 +2,7 @@
 
 Engine:  gpt-image-2 (OpenAI-compatible 模型)
 Channel: APIMart 中转站  (endpoint = REFINE_API_BASE_URL env)
-API key: GPT_IMAGE_API_KEY (优先) / REFINE_API_KEY (fallback)
+API key: REFINE_API_KEY (优先) / GPT_IMAGE_API_KEY (兼容 fallback)
 
 为什么独立一个文件而不是塞 ai_image_router.py:
   router 一直保持 skinny dispatcher 风格 (只调度, 不实现 HTTP). 把 APIMart submit+poll
@@ -48,10 +48,10 @@ def _apimart_base() -> str:
 
 
 def _resolve_api_key(api_key: str = "") -> str:
-    """优先用传入 key, 否则 GPT_IMAGE_API_KEY env, 最后 REFINE_API_KEY."""
+    """优先用传入 key, 否则 REFINE_API_KEY env, 最后 GPT_IMAGE_API_KEY."""
     if api_key:
         return api_key.strip()
-    for env_var in ("GPT_IMAGE_API_KEY", "REFINE_API_KEY"):
+    for env_var in ("REFINE_API_KEY", "GPT_IMAGE_API_KEY"):
         v = os.environ.get(env_var, "").strip()
         if v:
             return v
@@ -216,7 +216,7 @@ def generate_segment(zone: str, prompt: str, api_key: str,
     size = _ratio_for_canvas(width, height)
     use_key = _resolve_api_key(api_key)
     if not use_key:
-        print(f"[apimart] {zone} 缺 GPT_IMAGE_API_KEY/REFINE_API_KEY")
+        print(f"[apimart] {zone} 缺 REFINE_API_KEY/GPT_IMAGE_API_KEY")
         return []
 
     try:

@@ -60,7 +60,8 @@ ENGINES = {
         "vendor": "OpenAI",
         "channel": "apimart",
         "model": ai_image_apimart.T2I_MODEL,
-        "key_env": "GPT_IMAGE_API_KEY",
+        "key_env": "REFINE_API_KEY",
+        "fallback_key_envs": ("GPT_IMAGE_API_KEY",),
         "key_field": "gpt_image_api_key",
         "cost_hint": "约 0.70 元/张 (thinking=medium)",
         "supports_i2i": True,
@@ -71,7 +72,8 @@ ENGINES = {
         "vendor": "Google",
         "channel": "apimart",
         "model": "nano-banana",
-        "key_env": "GPT_IMAGE_API_KEY",  # 中转站共用 key
+        "key_env": "REFINE_API_KEY",  # 中转站共用 key; GPT_IMAGE_API_KEY 兼容 fallback
+        "fallback_key_envs": ("GPT_IMAGE_API_KEY",),
         "key_field": "gpt_image_api_key",
         "cost_hint": "TBD",
         "supports_i2i": True,
@@ -118,7 +120,11 @@ def _resolve_key(engine: str, api_keys: dict) -> str:
     meta = ENGINES.get(engine) or ENGINES[DEFAULT_ENGINE]
     key = (api_keys or {}).get(meta["key_field"], "")
     if not key:
-        key = os.environ.get(meta["key_env"], "")
+        env_vars = (meta["key_env"], *meta.get("fallback_key_envs", ()))
+        for env_var in env_vars:
+            key = os.environ.get(env_var, "")
+            if key:
+                break
     return key.strip()
 
 

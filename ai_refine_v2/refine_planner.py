@@ -52,7 +52,7 @@ _TEMPERATURE = 0.1
 _MAX_TOKENS = 4096
 _UA = "ai-refine-v2-planner/1.0"
 
-_VALID_CATEGORIES = ("设备类", "耗材类", "工具类")
+_VALID_CATEGORIES = ("设备类", "耗材类", "配件类", "工具类")
 _VALID_VISUAL_TYPES = ("product_in_scene", "product_closeup", "concept_visual")
 _VALID_PRIORITIES = ("high", "medium", "low")
 
@@ -350,7 +350,7 @@ def _validate_schema_v2(parsed: dict) -> list[str]:
                 w.append(f"product_meta.{k} 缺失或非字符串")
         cat = pm.get("category")
         if cat not in _VALID_CATEGORIES:
-            w.append(f"product_meta.category 非法 (必须 设备类/耗材类/工具类): {cat!r}")
+            w.append(f"product_meta.category 非法 (必须 设备类/耗材类/配件类/工具类): {cat!r}")
         kvp = pm.get("key_visual_parts")
         if not isinstance(kvp, list) or not kvp:
             w.append("product_meta.key_visual_parts 缺失或空列表")

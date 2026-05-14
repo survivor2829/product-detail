@@ -128,6 +128,46 @@ class TestGetGptImageKeyHelper:
         )
 
 
+class TestRefineApiKeyCompatibility:
+    """守护: 平台精修 key 主入口统一为 REFINE_API_KEY."""
+
+    def test_paid_gpt_image_key_uses_refine_api_key_primary(self, monkeypatch):
+        import app as app_mod
+
+        class PaidUser:
+            is_admin = False
+            is_paid = True
+
+        monkeypatch.setenv("REFINE_API_KEY", "sk-refine-primary")
+        monkeypatch.delenv("GPT_IMAGE_API_KEY", raising=False)
+
+        key, source = app_mod._get_gpt_image_key(PaidUser())
+        assert key == "sk-refine-primary"
+        assert source == "platform"
+
+    def test_paid_gpt_image_key_keeps_legacy_fallback(self, monkeypatch):
+        import app as app_mod
+
+        class PaidUser:
+            is_admin = False
+            is_paid = True
+
+        monkeypatch.delenv("REFINE_API_KEY", raising=False)
+        monkeypatch.setenv("GPT_IMAGE_API_KEY", "sk-gpt-legacy")
+
+        key, source = app_mod._get_gpt_image_key(PaidUser())
+        assert key == "sk-gpt-legacy"
+        assert source == "platform"
+
+    def test_router_gpt_image_resolves_refine_api_key(self, monkeypatch):
+        import ai_image_router
+
+        monkeypatch.setenv("REFINE_API_KEY", "sk-refine-primary")
+        monkeypatch.delenv("GPT_IMAGE_API_KEY", raising=False)
+
+        assert ai_image_router._resolve_key("gpt-image-2", {}) == "sk-refine-primary"
+
+
 class TestSettingsHtmlConditionalKeyCard:
     """守护: settings.html 必须有条件渲染的 API Key 配置卡 (仅 non-paid 显示)."""
 

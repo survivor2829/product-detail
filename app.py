@@ -87,6 +87,10 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 # 缺失时会静默用公开字符串, 攻击者可伪造 session cookie 接管账号.
 # 修复 (per audit stub A1 方案 A): 非 development 直接 sys.exit(1) fail-fast.
 _secret_key = os.environ.get("SECRET_KEY", "").strip()
+_SECRET_KEY_PLACEHOLDERS = {
+    "change-me-in-production",
+    "dev-change-me-in-production",
+}
 if not _secret_key:
     if os.environ.get("FLASK_ENV") == "development":
         _secret_key = "dev-change-me-in-production"
@@ -97,6 +101,13 @@ if not _secret_key:
             "  写入 .env: SECRET_KEY=<生成值>\n"
         )
         sys.exit(1)
+elif os.environ.get("FLASK_ENV") != "development" and _secret_key in _SECRET_KEY_PLACEHOLDERS:
+    sys.stderr.write(
+        "[FATAL] SECRET_KEY 是占位符, 拒绝在非 development 环境启动.\n"
+        "  生成: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+        "  写入 .env: SECRET_KEY=<生成值>\n"
+    )
+    sys.exit(1)
 app.config["SECRET_KEY"] = _secret_key
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///wubaoyun.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -1173,12 +1184,27 @@ _KEY_CONFIG = {
         "settings_hint": "请先在 /settings 配置自己的 DeepSeek API Key, 或联系管理员升级为付费用户",
     },
     "gpt_image": {
-        "env_var": "GPT_IMAGE_API_KEY",
+        "env_var": "REFINE_API_KEY",
+        "fallback_env_vars": ("GPT_IMAGE_API_KEY",),
         "custom_attr": "custom_gpt_image_key_enc",
         "display_name": "GPT-image-2",
         "settings_hint": "请先在 /settings 配置自己的 GPT-image-2 API Key (APIMart), 或联系管理员升级为付费用户",
     },
 }
+
+
+def _platform_env_vars(cfg):
+    env_vars = [cfg["env_var"]]
+    env_vars.extend(cfg.get("fallback_env_vars", ()))
+    return env_vars
+
+
+def _resolve_platform_env_key(cfg):
+    for env_var in _platform_env_vars(cfg):
+        key = os.environ.get(env_var, "").strip()
+        if key:
+            return key, env_var
+    return "", cfg["env_var"]
 
 
 def _get_platform_key(user, key_type):
@@ -1204,11 +1230,12 @@ def _get_platform_key(user, key_type):
 
     # admin 永远当付费用户对待 (admin 测试时不该自配 key)
     if getattr(user, "is_admin", False) or getattr(user, "is_paid", False):
-        key = os.environ.get(cfg["env_var"], "").strip()
+        key, _used_env_var = _resolve_platform_env_key(cfg)
         if not key:
+            env_hint = " / ".join(_platform_env_vars(cfg))
             raise RuntimeError(
                 f"付费用户的 {cfg['display_name']} key 缺失 "
-                f"(admin 在 .env 配 {cfg['env_var']} 后重启)"
+                f"(admin 在 .env 配 {env_hint} 后重启)"
             )
         return key, "platform"
 
@@ -1760,7 +1787,7 @@ def batch_ai_refine_start(batch_id):
 
     v3.2 (2026-04-29): 切换到 v2 path (DeepSeek + APIMart gpt-image-2),
     不再依赖用户提供 ark_api_key. 服务端 .env 已配 DEEPSEEK_API_KEY +
-    GPT_IMAGE_API_KEY, 用户在批量 UI 直接点启动即可.
+    REFINE_API_KEY (兼容 GPT_IMAGE_API_KEY fallback), 用户在批量 UI 直接点启动即可.
 
     请求体 JSON (兼容历史调用方):
         { "ark_api_key": "sk-xxxxx" }   # v3.2 已不使用, 字段保留为兼容
@@ -1777,12 +1804,13 @@ def batch_ai_refine_start(batch_id):
     # v3.2: ark_api_key 不再必填. 透传给 refine_processor 兼容签名 (内部忽略).
     ark_api_key = (data.get("ark_api_key") or "").strip()
     # v3.2 改为校验服务端 env 是否配齐 v2 双 key
-    if not (os.environ.get("DEEPSEEK_API_KEY", "").strip()
-            and os.environ.get("GPT_IMAGE_API_KEY", "").strip()):
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    gpt_image_key, _ = _resolve_platform_env_key(_KEY_CONFIG["gpt_image"])
+    if not (deepseek_key and gpt_image_key):
         return jsonify({
             "error": (
                 "服务端 v3.2 v2 path key 未配齐. 联系管理员在 .env 加 "
-                "DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY 后 docker compose "
+                "DEEPSEEK_API_KEY + REFINE_API_KEY 后 docker compose "
                 "up -d --force-recreate web."
             ),
             "action": "server_missing_v2_keys",
@@ -1990,7 +2018,7 @@ def batch_item_regenerate_screen(batch_id, item_pk):
             cutout_path = None
 
         deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        gpt_image_key = os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+        gpt_image_key, _ = _resolve_platform_env_key(_KEY_CONFIG["gpt_image"])
         if not (deepseek_key and gpt_image_key):
             return jsonify({
                 "error": "服务端 v2 key 未配齐",
@@ -4803,7 +4831,7 @@ def _get_block_display_name(block_id):
 
 # ── AI 精修 v2 端点 (DeepSeek planner + APIMart gpt-image-2 + Playwright 拼装) ──
 # 无 key 时自动降级 mock (用 4/23 demo 的 6 张图做占位), 让 UI 能完整走通.
-# 配齐 DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY 后自动切真实 API.
+# 配齐 DEEPSEEK_API_KEY + REFINE_API_KEY 后自动切真实 API.
 @app.route("/api/ai-refine-v2/execute", methods=["POST"])
 @login_required
 def ai_refine_v2_execute():
@@ -4860,7 +4888,10 @@ def ai_refine_v2_execute():
         user_id=current_user.id,  # P4 §A.6: owner 标记防 IDOR
         product_category=product_category,
     )
-    mode = pipeline_runner._detect_mode(deepseek_key, gpt_image_key)
+    actual_deepseek_key, actual_gpt_image_key = pipeline_runner._apply_safety_valve(
+        deepseek_key, gpt_image_key
+    )
+    mode = pipeline_runner._detect_mode(actual_deepseek_key, actual_gpt_image_key)
     return jsonify({
         "ok": True,
         "task_id": task_id,
@@ -4869,7 +4900,7 @@ def ai_refine_v2_execute():
         "notes": (
             [] if mode == "real"
             else ["当前为 mock/partial-mock 模式: 部分或全部使用占位图. "
-                  "配置 DEEPSEEK_API_KEY + GPT_IMAGE_API_KEY 后自动切真实生成."]
+                  "配置 DEEPSEEK_API_KEY + REFINE_API_KEY 后自动切真实生成."]
         ),
     })
 

@@ -149,7 +149,7 @@
       "name": "极简白",
       "description": "简约/配件类",
       "thumbnail": "minimal-white.svg",
-      "default_for": ["配耗类"],
+      "default_for": ["配件类"],
       "vars": {
         "--theme-primary": "#080808",
         "--theme-primary-dark": "#000000",
@@ -171,7 +171,7 @@
     {
       "id": "deep-navy",
       "name": "深蓝专业",
-      "description": "配耗类/专业设备",
+      "description": "配件类/专业设备",
       "thumbnail": "deep-navy.svg",
       "default_for": [],
       "vars": {
