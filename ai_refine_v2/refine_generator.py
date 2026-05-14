@@ -36,6 +36,15 @@ from ai_refine_v2.prompts.generator import render
 from ai_refine_v2.refine_planner import _VALID_ROLES_V2
 
 
+def _resolve_refine_api_key(api_key: str | None = None) -> str:
+    if api_key:
+        return api_key.strip()
+    return (
+        os.environ.get("REFINE_API_KEY", "").strip()
+        or os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    )
+
+
 # ── 常量 ────────────────────────────────────────────────────────
 # 2026-05-13 重构: APIMart endpoint / model / poll timeout / UA 等 HTTP 细节
 # 已下沉到 ai_image_apimart.py (router 第三引擎 adapter). 本模块保留的常量:
@@ -360,7 +369,8 @@ def generate(
     Args:
         planning: ai_refine_v2.refine_planner.plan() 的返回
         product_cutout_url: 产品裁图路径/URL/data URL, None 则纯文生 (PRESERVE 段效果差)
-        api_key: APIMart gpt-image-2 API key. None 从 env GPT_IMAGE_API_KEY 读.
+        api_key: APIMart gpt-image-2 API key. None 从 env REFINE_API_KEY 读,
+                 兼容 GPT_IMAGE_API_KEY fallback.
                  (api_call_fn 注入 mock 时可传任意占位字符串)
         thinking: "off" / "low" / "medium" / "high". medium 性价比最好.
         size: "1:1" / "16:9" / "3:4" 等比例字符串 (APIMart 格式)
@@ -385,10 +395,10 @@ def generate(
         if required_key not in planning:
             raise ValueError(f"planning 结构不合规, 缺 {required_key!r}")
 
-    use_key = api_key or os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    use_key = _resolve_refine_api_key(api_key)
     if not use_key and api_call_fn is None:
         # 只有走真 _default_api_call 时才强制要 key. 注入 mock 时可空.
-        raise ValueError("未配置 GPT_IMAGE_API_KEY (传参或设 env var)")
+        raise ValueError("未配置 REFINE_API_KEY/GPT_IMAGE_API_KEY (传参或设 env var)")
 
     call_fn: ApiCallFn = api_call_fn or _default_api_call
 
@@ -739,7 +749,7 @@ def generate_v2(
     Args:
         planning_v2: ai_refine_v2.refine_planner.plan_v2() 返回 dict (含 screens[])
         product_cutout_url: 产品参考图 URL/path (可选, 给了就喂 image_urls hint)
-        api_key: APIMart key, None 从 env GPT_IMAGE_API_KEY 读
+        api_key: APIMart key, None 从 env REFINE_API_KEY 读, 兼容 GPT_IMAGE_API_KEY fallback
         api_call_fn: 单测注入点, 生产用 _default_api_call (submit + poll)
         cutout_whitelist: v3 (PRD AI_refine_v3.1) per-screen 喂图控制.
             屏型 role 集合, 仅这些 role 喂参考图.
@@ -759,10 +769,10 @@ def generate_v2(
     if "screens" not in planning_v2 or not isinstance(planning_v2["screens"], list):
         raise ValueError("planning_v2 缺 'screens' 字段或不是 list (期望 v2 schema)")
 
-    use_key = api_key or os.environ.get("GPT_IMAGE_API_KEY", "").strip()
+    use_key = _resolve_refine_api_key(api_key)
     if not use_key and api_call_fn is None:
         raise ValueError(
-            "未配置 GPT_IMAGE_API_KEY (传参或设 env var); 测试场景注入 api_call_fn 也可"
+            "未配置 REFINE_API_KEY/GPT_IMAGE_API_KEY (传参或设 env var); 测试场景注入 api_call_fn 也可"
         )
 
     call_fn: ApiCallFn = api_call_fn or _default_api_call

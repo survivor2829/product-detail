@@ -11,6 +11,7 @@
 - 历史文档 (audit/raw/archive) 保持不动 (时间线真相)
 """
 from __future__ import annotations
+import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -63,6 +64,32 @@ class TestTemplateDir:
         assert not peihao.exists(), (
             f"templates/配耗类/ 必须删除 (改名后旧目录废弃)"
         )
+
+
+class TestBuildConfigAndThemes:
+    """守护: 配件类配置文件和主题默认映射不能漏旧名."""
+
+    def test_peijian_build_config_metadata_renamed(self):
+        cfg_path = REPO / "templates" / "配件类" / "build_config.json"
+        raw = cfg_path.read_text(encoding="utf-8")
+        cfg = json.loads(raw)
+
+        assert cfg.get("name") == "配件类"
+        assert cfg.get("product_type") == "配件类"
+        assert "配耗类" not in raw
+
+    def test_minimal_white_default_for_peijian(self):
+        themes_path = REPO / "static" / "themes" / "themes.json"
+        data = json.loads(themes_path.read_text(encoding="utf-8"))
+        minimal_white = next(t for t in data["themes"] if t["id"] == "minimal-white")
+
+        assert minimal_white.get("default_for") == ["配件类"]
+
+    def test_themes_json_no_user_facing_peihao(self):
+        themes_path = REPO / "static" / "themes" / "themes.json"
+        raw = themes_path.read_text(encoding="utf-8")
+
+        assert "配耗类" not in raw
 
 
 class TestThemeMatcher:

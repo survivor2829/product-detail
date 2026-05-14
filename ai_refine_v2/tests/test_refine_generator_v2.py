@@ -346,14 +346,18 @@ class TestGenerateV2InputValidation(unittest.TestCase):
     def test_no_api_key_no_mock_raises(self):
         """无 key 且无 api_call_fn → ValueError (mock 注入路径不受影响)."""
         import os as _os
-        old = _os.environ.pop("GPT_IMAGE_API_KEY", None)
+        old_refine = _os.environ.pop("REFINE_API_KEY", None)
+        old_gpt = _os.environ.pop("GPT_IMAGE_API_KEY", None)
         try:
             with self.assertRaises(ValueError) as ctx:
                 generate_v2(_v2_planning(n=2), api_key=None)
+            self.assertIn("REFINE_API_KEY", str(ctx.exception))
             self.assertIn("GPT_IMAGE_API_KEY", str(ctx.exception))
         finally:
-            if old is not None:
-                _os.environ["GPT_IMAGE_API_KEY"] = old
+            if old_refine is not None:
+                _os.environ["REFINE_API_KEY"] = old_refine
+            if old_gpt is not None:
+                _os.environ["GPT_IMAGE_API_KEY"] = old_gpt
 
     def test_empty_screens_list_raises(self):
         """screens=[] 应 raise."""

@@ -10,7 +10,10 @@ per `docs/superpowers/specs/_stubs/A1-secret-key-fallback-stub.md` 方案 A.
 
 本测试组防止未来 PR 把 fallback 加回去.
 """
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -70,3 +73,84 @@ class TestEnvExampleDocumentsSecretKey:
             ".env.example 应文档化 SECRET_KEY 要求, "
             "运维 deploy 时知道这是必填项."
         )
+
+    def test_env_example_does_not_ship_reusable_secret_key(self):
+        env_example = REPO_ROOT / ".env.example"
+        if not env_example.exists():
+            return
+        content = env_example.read_text(encoding="utf-8")
+        assert "SECRET_KEY=change-me-in-production" not in content
+        assert "SECRET_KEY=dev-change-me-in-production" not in content
+
+
+class TestRuntimeSecretKeyValidation:
+    """守护: 非 development 环境必须拒绝空值和占位 SECRET_KEY."""
+
+    def _run_import_app(self, secret_key: str) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env.update({
+            "PYTHON_DOTENV_DISABLED": "1",
+            "FLASK_ENV": "production",
+            "DEEPSEEK_API_KEY": "sk-test-deepseek",
+            "REFINE_API_KEY": "sk-test-refine",
+            "REFINE_API_BASE_URL": "https://api.test-refine.local/v1",
+            "SECRET_KEY": secret_key,
+        })
+        return subprocess.run(
+            [sys.executable, "-c", "import app"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+
+    def test_production_rejects_change_me_secret_key(self):
+        proc = self._run_import_app("change-me-in-production")
+        output = proc.stdout + proc.stderr
+
+        assert proc.returncode != 0
+        assert "SECRET_KEY" in output
+        assert "占位" in output or "placeholder" in output.lower()
+
+    def test_production_rejects_dev_change_me_secret_key(self):
+        proc = self._run_import_app("dev-change-me-in-production")
+        output = proc.stdout + proc.stderr
+
+        assert proc.returncode != 0
+        assert "SECRET_KEY" in output
+
+
+class TestFernetKeyHardening:
+    """守护: 免费用户自配 key 加密使用的 FERNET_KEY 不能是占位符."""
+
+    def test_env_example_does_not_ship_reusable_fernet_placeholder(self):
+        env_example = REPO_ROOT / ".env.example"
+        if not env_example.exists():
+            return
+        content = env_example.read_text(encoding="utf-8")
+        assert "FERNET_KEY=生成一个key填这里" not in content
+
+    def test_crypto_rejects_placeholder_fernet_key_with_clear_message(self):
+        env = os.environ.copy()
+        env.update({
+            "PYTHON_DOTENV_DISABLED": "1",
+            "FERNET_KEY": "生成一个key填这里",
+        })
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from crypto_utils import encrypt_api_key; encrypt_api_key('sk-test')",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        output = proc.stdout + proc.stderr
+
+        assert proc.returncode != 0
+        assert "FERNET_KEY" in output
+        assert "占位" in output or "placeholder" in output.lower()

@@ -414,12 +414,18 @@ class TestSafetyValveCoversV2(unittest.TestCase):
 
     def setUp(self):
         self._saved = os.environ.pop("V2_ALLOW_REAL_API", None)
+        self._saved_flask_env = os.environ.get("FLASK_ENV")
+        os.environ["FLASK_ENV"] = "development"
 
     def tearDown(self):
         if self._saved is not None:
             os.environ["V2_ALLOW_REAL_API"] = self._saved
         else:
             os.environ.pop("V2_ALLOW_REAL_API", None)
+        if self._saved_flask_env is not None:
+            os.environ["FLASK_ENV"] = self._saved_flask_env
+        else:
+            os.environ.pop("FLASK_ENV", None)
 
     def test_safety_valve_locked_strips_keys_for_v2_mode(self):
         """安全阀关 → start_task(mode='v2') 也清空 keys, mode='v2' 透传."""

@@ -173,6 +173,11 @@ class TestValidateSchemaV2ProductMeta(unittest.TestCase):
         w = _validate_schema_v2(d)
         self.assertTrue(any("category 非法" in x for x in w))
 
+    def test_peijian_category_is_valid(self):
+        d = _v2_sample()
+        d["product_meta"]["category"] = "配件类"
+        self.assertEqual(_validate_schema_v2(d), [])
+
     def test_empty_key_visual_parts(self):
         d = _v2_sample()
         d["product_meta"]["key_visual_parts"] = []

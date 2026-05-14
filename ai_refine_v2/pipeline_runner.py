@@ -11,7 +11,7 @@
   - GET /status/<task_id> 轮询进度
   - **Key 缺失自动降级 mock**: 返回 4/23 那批现成的 6 张占位图,让 UI 能走通
     - DEEPSEEK_API_KEY 缺 → 用 smoke_output_v2/_planning.json (预置)
-    - GPT_IMAGE_API_KEY 缺 → 跳过真 API 调用, 复用 static/smoke_output_v2/block_*.jpg
+    - REFINE_API_KEY 缺 → 跳过真 API 调用, 复用 static/smoke_output_v2/block_*.jpg
 
 任务状态机:
   pending → running_planner → running_generator → running_assembler → success
@@ -138,15 +138,13 @@ def get_task_status(task_id: str) -> dict | None:
 # Key 探测 + 模式决定 + 临时安全阀 (PRD §阶段五真测前)
 # ─────────────────────────────────────────────────────────────
 def _is_real_api_allowed() -> bool:
-    """临时安全阀: 防止 UI 误点烧钱 (PRD §阶段五前的过渡保护).
+    """开发环境临时安全阀: 防止本机/UI 误点烧钱.
 
-    解锁条件: 环境变量 V2_ALLOW_REAL_API=true (大小写不敏感)
-    其他值 / 未设 → 强制 mock 路径, 即使 .env 里有真 key 也不调真 API
-
-    PRD §阶段五三关阶梯式真测通过后, 删除本函数 + _apply_safety_valve
-    + _detect_mode 顶部 safety 分支 + tests/TestV2SafetyValve 即可.
-    见 docs/PRD_AI_refine_v2_directOutput/PRD_directOutput_v2.md §阶段五
+    仅 FLASK_ENV=development 时生效; 生产环境配了真 key 就应按真实模式运行.
+    开发环境可用 V2_ALLOW_REAL_API=true 临时解锁真 API.
     """
+    if os.environ.get("FLASK_ENV", "").strip().lower() != "development":
+        return True
     return os.environ.get("V2_ALLOW_REAL_API", "").strip().lower() == "true"
 
 
@@ -208,7 +206,7 @@ def _load_mock_planning(product_text: str, product_title: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# Mock images (无 GPT_IMAGE_API_KEY 时用)
+# Mock images (无 REFINE_API_KEY 时用)
 # ─────────────────────────────────────────────────────────────
 def _copy_mock_images(task_dir: Path) -> list[dict]:
     """把 4/23 demo 的 6 张占位图复制到 task_dir.
@@ -340,7 +338,7 @@ def _copy_mock_images_v2(task_dir: Path, n: int) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────
-# 真 Generator (GPT_IMAGE_API_KEY 已配时)
+# 真 Generator (REFINE_API_KEY 已配时)
 # ─────────────────────────────────────────────────────────────
 def _build_noproxy_opener():
     """独立 opener: 绕代理 (ProxyHandler({})) + 设浏览器 UA (防 CDN 403).
@@ -935,7 +933,7 @@ def start_task(product_text: str, product_image_url: str,
                       v2 路径下用于 post-planning reorder (耗材/配件 lifestyle_demo→idx=2).
                       None=向后兼容老调用 / v1 路径忽略此参数.
 
-    安全阀: V2_ALLOW_REAL_API!=true 时强制清空 keys, _worker 自动走 mock 路径.
+    安全阀: 仅 development 且 V2_ALLOW_REAL_API!=true 时强制清空 keys, _worker 自动走 mock 路径.
     生产唯一入口经过这里, 所以任何 UI 误点都被截断在烧 API 前.
     """
     if mode not in ("v1", "v2"):
