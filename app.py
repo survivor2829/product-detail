@@ -129,6 +129,7 @@ if not _db_url.startswith("sqlite"):
 # ── 初始化扩展 ──
 from extensions import db, login_manager, migrate, limiter
 from models import User, GenerationLog, Batch, BatchItem
+from workspace_results import load_latest_workspace_result, save_workspace_result
 from sqlalchemy import func as _sa_func
 import json as _json_mod
 
@@ -4921,6 +4922,63 @@ def ai_refine_v2_status(task_id: str):
     if owner_id != current_user.id and not current_user.is_admin:
         abort(403)
     return jsonify(state)
+
+
+@app.route("/api/workspace-results/ai-refine-v2/<task_id>", methods=["POST"])
+@login_required
+def workspace_result_save_ai_refine_v2(task_id: str):
+    """Persist a completed homepage AI refine result so refresh can restore it."""
+    from ai_refine_v2 import pipeline_runner
+
+    state = pipeline_runner.get_task_status(task_id)
+    if state is None:
+        return jsonify({"error": f"任务不存在或已过期: {task_id}"}), 404
+    owner_id = state.get("user_id")
+    if owner_id != current_user.id and not current_user.is_admin:
+        abort(403)
+    if state.get("status") != "success":
+        return jsonify({"error": "任务尚未成功完成，不能保存到首页历史"}), 400
+
+    image_url = (state.get("assembled_url") or "").strip()
+    if not image_url:
+        return jsonify({"error": "任务缺少 assembled_url，不能保存"}), 400
+
+    data = request.get_json(silent=True) or {}
+    product_category = (data.get("product_category") or "").strip()
+    if product_category not in ALLOWED_PRODUCT_TYPES:
+        product_category = ""
+    blocks = state.get("blocks") or []
+    record = {
+        "kind": "ai_refine_v2",
+        "task_id": task_id,
+        "image_url": image_url,
+        "assembled_url": image_url,
+        "mode": state.get("mode") or "",
+        "product_title": "",
+        "product_category": product_category,
+        "blocks_count": len(blocks) if isinstance(blocks, list) else 0,
+        "elapsed_s": state.get("elapsed_s") or 0,
+        "cost_rmb": state.get("cost_rmb") or 0,
+    }
+    try:
+        saved = save_workspace_result(STATIC_OUTPUTS, current_user.id, record)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "result": saved})
+
+
+@app.route("/api/workspace-results/latest", methods=["GET"])
+@login_required
+def workspace_result_latest():
+    """Return the latest restorable homepage generation result for this user."""
+    kind = (request.args.get("kind") or "ai_refine_v2").strip()
+    result = load_latest_workspace_result(
+        STATIC_OUTPUTS,
+        current_user.id,
+        kind=kind,
+        repo_root=BASE_DIR,
+    )
+    return jsonify({"ok": True, "result": result})
 
 
 
