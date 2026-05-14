@@ -1328,6 +1328,68 @@
     return next;
   }
 
+  function escapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+  }
+
+  function renderAiRefineResult(result, options = {}) {
+    const results = document.getElementById('ai_img_results');
+    const imageUrl = result.image_url || result.assembled_url;
+    if (!results || !imageUrl) return;
+
+    const downloadUrl = result.assembled_url || imageUrl;
+    const sep = imageUrl.includes('?') ? '&' : '?';
+    const displayUrl = `${imageUrl}${sep}t=${Date.now()}`;
+    const blocksCount = Number(result.blocks_count || (Array.isArray(result.blocks) ? result.blocks.length : 0));
+    const elapsed = Number(result.elapsed_s || 0);
+    const cost = Number(result.cost_rmb || 0);
+    const restored = options.restored ? '上次生成 · ' : '';
+    const info = `${restored}AI 精修版 · ${blocksCount} 屏 · ${elapsed}s · ¥${cost.toFixed(2)}`;
+
+    results.innerHTML = `
+      <div style="text-align:center; margin-bottom:16px;">
+        <span style="font-size:14px; color:#555; margin-right:12px;">${escapeHtml(info)}</span>
+        <a href="${escapeHtml(downloadUrl)}" download
+          style="padding:6px 16px; background:#10b981; color:#fff;
+          border:none; border-radius:6px; font-size:13px; text-decoration:none;">
+          下载详情图
+        </a>
+      </div>
+      <div style="position:relative; width:375px; border-radius:8px; overflow:hidden;
+        box-shadow:0 4px 18px rgba(0,0,0,0.12);">
+        <img src="${escapeHtml(displayUrl)}" style="width:100%; display:block;" />
+      </div>`;
+  }
+
+  async function rememberAiRefineResult(taskId) {
+    try {
+      await postJson(`/api/workspace-results/ai-refine-v2/${encodeURIComponent(taskId)}`, {
+        product_category: currentProductType,
+      });
+    } catch (err) {
+      console.warn('[workspace-results] save failed', err);
+    }
+  }
+
+  async function restoreLatestAiResult() {
+    try {
+      const resp = await fetch('/api/workspace-results/latest?kind=ai_refine_v2');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.ok || !data.result) return;
+
+      const loading = document.getElementById('ai_img_loading');
+      if (loading) loading.style.display = 'none';
+      document.getElementById('empty_state').style.display = 'none';
+      switchCenterTab('ai_img');
+      renderAiRefineResult(data.result, { restored: true });
+    } catch (err) {
+      console.warn('[workspace-results] restore failed', err);
+    }
+  }
+
   /* ── AI 精修（专业版）: DeepSeek planner + GPT-image-2 重绘 + Playwright 拼装 ─── */
   async function generateAiHtmlV2() {
     if (!productImageUrl) {
@@ -1367,6 +1429,7 @@
         product_image_url: productImageUrl,
         product_title:     productTitle,
         schema_mode:       'v2',
+        product_category:  currentProductType,
       });
       const taskId = startResp.task_id;
       const mode = startResp.mode;
@@ -1417,21 +1480,8 @@
       }
 
       loading.style.display = 'none';
-      const url = finalState.assembled_url + '?t=' + Date.now();
-      const info = `AI 精修版 · ${finalState.blocks.length} 屏 · ${finalState.elapsed_s}s · ¥${finalState.cost_rmb.toFixed(2)}`;
-      results.innerHTML = `
-        <div style="text-align:center; margin-bottom:16px;">
-          <span style="font-size:14px; color:#555; margin-right:12px;">${info}</span>
-          <a href="${finalState.assembled_url}" download
-            style="padding:6px 16px; background:#10b981; color:#fff;
-            border:none; border-radius:6px; font-size:13px; text-decoration:none;">
-            下载详情图
-          </a>
-        </div>
-        <div style="position:relative; width:375px; border-radius:8px; overflow:hidden;
-          box-shadow:0 4px 18px rgba(0,0,0,0.12);">
-          <img src="${url}" style="width:100%; display:block;" />
-        </div>`;
+      renderAiRefineResult(finalState);
+      await rememberAiRefineResult(taskId);
     } catch (e) {
       loading.style.display = 'none';
       results.innerHTML = `<div style="text-align:center; color:#ef4444; padding:40px;">AI 精修失败: ${e.message}</div>`;
@@ -1609,6 +1659,7 @@
     initUploadBox('upload_effect', url => { effectImageUrl = url; });
     initUploadBox('upload_qr', url => { qrImageUrl = url; });
     selectCategory(currentProductType);
+    restoreLatestAiResult();
   });
 </script>
 <script src="/static/js/announcement.js" defer></script>
