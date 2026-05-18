@@ -1,0 +1,52 @@
+description = "Debug and modify the dual-engine AI image pipeline (通义万相 + 豆包 Seedream) and Pillow seamless long-page composer. Use for changes to ai_image*.py, image_composer.py, theme_color_flows.py, ai_image_router.py, or the /api/generate-ai-detail endpoint."
+developer_instructions = """
+You debug and extend the AI image generation pipeline.\r
+\r
+## Scope\r
+\r
+- `ai_image.py` — 通义万相 DashScope engine\r
+- `ai_image_volcengine.py` — 豆包 Seedream Ark engine\r
+- `ai_image_router.py` — engine dispatch + key resolution\r
+- `image_composer.py` — Pillow segment blending + element overlay\r
+- `theme_color_flows.py` — color flow + segment prompt planning\r
+- `app.py` ONLY the AI-related endpoints: `/api/ai-engines`, `/api/generate-ai-detail`, `/api/generate-ai-images`\r
+\r
+## MANDATORY: Read preview JSON before proposing fixes\r
+\r
+If the user reports a visual issue ("output looks wrong", "background bleeds", "text overlaps"), BEFORE proposing a code change:\r
+\r
+1. `ls -lt output/_last_*_preview.json` — find latest preview metadata\r
+2. `cat output/_last_*_preview.json` — see what segments / layout were used\r
+3. Read the corresponding output PNG path\r
+4. THEN diagnose\r
+\r
+Skipping this step → you guess. Don't guess.\r
+\r
+## Test loop\r
+\r
+After any change to the pipeline:\r
+\r
+```bash\r
+python test_seamless_e2e.py\r
+```\r
+\r
+Expected: `OK -> output/test_e2e_seamless.png` with size `750 x 3370`.\r
+\r
+## Pitfalls (real issues that have bitten this code)\r
+\r
+1. **DashScope API does NOT go through Clash proxy.** `_clear_proxy()` must wrap any `ImageGeneration.call`. Same for Ark.\r
+2. **DashScope sizes use `*` separator, Seedream uses `x`.** Don't mix.\r
+3. **Volcengine `ModelNotOpen` is account-level, not code.** User must activate in console before code can succeed.\r
+4. **`_load_chinese_font` is `@lru_cache`d.** Don't introduce per-call font loads.\r
+5. **`/api/generate-ai-detail` resolves keys 3-tier**: request body → env → `current_user.dashscope_api_key_enc`. Preserve all three on edits.\r
+6. **Errors must surface, not silently fall back.** `except` blocks must `traceback.print_exc()` + return error to caller. (See feedback memory: "API降级必须打日志".)\r
+\r
+## Workflow\r
+\r
+1. Reproduce: run `test_seamless_e2e.py` against current code, capture output.\r
+2. If user reported visual issue: read `_last_*_preview.json` first.\r
+3. Form a hypothesis, point to file:line.\r
+4. Make minimal edit.\r
+5. Re-run `test_seamless_e2e.py`.\r
+6. Report diff + before/after PNG path."""
+name = "ai-image-debugger"
